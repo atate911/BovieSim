@@ -7,6 +7,7 @@ import { GpuContext, createShader } from './gpu';
 import { SurfaceExtractor } from './surface';
 import { OrbitCamera } from './camera';
 import { MeshBuilder } from './meshes';
+import { VOLUME_INFO_WGSL } from '@/core/volume';
 import { ParticleSystem } from './particles';
 
 export interface SceneParams {
@@ -54,13 +55,14 @@ export class Renderer {
   private linearSampler: GPUSampler;
   readonly draws: SimpleDraw[] = [];
   readonly particles: ParticleSystem;
+  private latInfo: GPUBuffer; private latDisp: GPUBuffer;
   private readback: GPUBuffer | null = null;
   readonly lightDir = vec3.normalize(vec3.create(), [0.25, 1, 0.35]);
   lightIntensity = 2.1;
   ambient = 0.22;
   time = 0;
 
-  constructor(private gpu: GpuContext, private surface: SurfaceExtractor) {
+  constructor(private gpu: GpuContext, private surface: SurfaceExtractor, private volumeBufs: { blood: GPUBuffer; info: GPUBuffer }) {
     const d = gpu.device; this.device = d;
     this.frameBuf = d.createBuffer({ label: 'frame', size: FRAME_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.shadowTex = d.createTexture({ label: 'shadow', size: [SHADOW_SIZE, SHADOW_SIZE], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
@@ -75,6 +77,10 @@ export class Renderer {
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 6, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 7, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     });
     const simpleFrameLayout = d.createBindGroupLayout({
@@ -90,15 +96,21 @@ export class Renderer {
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 6, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 7, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     });
+    // lattice displacement (identity until a lattice is attached)
+    this.latInfo = d.createBuffer({ label: 'latticeInfo', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    d.queue.writeBuffer(this.latInfo, 0, new Uint32Array([0, 0, 0, 0, 0, 0, 0, 0]));
+    this.latDisp = d.createBuffer({ label: 'latticeDisp', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     const simpleShadowFrameLayout = d.createBindGroupLayout({
       label: 'simpleShadowFrameLayout',
       entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } }],
     });
     this.simpleMatLayout = d.createBindGroupLayout({ label: 'simpleMat', entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }] });
 
-    const tissueMod = createShader(d, 'tissue', commonWgsl + tissueWgsl);
+    const tissueMod = createShader(d, 'tissue', commonWgsl + VOLUME_INFO_WGSL + tissueWgsl);
     const simpleMod = createShader(d, 'simple', commonWgsl + simpleWgsl);
     const postMod = createShader(d, 'post', commonWgsl + postWgsl);
 
@@ -148,10 +160,22 @@ export class Renderer {
   rebuildTissueBG() {
     this.tissueBG = this.device.createBindGroup({ layout: this.frameLayout, entries: [
       { binding: 0, resource: { buffer: this.frameBuf } }, { binding: 1, resource: { buffer: this.surface.vertexBuffer } },
-      { binding: 2, resource: this.shadowView }, { binding: 3, resource: this.shadowSampler }] });
+      { binding: 2, resource: this.shadowView }, { binding: 3, resource: this.shadowSampler },
+      { binding: 4, resource: { buffer: this.volumeBufs.blood } }, { binding: 5, resource: { buffer: this.volumeBufs.info } },
+      { binding: 6, resource: { buffer: this.latInfo } }, { binding: 7, resource: { buffer: this.latDisp } }] });
     this.tissueShadowBG = this.device.createBindGroup({ layout: this.shadowFrameLayout, entries: [
-      { binding: 0, resource: { buffer: this.frameBuf } }, { binding: 1, resource: { buffer: this.surface.vertexBuffer } }] });
+      { binding: 0, resource: { buffer: this.frameBuf } }, { binding: 1, resource: { buffer: this.surface.vertexBuffer } },
+      { binding: 6, resource: { buffer: this.latInfo } }, { binding: 7, resource: { buffer: this.latDisp } }] });
   }
+
+  /** Attaches a mechanics lattice: allocates the displacement buffer and writes its info. */
+  attachLattice(info: ArrayBuffer, nodeCount: number) {
+    this.latDisp.destroy();
+    this.latDisp = this.device.createBuffer({ label: 'latticeDisp', size: nodeCount * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    this.device.queue.writeBuffer(this.latInfo, 0, info);
+    this.rebuildTissueBG();
+  }
+  uploadLattice(disp: Float32Array<ArrayBuffer>) { this.device.queue.writeBuffer(this.latDisp, 0, disp); }
 
   addMesh(mb: MeshBuilder, label: string, color: [number, number, number], opts: { metallic?: number; rough?: number; kind?: number; emissive?: number; castsShadow?: boolean; model?: mat4 } = {}): SimpleDraw {
     const { buffer, count } = mb.toBuffer(this.device, label);

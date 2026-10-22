@@ -1,6 +1,6 @@
 import { mat4, vec3 } from 'gl-matrix';
 
-export type ElectrodeType = 'blade' | 'needle' | 'ball';
+export type ElectrodeType = 'blade' | 'needle' | 'ball' | 'forceps';
 
 /** Bovie pencil pose and electrode geometry in world mm. */
 export class ElectrodeTool {
@@ -22,9 +22,22 @@ export class ElectrodeTool {
   visible = true;
   readonly model = mat4.create();
 
-  get length() { return this.type === 'blade' ? 12 : this.type === 'needle' ? 10 : 3; }
-  get halfWidth() { return this.type === 'blade' ? 1.2 : this.type === 'needle' ? 0.2 : 1.5; }
-  get halfThickness() { return this.type === 'blade' ? 0.25 : this.type === 'needle' ? 0.2 : 1.5; }
+  /** forceps jaw span when the pencil is replaced by buzzed forceps */
+  private jawSpan = 0.5;
+  private jawRadius = 0.6;
+  get length() { return this.type === 'blade' ? 12 : this.type === 'needle' ? 10 : this.type === 'forceps' ? this.jawSpan : 3; }
+  get halfWidth() { return this.type === 'blade' ? 1.2 : this.type === 'needle' ? 0.2 : this.type === 'forceps' ? this.jawRadius : 1.5; }
+  get halfThickness() { return this.type === 'blade' ? 0.25 : this.type === 'needle' ? 0.2 : this.type === 'forceps' ? this.jawRadius : 1.5; }
+
+  /** Use closed forceps jaws (tip a -> tip b, capsule radius r) as the electrode. */
+  asForceps(a: vec3, b: vec3, r: number, handleAxis: vec3) {
+    this.type = 'forceps'; this.visible = true;
+    vec3.copy(this.tip, a);
+    const d = vec3.sub(vec3.create(), b, a); this.jawSpan = Math.max(vec3.length(d), 0.1); vec3.normalize(d, d);
+    vec3.copy(this.wdir, d); vec3.copy(this.axis, handleAxis);
+    vec3.cross(this.ndir, d, handleAxis); vec3.normalize(this.ndir, this.ndir);
+    this.jawRadius = r;
+  }
   /** penetration depth into tissue from pressure (mm) */
   get penetration() { return 0.15 + this.pressure * 0.9; }
 

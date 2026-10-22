@@ -21,7 +21,23 @@
   forms a ~1.4 mm groove with a ~1 mm (one-voxel) thermal rim, no char; a held blade in cut mode
   desiccates, impedance climbs past 2 kΩ and delivered power collapses (stalling).
 
+## Sprint 3 + 4 (this block)
+- Bleeding: exposed vessel ends bleed with radius-scaled, pulsatile flow; coaptive seal vs char
+  plug vs rebleed rules; blood height field with downhill flow, clotting, pool conduction penalty;
+  droplet jets; suction. Hemostasis drill scenario with a pre-carved trench crossing a 1.0 mm artery
+  and a 0.6 mm vein.
+- Instruments: Adson forceps (grasp, buzz, lift), Frazier suction, skin hook; Tab cycles tools.
+- Mechanics: XPBD lattice with per-layer compliance and skin pre-tension; GPU probe severs and
+  shrinks links from the voxel state; incisions gape; lipoma cluster frees and delivers; muscle
+  twitch on coag; rendered tissue follows the lattice.
+- Scenarios: hemostasis, lipoma (mechanics), freeplay. Tests: bleed rules, blood flow, lattice.
+
 ## Known gaps (next)
+- Picking and tool placement use material coordinates: with large deformation the instrument
+  draws slightly off the displaced surface.
+- Blood is shaded on the tissue surface (depth-tinted), not as a separate fluid surface mesh.
+- Vessel ends do not retract; ties and clips are not implemented (decision point only).
+- Fat lobule separation is approximate (compliance only; septa are not individually modelled).
 - Absolute impedance and lateral spread not yet calibrated against published values
   (docs/calibration.md): tune `sigmaScale`, `arcMmPerKv`, `vapFactor`.
 - FT10 output curves are approximations until the user guide is digitised.

@@ -122,3 +122,50 @@ export function buildBlade(): MeshBuilder {
   mb.tri(vec3.fromValues(1.2, 0, -0.25), vec3.fromValues(-1.2, 0, -0.25), vec3.fromValues(0, -1.2, 0), vec3.fromValues(0, -0.2, -1));
   return mb;
 }
+
+/** One forceps arm along +Y from the jaw tip (origin) to the pivot: flat tapered bar with serrated tip. */
+export function buildForcepsArm(length = 95): MeshBuilder {
+  const mb = new MeshBuilder();
+  // jaw: 1.2 mm wide, 0.8 mm thick, 8 mm long
+  mb.box(vec3.fromValues(0, 4, 0), vec3.fromValues(0.6, 4, 0.4));
+  // serrations as small ridges on the inner face
+  for (let i = 0; i < 6; i++) mb.box(vec3.fromValues(0, 0.8 + i * 1.1, 0.45), vec3.fromValues(0.6, 0.25, 0.12));
+  // shank: widening bar
+  mb.box(vec3.fromValues(0, 8 + (length - 8) * 0.5, 0), vec3.fromValues(1.8, (length - 8) * 0.5, 0.7));
+  // finger grip ribs
+  for (let i = 0; i < 10; i++) mb.box(vec3.fromValues(0, length * 0.45 + i * 3, -0.9), vec3.fromValues(2.4, 0.6, 0.25));
+  return mb;
+}
+
+/** Frazier suction tip: slim angled tube along +Y with a thumb vent, tip at origin. */
+export function buildFrazier(): MeshBuilder {
+  const mb = new MeshBuilder();
+  mb.cylinder(1.5, 1.5, 0, 40, 16);
+  // bend: second segment angled 30 deg
+  const bent = new MeshBuilder();
+  bent.cylinder(1.5, 1.5, 0, 80, 16);
+  bent.cylinder(4.5, 4.5, 60, 70, 16);                       // handle bulge
+  bent.box(vec3.fromValues(0, 66, 4.6), vec3.fromValues(2, 3, 0.6)); // thumb vent plate
+  const m = mat4.create();
+  mat4.fromTranslation(m, [0, 40, 0]);
+  mat4.rotateZ(m, m, -30 * Math.PI / 180);
+  bent.transform(m);
+  // append bent into mb
+  (mb as unknown as { data: number[] }).data.push(...(bent as unknown as { data: number[] }).data);
+  mb.count += bent.count;
+  return mb;
+}
+
+/** Skin hook: thin shaft along +Y with a 3 mm curved tine at the origin. */
+export function buildSkinHook(): MeshBuilder {
+  const mb = new MeshBuilder();
+  mb.cylinder(1.2, 1.2, 4, 110, 12);
+  mb.cylinder(0.45, 0.45, 0, 4.5, 8);
+  // tine: short cylinder bent forward
+  const tine = new MeshBuilder();
+  tine.cylinder(0.4, 0.3, 0, 3.2, 8);
+  const m = mat4.create(); mat4.rotateX(m, m, 110 * Math.PI / 180); tine.transform(m);
+  (mb as unknown as { data: number[] }).data.push(...(tine as unknown as { data: number[] }).data);
+  mb.count += tine.count;
+  return mb;
+}

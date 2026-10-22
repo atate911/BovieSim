@@ -18,9 +18,9 @@ a matter of geometry plus a capability list, not new physics.
 
 ### Tool definitions (Phase 1 geometry, Phase 2+ behaviour as noted)
 - **Bovie pencil** (blade, needle, ball, extended): conduct. Phase 1.
-- **Adson forceps** toothed and smooth: grasp, conduct. Phase 1 grasp + buzz on vessels.
-- **Frazier suction**: suction. Phase 1 (blood sprint).
-- **Skin hooks / Senn**: retract. Phase 1 (mechanics sprint).
+- **Adson forceps** toothed and smooth: grasp, conduct, lift. Built: closed jaws coapt tissue (FLAG_COAPTED), pinch vessels, act as the electrode when the generator is activated (buzzing), and carry the nearest lattice node.
+- **Frazier suction**: suction. Built: drains the blood layer within 2.5 mm at 2 ml/s and pulls smoke.
+- **Skin hook**: retract. Built: press attaches the nearest lattice node, drag retracts, release lets go. Senn (two hooks) pending.
 - **Hemostat (mosquito/Kelly)**: grasp (locking), conduct, blunt dissect. Phase 1 mechanics sprint.
 - **Allis / Kocher**: grasp (traumatic). Phase 2.
 - **Metzenbaum / Mayo**: cut, blunt dissect. Phase 2.

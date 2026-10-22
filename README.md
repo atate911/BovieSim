@@ -16,16 +16,21 @@ npm test           # analytic physics tests (vitest)
 npm run build
 ```
 
-URL options: `?voxel=0.5` (coarser bed for slower GPUs; default 0.25 mm), `?seed=3`
-(re-randomise anatomy), `?cut=3` (pre-carved trench + pit for layer review), `?debug=1|2|3`
-(temperature / damage / tissue-type overlay).
+URL options: `?scenario=freeplay|hemostasis|lipoma`, `?voxel=0.5` (coarser bed for slower GPUs;
+default 0.25 mm), `?seed=3` (re-randomise anatomy), `?cut=1|2|4` (pre-carved trench, pit, or ring
+around the lipoma), `?debug=1|2|3` (temperature / damage / tissue-type overlay), `?mech=0`
+(disable the mechanics lattice).
 
 ## Controls
 
 | Action | Input |
 |---|---|
 | Cut / coag footswitch | `Z` / `X`, or the on-screen pedals |
-| Hand switch | left mouse = cut, Ctrl + left = coag |
+| Hand switch | left mouse = cut, Ctrl + left = coag (pencil) |
+| Instrument | `Tab` or `Q` cycles pencil → Adson forceps → Frazier suction → skin hook; `T` toothed/smooth forceps |
+| Forceps | left button closes the jaws (grasp, pinch, lift); pedal with closed jaws buzzes the forceps |
+| Suction | left button drains blood and pulls smoke at the tip |
+| Skin hook | left-drag attaches to the tissue and retracts it |
 | Pen tablet | pressure sets contact depth, tilt sets pencil orientation |
 | Cut mode / coag mode | `1-4` (Pure, Blend, Low, Valleylab) / `5-6` (Fulgurate, Spray), or tap the mode on the panel |
 | Watts | `[` `]` cut, `;` `'` coag (Shift = ±1) |
@@ -39,7 +44,8 @@ URL options: `?voxel=0.5` (coarser bed for slower GPUs; default 0.25 mm), `?seed
 src/core        tissue property table, voxel volume, scenario schema + anatomy generator, FT10 model
 src/physics     WGSL kernels (jacobi, heating, generator, bioheat, pick, slice), pipeline, CPU reference
 src/render      surface extraction, PBR tissue materials, drapes/instruments, particles, post
-src/tools       electrode pose/geometry (instrument model in docs/tools.md)
+src/tools       electrode, forceps, suction, hook poses and geometry (instrument model in docs/tools.md)
+src/mechanics   XPBD lattice (gaping, shrinkage, lipoma delivery, muscle twitch)
 src/education   event bus (what happened, what it means)
 src/ui          FT10 panel, cross-section inspector, audio
 scenarios/      scenario JSON (anatomy + goal / success / failure points / decisions / ambiguity)

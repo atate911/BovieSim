@@ -38,6 +38,15 @@ fn fs_main(in: VSOut) -> @location(0) vec4f {
     return vec4f(c, 0.0); // additive
   }
   let r = length(in.uv);
+  if (in.kind > 2.5) {
+    // blood droplet: solid glossy bead
+    let disc = 1.0 - smoothstep(0.75, 1.0, r);
+    if (disc <= 0.0) { discard; }
+    let nz = sqrt(max(1.0 - r * r, 0.0));
+    let nrm = normalize(vec3f(in.uv.x, in.uv.y, nz));
+    let lit = in.color * (0.35 + 0.65 * max(nrm.y * 0.6 + nz * 0.6, 0.0)) * frame.lightColor.rgb + vec3f(0.6) * pow(max(nz, 0.0), 30.0) * 0.5;
+    return vec4f(lit * disc, disc);
+  }
   let soft = 1.0 - smoothstep(0.35, 1.0, r);
   let n = fbm3(vec3f(in.uv * 2.5, frame.cameraPos.w * 0.4 + in.alpha * 7.0), 2);
   let a = soft * in.alpha * (0.55 + 0.6 * n);

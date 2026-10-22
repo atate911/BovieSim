@@ -1,0 +1,150 @@
+{
+  "id": "hemostasis",
+  "name": "Hemostasis drill",
+  "description": "An open trench through skin and fat crosses two perforating vessels. One is arterial. Control both: grasp and buzz, or decide to tie.",
+  "bed": {
+    "sizeMm": [
+      44,
+      44,
+      30
+    ],
+    "voxelMm": 0.25
+  },
+  "layers": {
+    "epidermisMm": 0.15,
+    "dermisMm": 2.0,
+    "fatMm": 16,
+    "superficialFasciaMm": 0.4,
+    "superficialFasciaAt": 0.55,
+    "deepFasciaMm": 0.8,
+    "variation": 0.1
+  },
+  "septa": {
+    "lobuleMm": 6,
+    "thicknessMm": 0.35
+  },
+  "vessels": {
+    "seed": 11,
+    "perforatorsPerCm2": 0.3,
+    "arterialFraction": 0.4,
+    "radiusMm": [
+      0.3,
+      0.8
+    ],
+    "dermalPlexus": true,
+    "explicit": [
+      {
+        "xMm": -8,
+        "yMm": 0,
+        "rMm": 1.0,
+        "arterial": true
+      },
+      {
+        "xMm": 8,
+        "yMm": 0,
+        "rMm": 0.6,
+        "arterial": false
+      }
+    ]
+  },
+  "nerves": [],
+  "preCarve": [
+    {
+      "kind": "trench",
+      "centerMm": [
+        0,
+        0
+      ],
+      "lengthMm": 30,
+      "widthMm": 2.5,
+      "depthMm": 8,
+      "angleDeg": 0,
+      "slope": 0.35
+    }
+  ],
+  "skin": {
+    "prep": "chlorhexidine",
+    "tone": 0.4,
+    "langerDeg": 0
+  },
+  "generator": {
+    "cutMode": "pure",
+    "coagMode": "fulgurate",
+    "cutWatts": 30,
+    "coagWatts": 35,
+    "policy": "suggested"
+  },
+  "faults": [],
+  "education": {
+    "goal": "Achieve hemostasis of both bleeders in the trench with less than 5 ml of blood loss and no char plug left behind.",
+    "success": [
+      {
+        "metric": "bloodLostMl",
+        "op": "<",
+        "value": 5,
+        "label": "Blood loss under 5 ml"
+      },
+      {
+        "metric": "exposedBleeding",
+        "op": "==",
+        "value": 0,
+        "label": "No active bleeding"
+      },
+      {
+        "metric": "charPlugVoxels",
+        "op": "==",
+        "value": 0,
+        "label": "No char plug relied upon"
+      }
+    ],
+    "failurePoints": [
+      {
+        "id": "direct-touch",
+        "trigger": "bleed.charPlug",
+        "consequence": "Char plug over an open lumen; rebleeds later as a hematoma.",
+        "teaching": "Grasp first, then buzz the forceps so the walls are apposed when the collagen denatures."
+      },
+      {
+        "id": "blind-buzz",
+        "trigger": "blood.poolConducts",
+        "consequence": "Current spreads through the pool: wide shallow burn, nothing sealed.",
+        "teaching": "Suction and pressure first; identify the vessel; then treat it."
+      },
+      {
+        "id": "rebleed",
+        "trigger": "vessel.rebleed",
+        "consequence": "Delayed bleeding from a vessel thought controlled.",
+        "teaching": "A plug is not a seal. Re-grasp and buzz, or tie."
+      }
+    ],
+    "decisionPoints": [
+      {
+        "id": "big-vessel",
+        "trigger": "vessel.exposed:r>=1.0",
+        "prompt": "This bleeder is about 1 mm. Buzz the forceps, or tie it?",
+        "options": [
+          {
+            "label": "Buzz forceps",
+            "outcome": "Seals reliably up to ~1.5\u20132 mm when coapted; marginal above that."
+          },
+          {
+            "label": "Tie",
+            "outcome": "Always secure; slower. Preferred above 2 mm."
+          }
+        ]
+      }
+    ],
+    "ambiguity": [
+      {
+        "id": "which-is-arterial",
+        "description": "Which of the two vessels is arterial is not visible until it bleeds.",
+        "affects": "vessels.explicit"
+      },
+      {
+        "id": "extra-perforators",
+        "description": "A few seeded small perforators may also be in the trench wall.",
+        "affects": "vessels.seed"
+      }
+    ]
+  }
+}

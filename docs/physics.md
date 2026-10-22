@@ -72,3 +72,34 @@ Fat: lipid melt above ~45 °C (visual liquefaction).
 - Digitise FT10 output curves.
 - Replace placeholder fat/collagen Arrhenius coefficients with bench-fit values.
 - Add arc breakdown field strength measurements in smoke/steam.
+
+## Vessels and bleeding (Sprint 3)
+Vessel voxels carry radius r (0.05 mm units). A vessel voxel with an air neighbour and neither
+SEALED nor CHARPLUG bleeds. Flow of a fully transected end Q(r) = 0.6 ml/s · r³ (r in mm; a 1 mm
+arteriole ≈ 0.6 ml/s, a 0.3 mm one ≈ 0.016 ml/s), shared across the voxels of its cross-section,
+arterial pulsatile at 72 bpm (0.35 + 1.3 sin³), venous steady at 0.3×. Sealing when the wall
+collagen is denatured (Ω > 1): SEALED if the lumen is apposed by forceps (FLAG_COAPTED) or
+r ≤ 0.5 mm; otherwise CHARPLUG, which rebleeds with probability 0.15 · clamp((r − 0.5)/1.5) per
+second. Blood lost is accumulated in microlitres.
+
+## Blood layer
+One record per surface column: depth h (mm) above the tissue top, age, and the tissue top height.
+Sources add volume to the column above the bleeding voxel; droplets (arterial jets at 0.5–1.2 m/s,
+venous welling) land back into columns. Flow: head H = surface + h; each step moves
+min(0.35·¼·ΔH, ¼·mobile) to lower neighbours, where mobile = h − 0.05 mm (wetting film); blood
+older than 60 s is clotted and immobile. A column with h > 0.3 mm marks its top voxel BLOODCOVER:
+it conducts like blood (0.7 S/m) and couples to the electrode within 3 mm, so buzzing in a pool
+spreads current widely and seals nothing. Suction drains 2 ml/s over the tip area.
+
+## Tissue mechanics (Sprint 4)
+XPBD lattice on a 3 mm material grid: axis links plus face diagonals, compliance per layer (dermis
+2e-6, fat 4e-5, fascia 5e-7, muscle 1e-5, lipoma 3e-5), edge and bottom nodes fixed, weak anchoring
+to the material position (the bed sits on the body). Skin links are pre-tensioned: rest length
+0.96× along Langer's lines, 0.985× across, so severed edges gape. A GPU probe samples each link's
+material segment: any air sample on a link that ran through tissue severs it; max Ω along the link
+shrinks its rest length by up to 12 % (collagen contraction). Lipoma nodes form a cluster linked to
+the host by capsule links; when fewer than 40 % survive the cluster is free, gets gravity and can be
+lifted by forceps (delivery = cluster centroid above the skin plane). Coag with > 20 heated muscle
+voxels in the thermal box triggers a damped 6 Hz twitch of muscle nodes within 12 mm, amplitude
+0.5–2 mm with current. Rendering samples the lattice displacement per vertex; the voxel physics
+stays in material space.

@@ -85,6 +85,17 @@ export class Volume {
     return [nx * h, (nz - airLayers) * h, ny * h];
   }
 
+  /** Tissue top height (world Y, mm) of the column under world x, z from the CPU copy of occupancy (initial state). */
+  surfaceY(x: number, z: number): number {
+    const [vi, vj] = this.worldToVoxel(x, 0, z);
+    const i = Math.round(vi), j = Math.round(vj);
+    if (i < 0 || j < 0 || i >= this.dims.nx || j >= this.dims.ny) return 0;
+    for (let k = this.dims.nz - 1; k >= 0; k--) {
+      if (this.occupancy[this.index(i, j, k)] >= 0.5) return this.voxelToWorld(i, j, k)[1] + 0.5 * this.dims.h;
+    }
+    return -1e3;
+  }
+
   /** VolumeInfo uniform: nx, ny, nz, airLayers, h(mm), h(m), 0, 0 */
   infoData(): ArrayBuffer {
     const buf = new ArrayBuffer(32);

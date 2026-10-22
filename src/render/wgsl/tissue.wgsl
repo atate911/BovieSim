@@ -6,10 +6,51 @@ struct Vertex {
   nx: f32, ny: f32, nz: f32, attr: u32,
 };
 
+struct BloodCol { h: f32, age: f32, surf: f32, hNext: f32 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var<storage, read> verts: array<Vertex>;
 @group(0) @binding(2) var shadowMap: texture_depth_2d;
 @group(0) @binding(3) var shadowSampler: sampler_comparison;
+@group(0) @binding(4) var<storage, read> blood: array<BloodCol>;
+@group(0) @binding(5) var<uniform> vinfo: VolumeInfo;
+struct LatticeInfo { nx: u32, ny: u32, nz: u32, pad: u32, origin: vec3f, spacing: f32 };
+@group(0) @binding(6) var<uniform> lat: LatticeInfo;
+@group(0) @binding(7) var<storage, read> latDisp: array<vec4f>;
+
+/** Trilinear lattice displacement at a material point (mm). */
+fn latticeDisp(p: vec3f) -> vec3f {
+  if (lat.nx < 2u) { return vec3f(0.0); }
+  let f = (p - lat.origin) / lat.spacing;
+  let i0 = clamp(i32(floor(f.x)), 0, i32(lat.nx) - 2);
+  let j0 = clamp(i32(floor(f.y)), 0, i32(lat.ny) - 2);
+  let k0 = clamp(i32(floor(f.z)), 0, i32(lat.nz) - 2);
+  let t = clamp(f - vec3f(f32(i0), f32(j0), f32(k0)), vec3f(0.0), vec3f(1.0));
+  var d = vec3f(0.0);
+  for (var dk = 0; dk < 2; dk++) { for (var dj = 0; dj < 2; dj++) { for (var di = 0; di < 2; di++) {
+    let n = u32(i0 + di) + lat.nx * (u32(j0 + dj) + lat.ny * u32(k0 + dk));
+    let w = select(1.0 - t.x, t.x, di == 1) * select(1.0 - t.y, t.y, dj == 1) * select(1.0 - t.z, t.z, dk == 1);
+    d += latDisp[n].xyz * w;
+  }}}
+  return d;
+}
+
+/** Bilinear blood depth (mm) and age (s) at a world x,z. */
+fn bloodAt(p: vec3f) -> vec2f {
+  let fx = p.x / vinfo.hMm + f32(vinfo.nx) * 0.5 - 0.5;
+  let fz = p.z / vinfo.hMm + f32(vinfo.ny) * 0.5 - 0.5;
+  let i0 = i32(floor(fx)); let j0 = i32(floor(fz));
+  let tx = fract(fx); let tz = fract(fz);
+  var acc = vec2f(0.0);
+  for (var dj = 0; dj < 2; dj++) { for (var di = 0; di < 2; di++) {
+    let i = clamp(i0 + di, 0, i32(vinfo.nx) - 1); let j = clamp(j0 + dj, 0, i32(vinfo.ny) - 1);
+    let b = blood[u32(i) + vinfo.nx * u32(j)];
+    let w = select(1.0 - tx, tx, di == 1) * select(1.0 - tz, tz, dj == 1);
+    // blood belongs to the surface of its column; ignore it on vertices well below that surface
+    let onSurface = smoothstep(-1.5, -0.3, p.y - b.surf);
+    acc += vec2f(b.h, b.age) * w * onSurface;
+  }}
+  return acc;
+}
 
 struct VSOut {
   @builtin(position) pos: vec4f,
@@ -29,7 +70,8 @@ fn unpackOmega(a: u32) -> f32 { return f32((a >> 24u) & 0xffu) / 255.0 * 2.0; }
 fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
   let v = verts[vi];
   var o: VSOut;
-  o.wpos = vec3f(v.px, v.py, v.pz);
+  let pm = vec3f(v.px, v.py, v.pz);
+  o.wpos = pm + latticeDisp(pm);
   o.pos = frame.viewProj * vec4f(o.wpos, 1.0);
   o.nrm = vec3f(v.nx, v.ny, v.nz);
   o.cell = v.cell;
@@ -42,7 +84,8 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
 @vertex
 fn vs_shadow(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
   let v = verts[vi];
-  return frame.lightViewProj * vec4f(v.px, v.py, v.pz, 1.0);
+  let pm = vec3f(v.px, v.py, v.pz);
+  return frame.lightViewProj * vec4f(pm + latticeDisp(pm), 1.0);
 }
 
 // ---------- tissue ids (must match core/tissueProperties.ts) ----------
@@ -244,6 +287,23 @@ fn fs_main(in: VSOut) -> @location(0) vec4f {
   var m = baseMaterial(ty, flags, aux, p, N);
   m = applyThermalState(m, st, in.omega, in.water, waterInitial(ty), in.tempC, p);
   N = perturbNormal(N, p, m.nrmDetail);
+  // blood film / pool on upward-facing surfaces
+  let bl = bloodAt(p);
+  if (bl.x > 0.005 && N.y > -0.3) {
+    let depth = bl.x;
+    let film = smoothstep(0.0, 0.25, depth);                 // thin wet film: tints and glosses
+    let pool = smoothstep(0.15, 0.6, depth);                 // standing blood: opaque, dark
+    let clot = smoothstep(45.0, 70.0, bl.y);
+    var bc = mix(vec3f(0.55, 0.06, 0.05), vec3f(0.16, 0.01, 0.01), pool);
+    bc = mix(bc, vec3f(0.22, 0.04, 0.03), clot);
+    m.albedo = mix(m.albedo, m.albedo * vec3f(0.9, 0.3, 0.25), film * (1.0 - pool) * 0.8);
+    m.albedo = mix(m.albedo, bc, pool);
+    m.rough = mix(m.rough, mix(0.07, 0.55, clot), max(film * 0.8, pool));
+    m.sss = m.sss * (1.0 - pool);
+    m.f0 = mix(m.f0, 0.04, pool);
+    // pooled blood levels out: flatten the normal
+    N = normalize(mix(N, vec3f(0.0, 1.0, 0.0), pool * 0.85));
+  }
   if (dot(N, V) < 0.0) { N = normalize(N - V * dot(N, V) * 1.01); }
 
   let L = normalize(frame.lightDir.xyz);

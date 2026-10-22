@@ -6,7 +6,7 @@ import particlesWgsl from './wgsl/particles.wgsl?raw';
 const MAX = 4096;
 const STRIDE = 12; // floats
 
-interface P { x: number; y: number; z: number; vx: number; vy: number; vz: number; age: number; life: number; size0: number; size1: number; kind: 0 | 1 | 2; dx: number; dy: number; dz: number; alpha: number }
+interface P { x: number; y: number; z: number; vx: number; vy: number; vz: number; age: number; life: number; size0: number; size1: number; kind: 0 | 1 | 2 | 3; dx: number; dy: number; dz: number; alpha: number; vol: number }
 
 /**
  * Steam (kind 0), smoke (kind 1) and arc filaments (kind 2). Simulated on the CPU (few thousand
@@ -48,19 +48,46 @@ export class ParticleSystem {
       this.parts.push({ x: at[0] + (this.rnd() - 0.5) * 1.2, y: at[1] + 0.3, z: at[2] + (this.rnd() - 0.5) * 1.2,
         vx: Math.cos(a) * sp * 0.35, vy: sp, vz: Math.sin(a) * sp * 0.35,
         age: 0, life: kind === 0 ? 0.9 + this.rnd() * 0.6 : 2.5 + this.rnd() * 2.0,
-        size0: kind === 0 ? 0.5 : 0.7, size1: kind === 0 ? 2.5 + this.rnd() * 2 : 4 + this.rnd() * 4, kind, dx: 0, dy: 1, dz: 0, alpha: kind === 0 ? 0.18 : 0.22 });
+        size0: kind === 0 ? 0.4 : 0.5, size1: kind === 0 ? 1.8 + this.rnd() * 1.5 : 2.5 + this.rnd() * 2.5, kind, dx: 0, dy: 1, dz: 0, alpha: kind === 0 ? 0.14 : 0.12, vol: 0 });
     }
   }
   /** Arc filament from a to b, lives ~60 ms. */
   arc(a: vec3, b: vec3) {
     if (this.parts.length >= MAX - 1) return;
     const d = vec3.sub(vec3.create(), b, a); const len = vec3.length(d);
-    this.parts.push({ x: a[0], y: a[1], z: a[2], vx: 0, vy: 0, vz: 0, age: 0, life: 0.04 + this.rnd() * 0.05, size0: len, size1: len, kind: 2, dx: d[0], dy: d[1], dz: d[2], alpha: 0.6 + this.rnd() * 0.4 });
+    this.parts.push({ x: a[0], y: a[1], z: a[2], vx: 0, vy: 0, vz: 0, age: 0, life: 0.04 + this.rnd() * 0.05, size0: len, size1: len, kind: 2, dx: d[0], dy: d[1], dz: d[2], alpha: 0.6 + this.rnd() * 0.4, vol: 0 });
   }
-  update(dt: number, suctionAt: vec3 | null) {
+  /**
+   * Blood droplets from an exposed vessel end at `at`. mlPerS > 0 arterial (jet, ~1 m/s, pulsatile
+   * through the caller's rate), < 0 venous (welling at a few cm/s). Volume is carried per droplet so
+   * landings conserve what was emitted.
+   */
+  bleed(at: vec3, mlPerS: number, dt: number) {
+    const arterial = mlPerS > 0;
+    const volUl = Math.abs(mlPerS) * dt * 1000;
+    const perDrop = arterial ? 0.4 : 0.8; // microlitres
+    let n = volUl / perDrop; if (this.rnd() < n - Math.floor(n)) n++; n = Math.floor(n);
+    for (let i = 0; i < n && this.parts.length < MAX - 64; i++) {
+      const a = this.rnd() * Math.PI * 2, el = arterial ? 0.5 + this.rnd() * 0.9 : 0.9 + this.rnd() * 0.5;
+      const sp = arterial ? 120 + this.rnd() * 280 : 15 + this.rnd() * 30;
+      this.parts.push({ x: at[0], y: at[1] + 0.2, z: at[2],
+        vx: Math.cos(a) * Math.cos(el) * sp, vy: Math.sin(el) * sp, vz: Math.sin(a) * Math.cos(el) * sp,
+        age: 0, life: 3.0, size0: arterial ? 0.35 : 0.5, size1: arterial ? 0.35 : 0.5, kind: 3, dx: 0, dy: 1, dz: 0, alpha: 0.95, vol: perDrop });
+    }
+  }
+  /** Droplets that reached the landing height this step: [x, y, z, microlitres]. Cleared by the caller. */
+  readonly landings: number[][] = [];
+
+  update(dt: number, suctionAt: vec3 | null, landingY: (x: number, z: number) => number = () => 0) {
     const keep: P[] = [];
     for (const p of this.parts) {
       p.age += dt; if (p.age >= p.life) continue;
+      if (p.kind === 3) {
+        p.vy -= 9810 * dt; p.vx *= 1 - 0.5 * dt; p.vz *= 1 - 0.5 * dt;
+        p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+        if (p.y <= landingY(p.x, p.z) && p.vy < 0) { this.landings.push([p.x, p.y, p.z, p.vol]); continue; }
+        keep.push(p); continue;
+      }
       if (p.kind !== 2) {
         // buoyancy, drag, gentle drift and turbulence
         p.vy += (p.kind === 0 ? 10 : 4) * dt; p.vx *= 1 - 0.8 * dt; p.vz *= 1 - 0.8 * dt; p.vy *= 1 - 0.5 * dt;
@@ -78,9 +105,9 @@ export class ParticleSystem {
     let o = 0;
     const put = (p: P) => {
       const f = p.age / p.life;
-      const size = p.kind === 2 ? p.size0 : p.size0 + (p.size1 - p.size0) * Math.sqrt(f);
-      const alpha = p.kind === 2 ? p.alpha : p.alpha * (f < 0.1 ? f / 0.1 : 1 - (f - 0.1) / 0.9);
-      const col = p.kind === 0 ? [0.92, 0.92, 0.94] : p.kind === 1 ? [0.30, 0.27, 0.24] : [0.65, 0.78, 1.0];
+      const size = p.kind >= 2 ? p.size0 : p.size0 + (p.size1 - p.size0) * Math.sqrt(f);
+      const alpha = p.kind >= 2 ? p.alpha : p.alpha * (f < 0.1 ? f / 0.1 : 1 - (f - 0.1) / 0.9);
+      const col = p.kind === 0 ? [0.92, 0.92, 0.94] : p.kind === 1 ? [0.30, 0.27, 0.24] : p.kind === 3 ? [0.55, 0.04, 0.03] : [0.65, 0.78, 1.0];
       this.data.set([p.x, p.y, p.z, size, col[0], col[1], col[2], alpha, p.dx, p.dy, p.dz, p.kind], o); o += STRIDE;
     };
     alphaList.forEach(put); addList.forEach(put);

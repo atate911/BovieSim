@@ -11,7 +11,10 @@ export type SimEventType =
   | 'activation.start' | 'activation.end' | 'activation.noContact'
   | 'tissue.coagulated' | 'tissue.desiccated' | 'tissue.carbonized' | 'tissue.vaporized'
   | 'tissue.fatContact' | 'tissue.fasciaContact' | 'tissue.muscleContact' | 'tissue.vesselContact' | 'tissue.nerveContact'
-  | 'generator.settingChanged' | 'generator.remFault' | 'tool.changed';
+  | 'generator.settingChanged' | 'generator.remFault' | 'tool.changed'
+  | 'vessel.exposed' | 'bleed.start' | 'bleed.sealed' | 'bleed.charPlug' | 'vessel.rebleed'
+  | 'blood.poolConducts' | 'field.obscured' | 'suction.used' | 'forceps.buzzed'
+  | 'muscle.stimulated' | 'lesion.freed' | 'lesion.delivered' | 'lesion.breached';
 
 export interface SimEvent {
   t: number;
@@ -32,6 +35,16 @@ const TEACHING: Partial<Record<SimEventType, string>> = {
   'tissue.muscleContact': 'Muscle: low impedance, bleeds readily, twitches on coag.',
   'tissue.vesselContact': 'You are on a vessel. Direct coag chars an open lumen without sealing it; grasp and buzz the forceps instead.',
   'tissue.nerveContact': 'Nerve: heat within 2 mm causes a sensory deficit.',
+  'bleed.start': 'Bright red and pulsatile is arterial: grasp it with forceps and buzz the forceps, or tie it if it is over 2 mm. Dark and welling is venous: pressure, then fulgurate the surface.',
+  'bleed.sealed': 'Walls apposed and collagen denatured across the lumen: a coaptive seal that holds.',
+  'bleed.charPlug': 'Direct coag on an open lumen: a char plug over the vessel, not a seal. It can rebleed when the pressure rises or the plug is disturbed.',
+  'vessel.rebleed': 'The char plug gave way. Grasp the vessel and buzz the forceps this time.',
+  'blood.poolConducts': 'Current is spreading through the pool: wide shallow burns and no seal. Suction and pressure first, then identify the source.',
+  'field.obscured': 'The field is filling with blood. Suction, pressure, find the source: do not buzz blind.',
+  'forceps.buzzed': 'Energy delivered through the jaws. Effective only if a vessel is held between them with the tips not touching other tissue.',
+  'muscle.stimulated': 'Current through muscle made it jump. Shorter bursts, cut rather than coag, and check the return pad.',
+  'lesion.freed': 'The capsule is free around most of its circumference: the lipoma will deliver with gentle traction.',
+  'lesion.breached': 'You have entered the lipoma. Fat spills, the plane is lost and fragments left behind recur.',
 };
 
 export class EventBus {
@@ -46,6 +59,8 @@ export class EventBus {
   private noContactReported = false;
   private coagAccum = 0;
   private lastCoagReport = -1e9;
+  private lastExposed = 0; private lastSealed = 0; private lastCharPlug = 0; private lastRebleeds = 0;
+  private poolWarned = false; private obscuredWarned = false; private lastSuction = false; private lastMuscle = -1e9; private lastBuzz = false;
 
   on(fn: (e: SimEvent) => void) { this.listeners.push(fn); }
   emit(e: SimEvent) { this.events.push(e); for (const l of this.listeners) l(e); }
@@ -88,6 +103,33 @@ export class EventBus {
     if (active && r.contactVoxels > 0 && mode && r.powerW < 0.6 * gen.activeWatts && r.zOhm > mode.zHi) {
       if (t - this.lastCoagReport > 1.0) { this.push(t, 'tissue.desiccated', `Z ${r.zOhm.toFixed(0)} Ω, only ${r.powerW.toFixed(0)} W delivered`, 'warn'); this.lastCoagReport = t; }
     }
+    // bleeding and hemostasis
+    const exposed = r.exposedArterial + r.exposedVenous;
+    if (exposed > 0 && this.lastExposed === 0) {
+      const kind = r.exposedArterial > 0 ? 'arterial' : 'venous';
+      this.push(t, 'vessel.exposed', `${kind} vessel end exposed`);
+      this.push(t, 'bleed.start', `${kind} bleeding`, r.exposedArterial > 0 ? 'warn' : 'info');
+    }
+    this.lastExposed = exposed;
+    if (r.sealedVoxels > this.lastSealed) this.push(t, 'bleed.sealed', `${r.sealedVoxels - this.lastSealed} vessel voxels sealed`);
+    this.lastSealed = Math.max(this.lastSealed, r.sealedVoxels);
+    if (r.charPlugVoxels > this.lastCharPlug) this.push(t, 'bleed.charPlug', `${r.charPlugVoxels - this.lastCharPlug} vessel voxels under a char plug`, 'warn');
+    this.lastCharPlug = Math.max(this.lastCharPlug, r.charPlugVoxels);
+    if (r.rebleeds > this.lastRebleeds) this.push(t, 'vessel.rebleed', `char plug failed`, 'bad');
+    this.lastRebleeds = Math.max(this.lastRebleeds, r.rebleeds);
+    if (active && r.poolAtTipMm > 0.3) { if (!this.poolWarned) { this.push(t, 'blood.poolConducts', `${r.poolAtTipMm.toFixed(1)} mm of blood under the electrode`, 'warn'); this.poolWarned = true; } }
+    else if (!active) this.poolWarned = false;
+    if (r.poolMl > 0.8 && !this.obscuredWarned) { this.push(t, 'field.obscured', `${r.poolMl.toFixed(1)} ml pooled`, 'warn'); this.obscuredWarned = true; }
+    if (r.poolMl < 0.3) this.obscuredWarned = false;
+    if (this.suctionOn && !this.lastSuction) this.push(t, 'suction.used', 'field cleared');
+    this.lastSuction = this.suctionOn;
+    if (active && this.buzzing && !this.lastBuzz) {
+      const ty = r.hit ? cellType(r.hitCell) : -1;
+      const onVessel = ty === Tissue.Artery || ty === Tissue.Vein;
+      this.push(t, 'forceps.buzzed', onVessel ? 'vessel held in the jaws' : 'no vessel in the jaws', onVessel ? 'info' : 'warn');
+    }
+    this.lastBuzz = active && this.buzzing;
+    if (active && mode?.kind === 'coag' && r.muscleHeatVoxels > 20 && t - this.lastMuscle > 1.5) { this.push(t, 'muscle.stimulated', `${r.muscleHeatVoxels} muscle voxels in the current path`, 'warn'); this.lastMuscle = t; }
     const settings = JSON.stringify(gen.settings);
     if (this.lastSettings && settings !== this.lastSettings) this.push(t, 'generator.settingChanged', `${gen.settings.cutMode} ${gen.settings.cutWatts} W / ${gen.settings.coagMode} ${gen.settings.coagWatts} W`);
     this.lastSettings = settings;
@@ -95,5 +137,7 @@ export class EventBus {
     void frameDt;
   }
 
+  /** set by the app each frame */
+  suctionOn = false; buzzing = false;
   recent(n: number): SimEvent[] { return this.events.slice(-n); }
 }

@@ -169,6 +169,15 @@ export function buildAnatomy(sc: Scenario, voxelOverride?: number, seedOverride?
     }
   };
 
+  const placeVessel = (x: number, y: number, r: number, arterial: boolean) => {
+    const c = Math.floor(x / h) + nx * Math.floor(y / h);
+    const type = arterial ? Tissue.Artery : Tissue.Vein;
+    paintCylinderZ(x, y, r, colDermis[c] - 0.3, colDeepBot[c] + 1.5, type, 0.6 + rng() * 0.8, rng() * 6.28);
+    const ang = rng() * 6.28, len = 6 + rng() * 10;
+    paintSegment(x, y, colDeepTop[c] - r, x + Math.cos(ang) * len, y + Math.sin(ang) * len, colDeepTop[c] - r, r * 1.1, type, Math.round(r * 1.1 / 0.05));
+    report.vessels.push({ x: x - sx / 2, y: y - sy / 2, r, arterial });
+  };
+  for (const v of sc.vessels.explicit ?? []) placeVessel(v.xMm + sx / 2, v.yMm + sy / 2, v.rMm, v.arterial);
   for (let n = 0; n < nPerf; n++) {
     // place on a septum: sample until we hit one (septa are where perforators run)
     let x = 0, y = 0;
@@ -178,14 +187,7 @@ export function buildAnatomy(sc: Scenario, voxelOverride?: number, seedOverride?
       if (colSeptum[c]) break;
     }
     const r = rMin + (rMax - rMin) * Math.pow(rng(), 1.6);
-    const arterial = rng() < sc.vessels.arterialFraction;
-    const c = Math.floor(x / h) + nx * Math.floor(y / h);
-    const type = arterial ? Tissue.Artery : Tissue.Vein;
-    paintCylinderZ(x, y, r, colDermis[c] - 0.3, colDeepBot[c] + 1.5, type, 0.6 + rng() * 0.8, rng() * 6.28);
-    // a branch running along the deep fascia toward a random direction
-    const ang = rng() * 6.28, len = 6 + rng() * 10;
-    paintSegment(x, y, colDeepTop[c] - r, x + Math.cos(ang) * len, y + Math.sin(ang) * len, colDeepTop[c] - r, r * 1.1, type, Math.round(r * 1.1 / 0.05));
-    report.vessels.push({ x: x - sx / 2, y: y - sy / 2, r, arterial });
+    placeVessel(x, y, r, rng() < sc.vessels.arterialFraction);
   }
 
   // ---- nerves ---------------------------------------------------------------------------------
@@ -240,6 +242,31 @@ export function buildAnatomy(sc: Scenario, voxelOverride?: number, seedOverride?
     report.lesionCenter = [cx - sx / 2, -cdz, cy - sy / 2];
   }
 
+  // ---- pre-existing wound -----------------------------------------------------------------
+  for (const pc of sc.preCarve ?? []) carveSdf(vol, (x, y, d) => {
+    const cx = pc.centerMm[0], cy = pc.centerMm[1];
+    if (pc.kind === 'pit') return Math.max(Math.hypot(x - cx, y - cy) - (pc.lengthMm - d * (pc.slope ?? 0.4)), d - pc.depthMm);
+    const a = (pc.angleDeg ?? 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+    const u = (x - cx) * ca + (y - cy) * sa, v = -(x - cx) * sa + (y - cy) * ca;
+    return Math.max(Math.abs(u) - pc.lengthMm / 2, Math.abs(v) - (pc.widthMm + d * (pc.slope ?? 0.3)), d - pc.depthMm);
+  });
+
   report.fillMs = performance.now() - t0;
   return { volume: vol, report };
+}
+
+/** Carves a region given by a signed distance (mm, negative inside) in bed coordinates (x, y from the bed centre, depth below the nominal surface). */
+export function carveSdf(volume: Volume, sdf: (x: number, y: number, depth: number) => number) {
+  const { nx, ny, nz, h } = volume.dims;
+  const surfK = volume.surfaceK;
+  for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const x = (i + 0.5 - nx / 2) * h, y = (j + 0.5 - ny / 2) * h, depth = (surfK - (k + 0.5)) * h;
+    const d = sdf(x, y, depth);
+    if (d < h) {
+      const idx = volume.index(i, j, k);
+      const keep = Math.min(1, Math.max(0, 0.5 + d / h));
+      volume.occupancy[idx] = Math.min(volume.occupancy[idx], keep);
+      if (volume.occupancy[idx] < 0.5) volume.cell[idx] = 0;
+    }
+  }
 }

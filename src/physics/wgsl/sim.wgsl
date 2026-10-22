@@ -24,6 +24,10 @@ struct SimParams {
   sliceU: vec4f,   // slice horizontal unit axis, w = pixel width
   sliceV: vec4f,   // slice vertical unit axis (downward), w = pixel height
   sliceParams: vec4f, // x depth (mm), y mode, z 0, w 0
+  wbox0: vec4i,    // wound box origin (bleeding scan), w = frame parity
+  wbox1: vec4i,    // wound box size
+  tool2: vec4f,    // secondary tool tip (mm), w = radius (mm)
+  tool2b: vec4f,   // secondary tool second point (forceps jaw B), w = mode (0 none, 1 grasp, 2 suction)
 };
 
 struct SimState {
@@ -37,7 +41,17 @@ struct SimState {
   maxTemp: atomic<u32>,     // max temperature * 100 in the thermal box
   carbonCount: atomic<u32>,
   coagCount: atomic<u32>,
-  pad3: u32,
+  muscleHeat: atomic<u32>,  // heated muscle voxels (T > 45) in the thermal box this step
+  bloodLostFixed: atomic<u32>, // cumulative blood lost, microlitres
+  exposedArt: atomic<u32>,  // exposed bleeding arterial voxels
+  exposedVen: atomic<u32>,
+  sealedCount: atomic<u32>,
+  charPlugCount: atomic<u32>,
+  rebleedCount: atomic<u32>,
+  poolVolFixed: atomic<u32>, // pooled blood, microlitres
+  poolAtTipFixed: atomic<u32>, // blood depth under the electrode tip, micrometres
+  bleedN: atomic<u32>, pad4: u32, pad5: u32, pad6: u32,
+  bleedPts: array<vec4f, 8>,   // exposed bleeding voxels this frame: xyz (mm), w = ml/s (arterial > 0, venous < 0)
 };
 
 struct TissueProp { sigma: f32, k: f32, rho: f32, c: f32, wb: f32, water: f32, eaR: f32, lnA: f32 };
@@ -56,12 +70,22 @@ struct PropTable { t: array<TissueProp, 14> };
 @group(1) @binding(0) var<storage, read> srcA: array<f32>;      // potential (jacobi) or temp (bioheat)
 @group(1) @binding(1) var<storage, read_write> dstA: array<f32>;
 
-const T_AIR = 0u; const T_EPI = 1u; const T_FAT = 3u; const T_LIPOMA = 11u; const T_ARTERY = 8u; const T_VEIN = 9u;
+const T_AIR = 0u; const T_EPI = 1u; const T_FAT = 3u; const T_LIPOMA = 11u; const T_ARTERY = 8u; const T_VEIN = 9u; const T_MUSCLE = 7u; const T_BLOOD = 13u;
+const FLAG_COAPTED = 1u << 26u; const FLAG_SEALED = 1u << 27u; const FLAG_CHARPLUG = 1u << 28u; const FLAG_BLOODCOVER = 1u << 29u; const FLAG_REBLED = 1u << 30u;
+const SIGMA_BLOOD: f32 = 0.7;
+/** ml/s from a fully transected vessel of radius r (mm), arterial, mean over the pulse */
+fn vesselFlowMlS(rMm: f32) -> f32 { return 0.25 * rMm * rMm * rMm; }
 const S_NORMAL = 0u; const S_COAG = 1u; const S_DESIC = 2u; const S_CARBON = 3u; const S_VAPOR = 4u;
 const BLOOD_RHO_C: f32 = 1050.0 * 3617.0;
 const L_VAP: f32 = 2.26e6;
 const T_BOIL: f32 = 100.0;
 const T_CARBON: f32 = 220.0;
+
+fn hash13(p: vec3f) -> f32 {
+  var q = fract(p * vec3f(0.1031, 0.1030, 0.0973));
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.x + q.y) * q.z);
+}
 
 fn inVolume(i: i32, j: i32, k: i32) -> bool {
   return i >= 0 && j >= 0 && k >= 0 && i < i32(info.nx) && j < i32(info.ny) && k < i32(info.nz);
@@ -76,7 +100,11 @@ fn electrodeDistance(p: vec3f) -> f32 {
   let rel = p - sim.tip.xyz;
   let t = dot(rel, sim.axis.xyz);
   let etype = sim.gen2.z;
-  if (etype > 1.5) {
+  if (etype > 2.5) {
+    // forceps jaws: capsule from the tip along wdir for axis.w (jaw span), radius ndir.w
+    let tc = clamp(dot(rel, sim.wdir.xyz), 0.0, sim.axis.w);
+    return length(rel - sim.wdir.xyz * tc) - sim.ndir.w;
+  } else if (etype > 1.5) {
     // ball: sphere of radius ndir.w centred one radius up the axis
     return length(rel - sim.axis.xyz * sim.ndir.w) - sim.ndir.w;
   } else if (etype > 0.5) {
@@ -111,6 +139,7 @@ fn sigmaOfPot(idx: u32) -> f32 {
   let c = cells[idx];
   let ty = cellType(c);
   if (ty == T_AIR || occ[idx] < 0.5) { return 0.0; }
+  if ((c & FLAG_BLOODCOVER) != 0u) { return SIGMA_BLOOD * sim.gen2.w; }
   let st = cellState(c);
   if (st == S_CARBON) { return 0.002; }
   let pr = props.t[ty];
@@ -141,6 +170,8 @@ fn isContact(i: i32, j: i32, k: i32) -> bool {
   let d = electrodeDistance(worldOf(i, j, k));
   if (d <= max(sim.dt.w, 0.3 * info.hMm)) { return true; }
   if (d <= sim.tip.w) { return hasAirNeighbour(i, j, k); }
+  // current spreads through a blood pool: covered surface voxels within 3 mm of the tip couple to it
+  if (d <= 3.0 && (cells[idx3(i, j, k)] & FLAG_BLOODCOVER) != 0u) { return true; }
   return false;
 }
 
@@ -370,6 +401,16 @@ fn bioheat(@builtin(global_invocation_id) gid: vec3u) {
     else if (w <= 0.03 * pr.water) { st = max(st, S_DESIC); }
     else if (om > 0.53 && st == S_NORMAL) { st = S_COAG; }
     c = packCellState(c, st);
+    // vessel wall collagen denatured: sealed if the lumen was apposed (forceps) or the vessel is
+    // small enough to shrink closed; otherwise an open lumen under a char plug that can rebleed
+    if ((ty == T_ARTERY || ty == T_VEIN) && om > 1.0 && (c & (FLAG_SEALED | FLAG_CHARPLUG)) == 0u) {
+      let r = f32(cellAux(c)) * 0.05;
+      // apposed walls, small vessels, and unexposed vessel inside the coagulum thrombose (sealed);
+      // only an open lumen coagulated without apposition becomes a char plug that can rebleed
+      if ((c & FLAG_COAPTED) != 0u || r <= 0.5 || !hasAirNeighbour(i, j, k)) { c |= FLAG_SEALED; atomicAdd(&state.sealedCount, 1u); }
+      else { c |= FLAG_CHARPLUG; atomicAdd(&state.charPlugCount, 1u); }
+    }
+    if (ty == T_MUSCLE && T1 > 45.0) { atomicAdd(&state.muscleHeat, 1u); }
   }
   cells[idx] = c; occ[idx] = o; water[idx] = max(w, 0.0); omega[idx] = om;
   dstA[idx] = T1;
@@ -377,6 +418,222 @@ fn bioheat(@builtin(global_invocation_id) gid: vec3u) {
   atomicMax(&state.maxTemp, u32(max(T1, 0.0) * 100.0));
   if (st == S_CARBON) { atomicAdd(&state.carbonCount, 1u); }
   if (om > 0.53 && om0 <= 0.53) { atomicAdd(&state.coagCount, 1u); }
+}
+
+// ------------------------------------------------------------------ blood layer
+// One record per surface column (i, j): h = blood depth (mm) above the tissue top, age (s),
+// surf = tissue top height (mm, world Y), hNext = scratch for the flow step.
+struct BloodCol { h: f32, age: f32, surf: f32, hNext: f32 };
+struct Drops { n: vec4u, d: array<vec4f, 16> };   // droplet landings this frame: xyz (mm), w = volume (ul)
+@group(2) @binding(0) var<storage, read_write> blood: array<BloodCol>;
+@group(2) @binding(1) var<uniform> drops: Drops;
+
+const BLOOD_FILM: f32 = 0.05;   // mm, below this blood wets but does not flow
+const BLOOD_VISC: f32 = 0.35;   // fraction of the head difference moved per step
+const CLOT_AGE: f32 = 60.0;
+
+fn colIdx(i: i32, j: i32) -> u32 { return u32(i) + info.nx * u32(j); }
+
+/** Column scan: tissue top height and blood-cover flag on the top voxel. Runs over the wound box columns. */
+@compute @workgroup_size(8, 8)
+fn surfaceHeight(@builtin(global_invocation_id) gid: vec3u) {
+  let i = sim.wbox0.x + i32(gid.x); let j = sim.wbox0.y + i32(gid.y);
+  if (i32(gid.x) >= sim.wbox1.x || i32(gid.y) >= sim.wbox1.y || i < 0 || j < 0 || i >= i32(info.nx) || j >= i32(info.ny)) { return; }
+  let ci = colIdx(i, j);
+  var top = -1;
+  for (var k = i32(info.nz) - 1; k >= 0; k--) {
+    let idx = idx3(i, j, k);
+    if (occ[idx] >= 0.5 && cellType(cells[idx]) != T_AIR) { top = k; break; }
+  }
+  if (top < 0) { blood[ci].surf = -1e3; return; }
+  let w = worldOf(i, j, top);
+  blood[ci].surf = w.y + 0.5 * info.hMm * (occ[idx3(i, j, top)] - 0.5) * 2.0;
+  let idx = idx3(i, j, top);
+  let covered = blood[ci].h > 0.3;
+  var c = cells[idx];
+  if (covered) { c |= FLAG_BLOODCOVER; } else { c &= ~FLAG_BLOODCOVER; }
+  cells[idx] = c;
+}
+
+/** Bleeding sources: exposed vessel voxels add flow to their column; char plugs may rebleed; droplets land. */
+@compute @workgroup_size(4, 4, 4)
+fn bloodSource(@builtin(global_invocation_id) gid: vec3u) {
+  if (i32(gid.x) >= sim.wbox1.x || i32(gid.y) >= sim.wbox1.y || i32(gid.z) >= sim.wbox1.z) { return; }
+  let i = sim.wbox0.x + i32(gid.x); let j = sim.wbox0.y + i32(gid.y); let k = sim.wbox0.z + i32(gid.z);
+  if (!inVolume(i, j, k)) { return; }
+  let idx = idx3(i, j, k);
+  var c = cells[idx];
+  let ty = cellType(c);
+  if ((ty != T_ARTERY && ty != T_VEIN) || occ[idx] < 0.5) { return; }
+  if (!hasAirNeighbour(i, j, k)) { return; }
+  let dt = sim.dt.x * f32(sim.wbox0.w);   // frame dt (substeps * dt)
+  let t = sim.dt.y;
+  let r = max(f32(cellAux(c)) * 0.05, 0.1);
+  // char plug: stochastic rebleed (hash per voxel and second)
+  if ((c & FLAG_CHARPLUG) != 0u) {
+    let p = clamp((r - 0.5) / 1.5, 0.0, 0.9) * 0.15 * dt;
+    let hsh = hash13(vec3f(f32(idx & 0xffffu), f32(idx >> 16u), floor(t * 30.0)));
+    if (hsh < p) { c &= ~FLAG_CHARPLUG; c |= FLAG_REBLED; cells[idx] = c; atomicAdd(&state.rebleedCount, 1u); }
+    return;
+  }
+  if ((c & (FLAG_SEALED | FLAG_COAPTED)) != 0u) { return; }
+  // flow of the whole transected end, shared by the voxels of its cross-section
+  let endVoxels = max(1.0, 3.14159 * r * r / (info.hMm * info.hMm));
+  var q = vesselFlowMlS(r) / endVoxels;           // ml/s per voxel
+  var arterial = false;
+  if (ty == T_ARTERY) {
+    let ph = fract(t * 1.2);                       // 72 bpm
+    q *= 0.35 + 1.3 * pow(max(sin(ph * 3.14159), 0.0), 3.0);
+    atomicAdd(&state.exposedArt, 1u);
+    arterial = true;
+  } else { q *= 0.3; atomicAdd(&state.exposedVen, 1u); }
+  let slot = atomicAdd(&state.bleedN, 1u);
+  if (slot < 8u) { state.bleedPts[slot] = vec4f(worldOf(i, j, k), select(-q, q, arterial)); }
+  let volUl = q * dt * 1000.0;                     // microlitres this frame
+  // column depth increment: ul -> mm3 (1 ul = 1 mm3) over the column area
+  let ci = colIdx(i, j);
+  let dh = volUl / (info.hMm * info.hMm);
+  // atomic float add is unavailable: columns of one vessel end are distinct voxels but may share a column;
+  // accept the race on h (rare, small) and account the volume exactly
+  blood[ci].h = blood[ci].h + dh;
+  atomicAdd(&state.bloodLostFixed, u32(volUl * 1000.0 + 0.5) / 1000u + select(0u, 1u, hash13(vec3f(f32(idx), t, 1.0)) < fract(volUl)));
+}
+
+/** Droplet landings and suction, one thread per droplet / column region. */
+@compute @workgroup_size(16)
+fn bloodDrops(@builtin(global_invocation_id) gid: vec3u) {
+  let n = drops.n.x;
+  if (gid.x >= n) { return; }
+  let d = drops.d[gid.x];
+  // a droplet splats over a ~0.8 mm radius footprint
+  let r = max(i32(ceil(0.8 / info.hMm)), 1);
+  let vi = i32(round(d.x / info.hMm + f32(info.nx) * 0.5 - 0.5));
+  let vj = i32(round(d.z / info.hMm + f32(info.ny) * 0.5 - 0.5));
+  var cnt = 0.0;
+  for (var a = -r; a <= r; a++) { for (var b = -r; b <= r; b++) { if (a * a + b * b <= r * r) { cnt += 1.0; } } }
+  let dh = d.w / (info.hMm * info.hMm) / max(cnt, 1.0);
+  for (var a = -r; a <= r; a++) { for (var b = -r; b <= r; b++) {
+    if (a * a + b * b > r * r) { continue; }
+    let i = vi + a; let j = vj + b;
+    if (i < 0 || j < 0 || i >= i32(info.nx) || j >= i32(info.ny)) { continue; }
+    let ci = colIdx(i, j);
+    blood[ci].h = blood[ci].h + dh;
+  }}
+}
+
+/** Shallow flow of blood down the head gradient; writes hNext. */
+@compute @workgroup_size(8, 8)
+fn bloodFlow(@builtin(global_invocation_id) gid: vec3u) {
+  let i = sim.wbox0.x + i32(gid.x) - 4; let j = sim.wbox0.y + i32(gid.y) - 4;
+  if (i32(gid.x) >= sim.wbox1.x + 8 || i32(gid.y) >= sim.wbox1.y + 8 || i < 0 || j < 0 || i >= i32(info.nx) || j >= i32(info.ny)) { return; }
+  let ci = colIdx(i, j);
+  let h0 = blood[ci].h; let s0 = blood[ci].surf;
+  var h = h0;
+  if (s0 < -500.0) { blood[ci].hNext = 0.0; return; }
+  let H0 = s0 + h0;
+  let nb = array<vec2i, 4>(vec2i(1,0), vec2i(-1,0), vec2i(0,1), vec2i(0,-1));
+  for (var n = 0; n < 4; n++) {
+    let ii = i + nb[n].x; let jj = j + nb[n].y;
+    if (ii < 0 || jj < 0 || ii >= i32(info.nx) || jj >= i32(info.ny)) { continue; }
+    let cj = colIdx(ii, jj);
+    let sj = blood[cj].surf; if (sj < -500.0) { continue; }
+    let Hj = sj + blood[cj].h;
+    // outflow to lower neighbours, limited by what is mobile above the wetting film
+    if (H0 > Hj) {
+      let mobile = max(h0 - BLOOD_FILM, 0.0);
+      let clotFactor = select(1.0, 0.0, blood[ci].age > CLOT_AGE);
+      h -= min(BLOOD_VISC * 0.25 * (H0 - Hj), mobile * 0.25) * clotFactor;
+    } else if (Hj > H0) {
+      let mobileJ = max(blood[cj].h - BLOOD_FILM, 0.0);
+      let clotJ = select(1.0, 0.0, blood[cj].age > CLOT_AGE);
+      h += min(BLOOD_VISC * 0.25 * (Hj - H0), mobileJ * 0.25) * clotJ;
+    }
+  }
+  // suction
+  if (sim.tool2b.w > 1.5) {
+    let p = vec3f(f32(i) + 0.0, 0.0, f32(j));
+    let w = voxelToWorld(info, vec3f(f32(i), f32(j), 0.0));
+    let dxz = length(vec2f(w.x, w.z) - vec2f(sim.tool2.x, sim.tool2.z));
+    if (dxz <= sim.tool2.w && abs(s0 - sim.tool2.y) < 4.0) {
+      let area = 3.14159 * sim.tool2.w * sim.tool2.w;           // mm2
+      let dhSuck = 2000.0 * sim.dt.x * f32(sim.wbox0.w) / area; // 2 ml/s over the tip area -> mm
+      h = max(h - dhSuck, 0.0);
+    }
+  }
+  blood[ci].hNext = max(h, 0.0);
+}
+
+/** Commit the flow step, age static blood, and gather pool statistics. */
+@compute @workgroup_size(8, 8)
+fn bloodCommit(@builtin(global_invocation_id) gid: vec3u) {
+  let i = sim.wbox0.x + i32(gid.x) - 4; let j = sim.wbox0.y + i32(gid.y) - 4;
+  if (i32(gid.x) >= sim.wbox1.x + 8 || i32(gid.y) >= sim.wbox1.y + 8 || i < 0 || j < 0 || i >= i32(info.nx) || j >= i32(info.ny)) { return; }
+  let ci = colIdx(i, j);
+  let dtf = sim.dt.x * f32(sim.wbox0.w);
+  let hNew = blood[ci].hNext;
+  let moved = abs(hNew - blood[ci].h) > 1e-4;
+  blood[ci].h = hNew;
+  blood[ci].age = select(blood[ci].age + dtf, 0.0, moved || hNew < BLOOD_FILM);
+  if (hNew > 0.0) {
+    atomicAdd(&state.poolVolFixed, u32(hNew * info.hMm * info.hMm * 1000.0));
+    let w = voxelToWorld(info, vec3f(f32(i), f32(j), 0.0));
+    if (length(vec2f(w.x, w.z) - vec2f(sim.tip.x, sim.tip.z)) < 1.5) { atomicMax(&state.poolAtTipFixed, u32(hNew * 1000.0)); }
+  }
+}
+
+/** Forceps grasp: set or clear FLAG_COAPTED inside the jaw capsule (tool2 -> tool2b, radius tool2.w). */
+@compute @workgroup_size(4, 4, 4)
+fn coaptMark(@builtin(global_invocation_id) gid: vec3u) {
+  let S = 12;
+  let ci = i32(round(sim.tool2.x / info.hMm + f32(info.nx) * 0.5 - 0.5)) - S / 2;
+  let cj = i32(round(sim.tool2.z / info.hMm + f32(info.ny) * 0.5 - 0.5)) - S / 2;
+  let ck = i32(round(sim.tool2.y / info.hMm + f32(info.nz - info.airLayers) - 0.5)) - S / 2;
+  let i = ci + i32(gid.x); let j = cj + i32(gid.y); let k = ck + i32(gid.z);
+  if (i32(gid.x) >= S || i32(gid.y) >= S || i32(gid.z) >= S || !inVolume(i, j, k)) { return; }
+  let idx = idx3(i, j, k);
+  var c = cells[idx];
+  if (cellType(c) == T_AIR) { return; }
+  let p = worldOf(i, j, k);
+  let a = sim.tool2.xyz; let b = sim.tool2b.xyz;
+  let ab = b - a; let t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+  let d = length(p - (a + ab * t));
+  // a vessel held in the jaws is flattened as a whole: the coapted zone widens with the vessel radius
+  var rad = sim.tool2.w;
+  let ty = cellType(c);
+  if (ty == T_ARTERY || ty == T_VEIN) { rad = max(rad, 2.2 * f32(cellAux(c)) * 0.05 + 0.3); }
+  let inside = d <= rad && sim.tool2b.w > 0.5 && sim.tool2b.w < 1.5;
+  if (inside) { c |= FLAG_COAPTED; } else { c &= ~FLAG_COAPTED; }
+  cells[idx] = c;
+}
+
+// ------------------------------------------------------------------ constraint probe (mechanics)
+// For each lattice constraint segment (material mm endpoints) sample 5 points: severed if any
+// sample is air/vaporised where the segment originally passed through tissue; omegaMax for shrinkage.
+struct Seg { a: vec4f, b: vec4f };   // xyz endpoints, a.w = 1 if the segment initially ran through tissue
+struct Probe { flags: u32, omega: f32, pad0: u32, pad1: u32 };
+// bound in group 1 (same slots and access modes as srcA/dstA, which this entry point does not use)
+@group(1) @binding(0) var<storage, read> segs: array<Seg>;
+@group(1) @binding(1) var<storage, read_write> probes: array<Probe>;
+
+@compute @workgroup_size(64)
+fn constraintProbe(@builtin(global_invocation_id) gid: vec3u) {
+  let n = gid.x;
+  if (n >= arrayLength(&segs)) { return; }
+  let sg = segs[n];
+  var severed = 0u; var om = 0.0; var tissueSamples = 0u;
+  for (var t = 0; t < 5; t++) {
+    let f = (f32(t) + 0.5) / 5.0;
+    let p = mix(sg.a.xyz, sg.b.xyz, f);
+    let vi = i32(round(p.x / info.hMm + f32(info.nx) * 0.5 - 0.5));
+    let vj = i32(round(p.z / info.hMm + f32(info.ny) * 0.5 - 0.5));
+    let vk = i32(round(p.y / info.hMm + f32(info.nz - info.airLayers) - 0.5));
+    if (!inVolume(vi, vj, vk)) { continue; }
+    let idx = idx3(vi, vj, vk);
+    if (occ[idx] >= 0.5 && cellType(cells[idx]) != T_AIR) { tissueSamples++; om = max(om, omega[idx]); }
+    else if (sg.a.w > 0.5) { severed = 1u; }
+  }
+  probes[n].flags = severed | (select(0u, 2u, tissueSamples == 0u));
+  probes[n].omega = om;
 }
 
 // ------------------------------------------------------------------ pick
@@ -488,6 +745,9 @@ fn slice(@builtin(global_invocation_id) gid: vec3u) {
         if (st == S_DESIC) { col = mix(col, vec3f(0.45, 0.33, 0.22), 0.7); }
         if (st == S_CARBON) { col = vec3f(0.03, 0.025, 0.02); }
         if (srcA[idx] > 98.0) { col = mix(col, vec3f(1.0), 0.15); }
+        if ((c & FLAG_SEALED) != 0u) { col = mix(col, vec3f(0.2, 0.9, 0.3), 0.5); }
+        if ((c & FLAG_CHARPLUG) != 0u) { col = mix(col, vec3f(0.1, 0.05, 0.0), 0.7); }
+        if ((c & FLAG_COAPTED) != 0u) { col = mix(col, vec3f(0.3, 0.6, 1.0), 0.4); }
       }
     } else if (ty == T_AIR && occ[idx] < 0.5) {
       // air: show faint temperature of nothing; mark electrode silhouette

@@ -10,11 +10,19 @@ export interface SimReadout {
   zOhm: number; powerW: number; vRms: number; iRms: number;
   hit: vec3 | null; hitCell: number; hitIdx: number;
   maxTempC: number; carbonVoxels: number; newCoagVoxels: number; vapVoxels: number; contactVoxels: number;
+  muscleHeatVoxels: number; bloodLostMl: number; exposedArterial: number; exposedVenous: number;
+  sealedVoxels: number; charPlugVoxels: number; rebleeds: number; poolMl: number; poolAtTipMm: number;
+  /** exposed bleeding voxels this frame: [x, y, z, mlPerS] (negative flow = venous) */
+  bleedPoints: number[][];
 }
 
-const SIM_BYTES = 17 * 16;
+const SIM_BYTES = 21 * 16;
 export const SLICE_W = 320, SLICE_H = 200;
-const STATE_BYTES = 80;
+const STATE_BYTES = 256;
+const DROPS_BYTES = 16 + 16 * 16;
+export const MAX_DROPS = 16;
+
+export type SecondaryToolMode = 0 | 1 | 2; // none, forceps grasp, suction
 
 /**
  * Orchestrates the electrothermal kernels each frame:
@@ -26,7 +34,19 @@ export class PhysicsPipeline {
   readonly stateBuf: GPUBuffer;
   private propsBuf: GPUBuffer;
   private readback: GPUBuffer;
-  private pipes: Record<'seed' | 'red' | 'black' | 'heating' | 'generator' | 'bioheat' | 'pick' | 'slice', GPUComputePipeline>;
+  private pipes: Record<'seed' | 'red' | 'black' | 'heating' | 'generator' | 'bioheat' | 'pick' | 'slice' | 'surfaceHeight' | 'bloodSource' | 'bloodDrops' | 'bloodFlow' | 'bloodCommit' | 'coaptMark' | 'constraintProbe', GPUComputePipeline>;
+  private probe: { segs: GPUBuffer; probes: GPUBuffer; readback: GPUBuffer; bg: GPUBindGroup; n: number; severed: Uint8Array; omega: Float32Array; fresh: boolean } | null = null;
+  private layoutProbe: GPUPipelineLayout;
+  private l2p!: GPUBindGroupLayout;
+  readonly bloodBuf: GPUBuffer;
+  private dropsBuf: GPUBuffer;
+  private g2b!: GPUBindGroup;
+  /** wound box: union of every subdomain visited (bleeding and blood flow are scanned here) */
+  private wbMin = [1e9, 1e9, 1e9]; private wbMax = [-1, -1, -1];
+  /** secondary instrument (forceps jaws a->b, or suction tip a) */
+  private tool2 = { a: vec3.create(), b: vec3.create(), radius: 0.6, mode: 0 as SecondaryToolMode, lastMode: 0 as SecondaryToolMode };
+  /** droplet landings queued for this frame: [x, y, z, microlitres] */
+  readonly drops: number[][] = [];
   readonly sliceBuf: GPUBuffer;
   private sliceReadback: GPUBuffer;
   private g2: GPUBindGroup;
@@ -37,7 +57,8 @@ export class PhysicsPipeline {
   private g0: GPUBindGroup;
   private gPot: [GPUBindGroup, GPUBindGroup];
   private gTemp: [GPUBindGroup, GPUBindGroup];
-  readonly readout: SimReadout = { zOhm: Infinity, powerW: 0, vRms: 0, iRms: 0, hit: null, hitCell: 0, hitIdx: 0, maxTempC: 37, carbonVoxels: 0, newCoagVoxels: 0, vapVoxels: 0, contactVoxels: 0 };
+  readonly readout: SimReadout = { zOhm: Infinity, powerW: 0, vRms: 0, iRms: 0, hit: null, hitCell: 0, hitIdx: 0, maxTempC: 37, carbonVoxels: 0, newCoagVoxels: 0, vapVoxels: 0, contactVoxels: 0,
+    muscleHeatVoxels: 0, bloodLostMl: 0, exposedArterial: 0, exposedVenous: 0, sealedVoxels: 0, charPlugVoxels: 0, rebleeds: 0, poolMl: 0, poolAtTipMm: 0, bleedPoints: [] };
   /** thermal box in voxel coords (min inclusive, max exclusive); empty when min > max */
   private tbMin = [1e9, 1e9, 1e9]; private tbMax = [-1, -1, -1];
   private hotUntil = 0;
@@ -79,6 +100,12 @@ export class PhysicsPipeline {
       { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
     ] });
     const l2 = device.createBindGroupLayout({ label: 'sim2', entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }] });
+    const l2b = device.createBindGroupLayout({ label: 'sim2blood', entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }] });
+    const { nx, ny } = volume.dims;
+    this.bloodBuf = device.createBuffer({ label: 'blood', size: nx * ny * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    this.dropsBuf = device.createBuffer({ label: 'drops', size: DROPS_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     // the slice kernel does not use `heat`; a reduced group-0 layout keeps the slice pipeline within 8 storage buffers
     const l0s = device.createBindGroupLayout({ label: 'sim0slice', entries: [
       { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
@@ -88,8 +115,14 @@ export class PhysicsPipeline {
     ] });
     const layout = device.createPipelineLayout({ label: 'simLayout', bindGroupLayouts: [l0, l1] });
     const layoutSlice = device.createPipelineLayout({ label: 'simSliceLayout', bindGroupLayouts: [l0s, l1, l2] });
+    const layoutBlood = device.createPipelineLayout({ label: 'simBloodLayout', bindGroupLayouts: [l0s, l1, l2b] });
+    // the probe binds its segment/result buffers in group 1 (same slot types as the ping-pong pair)
+    this.layoutProbe = device.createPipelineLayout({ label: 'simProbeLayout', bindGroupLayouts: [l0s, l1] });
+    this.l2p = l1;
     const mk = (entryPoint: string, lay = layout) => device.createComputePipeline({ label: entryPoint, layout: lay, compute: { module, entryPoint } });
-    this.pipes = { seed: mk('seedPotential'), red: mk('relaxRed'), black: mk('relaxBlack'), heating: mk('heating'), generator: mk('generator'), bioheat: mk('bioheat'), pick: mk('pick'), slice: mk('slice', layoutSlice) };
+    this.pipes = { seed: mk('seedPotential'), red: mk('relaxRed'), black: mk('relaxBlack'), heating: mk('heating'), generator: mk('generator'), bioheat: mk('bioheat'), pick: mk('pick'), slice: mk('slice', layoutSlice),
+      surfaceHeight: mk('surfaceHeight', layoutBlood), bloodSource: mk('bloodSource', layoutBlood), bloodDrops: mk('bloodDrops', layoutBlood), bloodFlow: mk('bloodFlow', layoutBlood), bloodCommit: mk('bloodCommit', layoutBlood), coaptMark: mk('coaptMark'), constraintProbe: mk('constraintProbe', this.layoutProbe) };
+    this.g2b = device.createBindGroup({ layout: l2b, entries: [{ binding: 0, resource: { buffer: this.bloodBuf } }, { binding: 1, resource: { buffer: this.dropsBuf } }] });
     this.g0s = device.createBindGroup({ layout: l0s, entries: [
       { binding: 0, resource: { buffer: gpu.info } }, { binding: 1, resource: { buffer: this.simBuf } }, { binding: 2, resource: { buffer: this.propsBuf } },
       { binding: 3, resource: { buffer: this.stateBuf } }, { binding: 4, resource: { buffer: gpu.cell } }, { binding: 5, resource: { buffer: gpu.occupancy } },
@@ -108,6 +141,53 @@ export class PhysicsPipeline {
 
   setPickRay(origin: vec3, dir: vec3) { vec3.copy(this.ray.o, origin); vec3.copy(this.ray.d, dir); }
 
+  /** Registers lattice constraint segments (material mm): [ax, ay, az, throughTissue, bx, by, bz, 0] per constraint. */
+  setConstraintSegments(segs: Float32Array<ArrayBuffer>, n: number) {
+    const segBuf = this.device.createBuffer({ label: 'constraintSegs', size: Math.max(32, segs.byteLength), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    this.device.queue.writeBuffer(segBuf, 0, segs);
+    const probeBuf = this.device.createBuffer({ label: 'constraintProbes', size: Math.max(16, n * 16), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const readback = this.device.createBuffer({ label: 'constraintProbesRead', size: Math.max(16, n * 16), usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const bg = this.device.createBindGroup({ layout: this.l2p, entries: [{ binding: 0, resource: { buffer: segBuf } }, { binding: 1, resource: { buffer: probeBuf } }] });
+    this.probe = { segs: segBuf, probes: probeBuf, readback, bg, n, severed: new Uint8Array(n), omega: new Float32Array(n), fresh: false };
+  }
+
+  /** Latest probe results (severed flags and max omega per constraint); `fresh` is cleared on read. */
+  takeProbe(): { severed: Uint8Array; omega: Float32Array } | null {
+    if (!this.probe || !this.probe.fresh) return null;
+    this.probe.fresh = false;
+    return { severed: this.probe.severed, omega: this.probe.omega };
+  }
+
+  async readProbe(): Promise<void> {
+    const pr = this.probe; if (!pr || pr.readback.mapState !== 'unmapped') return;
+    try {
+      await pr.readback.mapAsync(GPUMapMode.READ);
+      const u = new Uint32Array(pr.readback.getMappedRange().slice(0)); pr.readback.unmap();
+      const f = new Float32Array(u.buffer);
+      for (let n = 0; n < pr.n; n++) { pr.severed[n] = u[n * 4] & 1; pr.omega[n] = f[n * 4 + 1]; }
+      pr.fresh = true;
+    } catch { /* in flight */ }
+  }
+
+  /** Secondary instrument: forceps jaws (a -> b, grasp when mode 1) or suction tip (a, mode 2). */
+  setSecondaryTool(a: vec3, b: vec3, radius: number, mode: SecondaryToolMode) {
+    vec3.copy(this.tool2.a, a); vec3.copy(this.tool2.b, b); this.tool2.radius = radius; this.tool2.mode = mode;
+  }
+
+  private lastSubsteps = 2;
+  private probeEvery = 0;
+  private probePending = false;
+  private woundBox(): { o: number[]; s: number[] } {
+    const { nx, ny, nz } = this.volume.dims;
+    if (this.wbMax[0] <= this.wbMin[0]) return { o: [0, 0, 0], s: [0, 0, 0] };
+    const o = [Math.max(0, this.wbMin[0]), Math.max(0, this.wbMin[1]), Math.max(0, this.wbMin[2])];
+    return { o, s: [Math.min(nx, this.wbMax[0]) - o[0], Math.min(ny, this.wbMax[1]) - o[1], Math.min(nz, this.wbMax[2]) - o[2]] };
+  }
+  /** Marks a region (voxel coords, min inclusive / max exclusive) as part of the wound: bleeding is scanned there. */
+  markWound(min: number[], max: number[]) {
+    for (let a = 0; a < 3; a++) { this.wbMin[a] = Math.min(this.wbMin[a], min[a]); this.wbMax[a] = Math.max(this.wbMax[a], max[a]); }
+  }
+
   private writeParams(box0: number[], S: number, tb0: number[], tb1: number[], tool: ElectrodeTool, gen: FT10, dt: number, active: boolean) {
     const buf = new ArrayBuffer(SIM_BYTES);
     const i32 = new Int32Array(buf), f32 = new Float32Array(buf);
@@ -121,7 +201,7 @@ export class PhysicsPipeline {
     f32.set([tool.wdir[0], tool.wdir[1], tool.wdir[2], tool.halfWidth], 20);
     f32.set([tool.ndir[0], tool.ndir[1], tool.ndir[2], tool.halfThickness], 24);
     f32.set(mode ? [gen.activeWatts, mode.zLo, mode.zHi, mode.vPeak / mode.crest] : [0, 100, 1000, 0], 28);
-    f32.set([mode ? mode.vapFactor : 0, active ? 1 : 0, tool.type === 'blade' ? 0 : tool.type === 'needle' ? 1 : 2, this.sigmaScale], 32);
+    f32.set([mode ? mode.vapFactor : 0, active ? 1 : 0, tool.type === 'blade' ? 0 : tool.type === 'needle' ? 1 : tool.type === 'ball' ? 2 : 3, this.sigmaScale], 32);
     f32.set([mode ? mode.nearField : 0, 0, 0, 0], 36);
     f32.set([dt, this.simTime, 15, mode ? mode.contactMm : 0], 40);
     f32.set([this.ray.o[0], this.ray.o[1], this.ray.o[2], 0], 44);
@@ -131,6 +211,12 @@ export class PhysicsPipeline {
     f32.set([sl.u[0], sl.u[1], sl.u[2], SLICE_W], 56);
     f32.set([0, -1, 0, SLICE_H], 60);
     f32.set([sl.depthMm, sl.mode, 0, 0], 64);
+    const wb = this.woundBox();
+    i32.set([wb.o[0], wb.o[1], wb.o[2], this.lastSubsteps], 68);
+    i32.set([wb.s[0], wb.s[1], wb.s[2], 0], 72);
+    const t2 = this.tool2;
+    f32.set([t2.a[0], t2.a[1], t2.a[2], t2.radius], 76);
+    f32.set([t2.b[0], t2.b[1], t2.b[2], t2.mode], 80);
     this.device.queue.writeBuffer(this.simBuf, 0, buf);
   }
 
@@ -148,6 +234,7 @@ export class PhysicsPipeline {
       // grow the thermal box to cover the subdomain
       const lo = box0, hi = box0.map((v) => v + S);
       for (let a = 0; a < 3; a++) { this.tbMin[a] = Math.min(this.tbMin[a], lo[a]); this.tbMax[a] = Math.max(this.tbMax[a], hi[a]); }
+      this.markWound(lo, hi);
       this.hotUntil = this.simTime + 10;
       this.totals.activeSeconds += dtFrame;
     }
@@ -159,10 +246,22 @@ export class PhysicsPipeline {
     let substeps = Math.ceil(dtFrame / this.dtMax);
     if (substeps % 2 === 1) substeps++;
     const dt = dtFrame / substeps;
+    this.lastSubsteps = substeps;
     this.writeParams(box0, S, tb0, tb1, tool, gen, dt, active);
-    // reset accumulators
+    // droplet landings
+    const nd = Math.min(this.drops.length, MAX_DROPS);
+    const db = new ArrayBuffer(DROPS_BYTES); new Uint32Array(db, 0, 4)[0] = nd;
+    const df = new Float32Array(db, 16);
+    for (let n = 0; n < nd; n++) df.set(this.drops[n], n * 4);
+    this.drops.length = 0;
+    this.device.queue.writeBuffer(this.dropsBuf, 0, db);
+    // reset per-frame accumulators (cumulative counters at 80, 92, 96, 100 are kept)
     this.device.queue.writeBuffer(this.stateBuf, 0, new Uint32Array([0, 0, 0, 0]));
     this.device.queue.writeBuffer(this.stateBuf, 64, new Uint32Array([0, 0, 0, 0]));
+    this.device.queue.writeBuffer(this.stateBuf, 84, new Uint32Array([0, 0]));
+    this.device.queue.writeBuffer(this.stateBuf, 104, new Uint32Array([0, 0]));
+    this.device.queue.writeBuffer(this.stateBuf, 112, new Uint32Array([0, 0, 0, 0]));
+    const wb = this.woundBox();
 
     const pass = enc.beginComputePass({ label: 'physics' });
     pass.setBindGroup(0, this.g0);
@@ -185,6 +284,29 @@ export class PhysicsPipeline {
       const gx = Math.ceil(tb1[0] / 4), gy = Math.ceil(tb1[1] / 4), gz = Math.ceil(tb1[2] / 4);
       for (let s = 0; s < substeps; s++) { pass.setBindGroup(1, this.gTemp[s & 1]); pass.dispatchWorkgroups(gx, gy, gz); }
     }
+    // forceps coaptation flags: mark while grasping; one clearing pass after release
+    if (this.tool2.mode === 1 || this.tool2.lastMode === 1) {
+      pass.setPipeline(this.pipes.coaptMark); pass.setBindGroup(0, this.g0); pass.setBindGroup(1, this.gPot[0]); pass.dispatchWorkgroups(3, 3, 3);
+    }
+    this.tool2.lastMode = this.tool2.mode;
+    // bleeding and blood flow over the wound box
+    if (wb.s[0] > 0 && wb.s[1] > 0 && wb.s[2] > 0) {
+      pass.setBindGroup(0, this.g0s); pass.setBindGroup(1, this.gTemp[0]); pass.setBindGroup(2, this.g2b);
+      const cx = Math.ceil(wb.s[0] / 8), cy = Math.ceil(wb.s[1] / 8);
+      pass.setPipeline(this.pipes.surfaceHeight); pass.dispatchWorkgroups(cx, cy);
+      pass.setPipeline(this.pipes.bloodSource); pass.dispatchWorkgroups(Math.ceil(wb.s[0] / 4), Math.ceil(wb.s[1] / 4), Math.ceil(wb.s[2] / 4));
+      if (nd > 0) { pass.setPipeline(this.pipes.bloodDrops); pass.dispatchWorkgroups(1); }
+      const fx = Math.ceil((wb.s[0] + 8) / 8), fy = Math.ceil((wb.s[1] + 8) / 8);
+      for (let it = 0; it < 2; it++) {
+        pass.setPipeline(this.pipes.bloodFlow); pass.dispatchWorkgroups(fx, fy);
+        pass.setPipeline(this.pipes.bloodCommit); pass.dispatchWorkgroups(fx, fy);
+      }
+    }
+    if (this.probe && (hot || this.probeEvery++ % 10 === 0)) {
+      pass.setPipeline(this.pipes.constraintProbe); pass.setBindGroup(0, this.g0s); pass.setBindGroup(1, this.probe.bg);
+      pass.dispatchWorkgroups(Math.ceil(this.probe.n / 64));
+      this.probePending = true;
+    }
     if (this.slice.enabled) {
       pass.setPipeline(this.pipes.slice); pass.setBindGroup(0, this.g0s); pass.setBindGroup(1, this.slice.mode >= 4 ? this.gPot[0] : this.gTemp[0]); pass.setBindGroup(2, this.g2);
       pass.dispatchWorkgroups(Math.ceil(SLICE_W / 8), Math.ceil(SLICE_H / 8));
@@ -192,6 +314,7 @@ export class PhysicsPipeline {
     pass.end();
     enc.copyBufferToBuffer(this.stateBuf, 0, this.readback, 0, STATE_BYTES);
     if (this.slice.enabled) enc.copyBufferToBuffer(this.sliceBuf, 0, this.sliceReadback, 0, SLICE_W * SLICE_H * 4);
+    if (this.probe && this.probePending && this.probe.readback.mapState === 'unmapped') { enc.copyBufferToBuffer(this.probe.probes, 0, this.probe.readback, 0, this.probe.n * 16); this.probePending = false; }
     this.simTime += dtFrame;
     return hot;
   }
@@ -221,6 +344,10 @@ export class PhysicsPipeline {
       r.hit = f[11] > 0.5 ? vec3.fromValues(f[8], f[9], f[10]) : null;
       r.hitCell = u[12]; r.hitIdx = u[13];
       r.maxTempC = u[16] / 100; r.carbonVoxels = u[17]; r.newCoagVoxels = u[18];
+      r.muscleHeatVoxels = u[19]; r.bloodLostMl = u[20] / 1000; r.exposedArterial = u[21]; r.exposedVenous = u[22];
+      r.sealedVoxels = u[23]; r.charPlugVoxels = u[24]; r.rebleeds = u[25]; r.poolMl = u[26] / 2e6; r.poolAtTipMm = u[27] / 1000; // pool stats are accumulated by both flow commits per frame (nanolitres)
+      const nb = Math.min(u[28], 8); r.bleedPoints = [];
+      for (let n = 0; n < nb; n++) r.bleedPoints.push([f[32 + n * 4], f[33 + n * 4], f[34 + n * 4], f[35 + n * 4]]);
       this.totals.vapVoxels += r.vapVoxels;
     } catch { /* in flight */ }
     return this.readout;

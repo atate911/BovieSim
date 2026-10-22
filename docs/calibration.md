@@ -25,3 +25,11 @@ Runs so far were at 0.5 mm voxels under a software GPU; repeat at 0.25 mm on har
 Published ranges are indicative summaries of the monopolar electrosurgery thermal-spread
 literature (porcine skin/muscle, blade electrode). Replace with specific citations as they are
 added to `docs/reference/`.
+
+## Hemostasis (Sprint 3, 0.5 mm voxels, software GPU)
+| Case | Published / expected | Simulated | Status |
+|---|---|---|---|
+| 1 mm arteriole transected, untreated | brisk pulsatile bleeding, ~0.1–0.5 ml/s | 0.25 ml/s mean, pulsatile at 72 bpm; 0.56 ml lost in 2 s with a 0.6 mm vein | model coefficient, tune to bench |
+| Forceps grasp + 35 W fulgurate 1.5 s on the 1 mm artery | coaptive seal | 51 vessel voxels sealed under the jaws; blood loss stopped rising at the jaws; 0.40 ml total | ✓ |
+| Buzzing forceps 2 s on fat around the vessel | char on the surface | 40 char voxels, 8.5 mm damage zone | plausible, long buzz |
+| Blood pool under the electrode | current spreads through the pool | `blood.poolConducts` fires; contact set widens over the pool | ✓ qualitative |

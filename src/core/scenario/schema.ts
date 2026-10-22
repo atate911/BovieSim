@@ -36,6 +36,23 @@ export interface VesselSpec {
   arterialFraction: number;
   radiusMm: [number, number];
   dermalPlexus: boolean;
+  /** deterministic perforators (bed-centred mm) in addition to the seeded ones */
+  explicit?: { xMm: number; yMm: number; rMm: number; arterial: boolean }[];
+}
+
+/** Pre-existing wound carved before the case starts (signed-distance shapes). */
+export interface PreCarve {
+  kind: 'trench' | 'pit';
+  centerMm: [number, number];
+  /** trench: length along its axis; pit: top radius */
+  lengthMm: number;
+  /** trench: top half-width; pit: unused */
+  widthMm: number;
+  depthMm: number;
+  /** trench axis angle from +x, degrees */
+  angleDeg?: number;
+  /** wall slope: extra half-width (trench) or radius shrink (pit) per mm of depth */
+  slope?: number;
 }
 
 export interface NerveSpec {
@@ -123,6 +140,7 @@ export interface Scenario {
   vessels: VesselSpec;
   nerves: NerveSpec[];
   lesion?: LesionSpec;
+  preCarve?: PreCarve[];
   skin: SkinSpec;
   generator: GeneratorPreset;
   faults: string[];
