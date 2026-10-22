@@ -31,6 +31,12 @@
   shrinks links from the voxel state; incisions gape; lipoma cluster frees and delivers; muscle
   twitch on coag; rendered tissue follows the lattice.
 - Scenarios: hemostasis, lipoma (mechanics), freeplay. Tests: bleed rules, blood flow, lattice.
+- Verified headless (0.5 mm, software GPU): direct coag on the 1 mm artery leaves char plugs on
+  the open end that rebleed twice within 5 s while unexposed vessel thromboses; forceps grasp and
+  buzz seals the held vessel (51 voxels) and stops its bleeding; coag on exposed muscle fires
+  `muscle.stimulated`; buzzing in a pool fires `blood.poolConducts`; a pre-made 30 mm incision
+  gapes 2.8 mm; a ring cut plus undermining frees the lipoma (`lesion.freed`) and forceps traction
+  lifts it 4 mm out of its bed (`lesion.delivered`).
 
 ## Known gaps (next)
 - Picking and tool placement use material coordinates: with large deformation the instrument

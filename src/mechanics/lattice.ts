@@ -75,7 +75,9 @@ export class Lattice {
       this.layer[n] = ty;
       this.cluster[n] = ty === Tissue.Lipoma || ty === Tissue.LipomaCapsule ? 1 : 0;
       const edge = i === 0 || k === 0 || i === this.nx - 1 || k === this.nz - 1 || j === 0;
-      this.invMass[n] = edge ? 0 : 1;
+      // nodes whose material position lies in air (above the skin or inside a pre-made wound) are pinned
+      const inAir = y > volume.surfaceY(x, z) + 0.01;
+      this.invMass[n] = edge || inAir ? 0 : 1;
     }
     const ca = Math.cos(langerRad), sa = Math.sin(langerRad);
     const add = (a: number, b: number) => {
@@ -91,8 +93,14 @@ export class Lattice {
       }
       const ka = this.cluster[a], kb = this.cluster[b];
       const kind: 0 | 1 | 2 = ka !== kb ? 1 : ka === 1 ? 2 : 0;
-      if (kind === 1) this.capsuleTotal++;
-      this.constraints.push({ a, b, rest, rest0: rest, compliance: kind === 2 ? 2e-6 : comp, lambda: 0, alive: true, kind });
+      // a link that already runs through air (pre-made wound) does not exist; links fully above the skin neither
+      let alive = true;
+      for (let t = 1; t <= 3; t++) {
+        const f = t / 4, px = this.mat[a * 3] + dx * f, py = this.mat[a * 3 + 1] + dy * f, pz = this.mat[a * 3 + 2] + dz * f;
+        if (py > volume.surfaceY(px, pz) + 0.01) { alive = false; break; }
+      }
+      if (kind === 1 && alive) this.capsuleTotal++;
+      this.constraints.push({ a, b, rest, rest0: rest, compliance: kind === 2 ? 2e-6 : comp, lambda: 0, alive, kind });
     };
     for (let k = 0; k < this.nz; k++) for (let j = 0; j < this.ny; j++) for (let i = 0; i < this.nx; i++) {
       const n = this.index(i, j, k);
@@ -161,7 +169,8 @@ export class Lattice {
         k.rest = k.rest0 * (1 - 0.12 * sh * sh * (3 - 2 * sh));
       }
     }
-    if (!this.lipomaFree && this.capsuleTotal > 0 && this.capsuleAlive < 0.5 * this.capsuleTotal) this.lipomaFree = true;
+    // lateral capsule freed (the base pedicle may remain): deliverable with traction once ~40 % of links are cut
+    if (!this.lipomaFree && this.capsuleTotal > 0 && this.capsuleAlive < 0.62 * this.capsuleTotal) this.lipomaFree = true;
   }
 
   /** Muscle twitch impulse near a world point: damped 6 Hz oscillation, amplitude in mm. */

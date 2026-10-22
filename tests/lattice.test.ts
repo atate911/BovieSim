@@ -56,10 +56,10 @@ describe('XPBD lattice', () => {
     expect(lat.capsuleTotal).toBeGreaterThan(10);
     const severed = new Uint8Array(lat.constraints.length), om = new Float32Array(lat.constraints.length);
     let cut = 0;
-    lat.constraints.forEach((c, i) => { if (c.kind === 1 && cut < lat.capsuleTotal * 0.5) { severed[i] = 1; cut++; } });
+    lat.constraints.forEach((c, i) => { if (c.kind === 1 && cut < lat.capsuleTotal * 0.3) { severed[i] = 1; cut++; } });
     lat.applyProbe(severed, om);
     expect(lat.lipomaFree).toBe(false);
-    lat.constraints.forEach((c, i) => { if (c.kind === 1 && c.alive && cut < lat.capsuleTotal * 0.7) { severed[i] = 1; cut++; } });
+    lat.constraints.forEach((c, i) => { if (c.kind === 1 && c.alive && cut < lat.capsuleTotal * 0.5) { severed[i] = 1; cut++; } });
     lat.applyProbe(severed, om);
     expect(lat.lipomaFree).toBe(true);
   });

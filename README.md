@@ -17,8 +17,8 @@ npm run build
 ```
 
 URL options: `?scenario=freeplay|hemostasis|lipoma`, `?voxel=0.5` (coarser bed for slower GPUs;
-default 0.25 mm), `?seed=3` (re-randomise anatomy), `?cut=1|2|4` (pre-carved trench, pit, or ring
-around the lipoma), `?debug=1|2|3` (temperature / damage / tissue-type overlay), `?mech=0`
+default 0.25 mm), `?seed=3` (re-randomise anatomy), `?cut=1|2|4|8` (pre-carved trench, pit, ring
+around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temperature / damage / tissue-type overlay), `?mech=0`
 (disable the mechanics lattice).
 
 ## Controls

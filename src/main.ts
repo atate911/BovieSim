@@ -40,10 +40,15 @@ const scenarioId = params.get('scenario') ?? 'freeplay';
 /** headless: starting tool and whether forceps jaws are closed during the scripted activation */
 const toolParam = (params.get('tool') ?? 'pencil') as ToolKind;
 const graspParam = params.get('grasp') === '1';
+const holdParam = params.get('hold') === '1';
+/** headless: raise the held instrument at this rate (mm/s) after 0.5 s, to simulate lifting out a freed lesion */
+const liftRate = params.has('lift') ? parseFloat(params.get('lift')!) : 0;
 /** headless: aim the cursor at a bed point (x, z mm on the tissue surface) instead of NDC coordinates */
 const aim = params.get('aim')?.split(',').map(parseFloat) ?? null;
 /** headless fixed simulation step per frame (s); larger values make mechanics checks cheaper */
 const headlessDt = params.has('dt') ? parseFloat(params.get('dt')!) : 1 / 30;
+/** headless gap measurement between two surface points: gap=x0,z0,x1,z1 (mm) */
+const gapPts = params.get('gap')?.split(',').map(parseFloat) ?? [-1.5, 12, 1.5, 12];
 
 declare global { interface Window { __sim: Record<string, unknown>; __simControl: Record<string, (...a: number[]) => unknown> } }
 
@@ -75,7 +80,7 @@ async function main() {
     physics.setConstraintSegments(lattice.segmentData(volume), lattice.constraints.length);
   }
   const hook = new HookTool();
-  let lesionFreedReported = false, lesionDelivered = false, lesionBreachReported = false;
+  let lesionFreedReported = false, lesionDelivered = false, lesionBreachReported = false, clusterRiseMm = 0;
   const cam = new OrbitCamera();
   cam.attach(canvas);
   if (params.has('cam')) { const [az, el, dist] = params.get('cam')!.split(',').map(parseFloat); cam.azimuth = az; cam.elevation = el; cam.distance = dist; }
@@ -204,7 +209,7 @@ async function main() {
     const hitWorld = hit && mechanicsOn ? vec3.add(vec3.create(), hit, lattice.displacementAt(hit)) : hit;
     void hitWorld;
     const tilt = pointer.isPen && (Math.abs(pointer.tiltX) > 2 || Math.abs(pointer.tiltY) > 2) ? { x: pointer.tiltX, y: pointer.tiltY } : null;
-    const pressed = (pointer.buttons & 1) === 1 || (auto !== null && headless && graspParam && physics.simTime < autoUntil + 0.5);
+    const pressed = (pointer.buttons & 1) === 1 || (auto !== null && headless && graspParam && (holdParam || physics.simTime < autoUntil + 0.5));
     tool.pressure = pointer.pressure; tool.tiltX = pointer.tiltX; tool.tiltY = pointer.tiltY;
     const HIDE = mat4.fromTranslation(mat4.create(), [0, -1e4, 0]);
     let suctionAt: vec3 | null = null;
@@ -217,7 +222,8 @@ async function main() {
       physics.setSecondaryTool(vec3.create(), vec3.create(), 0, 0);
     } else if (activeTool === 'forceps') {
       forceps.closed = pressed;
-      forceps.place(hit, cam.position, tilt);
+      const liftedHit = hit && liftRate > 0 && pressed ? vec3.fromValues(hit[0], hit[1] + liftRate * Math.max(0, physics.simTime - 0.5), hit[2]) : hit;
+      forceps.place(liftedHit, cam.position, tilt);
       renderer.setModel(forcepsA, forceps.modelA); renderer.setModel(forcepsB, forceps.modelB);
       renderer.setModel(pencilBody, HIDE); renderer.setModel(pencilButtons, HIDE); renderer.setModel(blade, HIDE); renderer.setModel(frazier, HIDE); renderer.setModel(hookMesh, HIDE);
       physics.setSecondaryTool(forceps.tipA, forceps.tipB, forceps.jawRadius, forceps.visible && forceps.closed ? 1 : 0);
@@ -314,9 +320,10 @@ async function main() {
       renderer.uploadLattice(lattice.disp);
       if (lattice.lipomaFree && !lesionFreedReported) { lesionFreedReported = true; events.emit({ t: physics.simTime, type: 'lesion.freed', detail: `${lattice.capsuleTotal - lattice.capsuleAlive}/${lattice.capsuleTotal} capsule links cut`, teaching: 'The capsule is free around most of its circumference: the lipoma will deliver with gentle traction.', severity: 'info' }); }
       if (lattice.lipomaFree && !lesionDelivered) {
-        // delivered when the cluster's mean displacement lifts it above the skin plane
-        let cy = 0, cn = 0; for (let n = 0; n < lattice.count; n++) if (lattice.cluster[n] === 1) { cy += lattice.pos[n * 3 + 1]; cn++; }
-        if (cn > 0 && cy / cn > 0.5) { lesionDelivered = true; events.emit({ t: physics.simTime, type: 'lesion.delivered', detail: 'lipoma delivered from its bed', severity: 'info' }); }
+        // delivered when the freed cluster has risen out of its bed by 4 mm on average (traction lifts it clear of the fat)
+        let dy = 0, cn = 0; for (let n = 0; n < lattice.count; n++) if (lattice.cluster[n] === 1) { dy += lattice.pos[n * 3 + 1] - lattice.mat[n * 3 + 1]; cn++; }
+        clusterRiseMm = cn > 0 ? dy / cn : 0;
+        if (clusterRiseMm > 4) { lesionDelivered = true; events.emit({ t: physics.simTime, type: 'lesion.delivered', detail: `lipoma lifted ${clusterRiseMm.toFixed(1)} mm out of its bed`, severity: 'info' }); }
       }
       if (mode && r.hit && tool.visible && cellType(r.hitCell) === 11 && !lesionBreachReported) { lesionBreachReported = true; events.emit({ t: physics.simTime, type: 'lesion.breached', detail: 'energy applied inside the lipoma', teaching: 'You have entered the lipoma. Fat spills, the plane is lost and fragments left behind recur.', severity: 'bad' }); }
     }
@@ -359,8 +366,8 @@ async function main() {
         const pxPerMmX = SLICE_W / physics.slice.widthMm, pxPerMmY = SLICE_H / physics.slice.depthMm;
         return count ? { widthMm: (maxX - minX + 1) / pxPerMmX, depthMm: (maxY + 1) / pxPerMmY - 1.5, pixels: count } : { widthMm: 0, depthMm: 0, pixels: 0 };
       }, setCam: (az: number, el: number, dist: number, tx = 0, tz = 0) => { cam.azimuth = az; cam.elevation = el; cam.distance = dist; cam.target[0] = tx; cam.target[2] = tz; } };
-    window.__sim = { ready: true, frame: frameIndex, events: events.recent(12), tool: activeTool, lipomaFree: lattice.lipomaFree, capsule: [lattice.capsuleAlive, lattice.capsuleTotal],
-      gapMm: lattice.distanceBetween(vec3.fromValues(-1.5, 0, 12), vec3.fromValues(1.5, 0, 12)), vertexCount, fps, report, readout: { ...r, hit: r.hit ? Array.from(r.hit) : null }, totals: physics.totals, simTime: physics.simTime, autoDone, settings: gen.settings };
+    window.__sim = { ready: true, frame: frameIndex, events: events.recent(12), tool: activeTool, lipomaFree: lattice.lipomaFree, capsule: [lattice.capsuleAlive, lattice.capsuleTotal], clusterRiseMm,
+      gapMm: lattice.distanceBetween(vec3.fromValues(gapPts[0], 0, gapPts[1]), vec3.fromValues(gapPts[2], 0, gapPts[3])), vertexCount, fps, report, readout: { ...r, hit: r.hit ? Array.from(r.hit) : null }, totals: physics.totals, simTime: physics.simTime, autoDone, settings: gen.settings };
     if (!headless) requestAnimationFrame(loop); else setTimeout(loop, 10);
   };
   loop();
@@ -371,7 +378,9 @@ function carveDemo(volume: Volume, mode: number) {
   if (mode & 1) carveSdf(volume, (x, y, d) => Math.max(Math.abs(x) - 15, Math.abs(y - 12) - (2.0 + d * 0.3), d - 9));
   if (mode & 2) carveSdf(volume, (x, y, d) => Math.max(Math.hypot(x + 6, y + 10) - (15 - d * 0.42), d - 24));
   // 4: ring trench around a centred lipoma (lipoma scenario): frees the capsule circumferentially
-  if (mode & 4) carveSdf(volume, (x, y, d) => { const r = Math.hypot(x / 1.15, y); return Math.max(Math.abs(r - 9) - (1.2 + d * 0.12), d - 14); });
+  if (mode & 4) carveSdf(volume, (x, y, d) => { const r = Math.hypot(x / 1.17, y); return Math.max(Math.abs(r - 7.3) - (1.3 + d * 0.1), d - 14); });
+  // 8: undermining plane beneath the lipoma (as with closed scissors), leaving a thin pedicle at the centre
+  if (mode & 8) carveSdf(volume, (x, y, d) => Math.max(Math.hypot(x / 1.17, y) - 8.2, Math.abs(d - 14) - 0.6, 1.2 - Math.hypot(x, y)));
 }
 
 main().catch((e) => fatal(String(e?.message ?? e)));

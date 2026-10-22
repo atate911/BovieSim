@@ -41,7 +41,7 @@ try {
   const sim = await page.evaluate(() => ({ readout: window.__sim.readout, totals: window.__sim.totals, simTime: window.__sim.simTime, hud: document.getElementById('hud')?.innerText, events: window.__sim.events }));
   console.log(sim.hud);
   console.log('events:', sim.events.map((e) => `${e.t.toFixed(1)}s ${e.type}`).join(' | '));
-  console.log('mechanics:', JSON.stringify(await page.evaluate(() => ({ gapMm: window.__sim.gapMm, lipomaFree: window.__sim.lipomaFree, capsule: window.__sim.capsule }))));
+  console.log('mechanics:', JSON.stringify(await page.evaluate(() => ({ gapMm: window.__sim.gapMm, lipomaFree: window.__sim.lipomaFree, capsule: window.__sim.capsule, clusterRiseMm: window.__sim.clusterRiseMm }))));
   console.log(JSON.stringify({ totals: sim.totals, simTime: sim.simTime }));
   await page.screenshot({ path: `screenshots/${name}.png` });
   const waitFrames = async (n) => { const f0 = await page.evaluate(() => window.__sim.frame); await page.waitForFunction((t) => window.__sim.frame >= t, f0 + n, { timeout: 600000 }); };

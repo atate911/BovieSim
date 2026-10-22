@@ -33,3 +33,11 @@ added to `docs/reference/`.
 | Forceps grasp + 35 W fulgurate 1.5 s on the 1 mm artery | coaptive seal | 51 vessel voxels sealed under the jaws; blood loss stopped rising at the jaws; 0.40 ml total | ✓ |
 | Buzzing forceps 2 s on fat around the vessel | char on the surface | 40 char voxels, 8.5 mm damage zone | plausible, long buzz |
 | Blood pool under the electrode | current spreads through the pool | `blood.poolConducts` fires; contact set widens over the pool | ✓ qualitative |
+
+## Mechanics (Sprint 4, 0.5 mm voxels, 3 mm lattice)
+| Case | Expected | Simulated | Status |
+|---|---|---|---|
+| 30 mm pre-made incision through dermis, Langer's lines along it | edges gape 1–3 mm | nodes straddling the cut moved from 6.0 to 8.8 mm apart: 2.8 mm gape | ✓ |
+| Ring cut around a 14 × 12 × 10 mm lipoma to 14 mm depth | lateral capsule freed, base tethered | 77/185 capsule links cut, `lesion.freed`; island lifts with forceps but stays pedicled | ✓ expected |
+| Ring cut + undermining plane, forceps traction 3 mm/s | lipoma delivers | 107/183 links cut; cluster rises 4 mm in 5 s, `lesion.delivered` | ✓ |
+| Coag on exposed muscle, 40 W | visible twitch | `muscle.stimulated`, damped 6 Hz impulse applied to muscle nodes | ✓ event; amplitude untuned |
