@@ -1,0 +1,23 @@
+{
+  "name": "bovie-sim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Monopolar electrosurgery (Bovie) training simulator: voxel tissue, electrothermal physics, Valleylab FT10 model",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.74",
+    "typescript": "^5.9.0",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "gl-matrix": "^3.4.4"
+  }
+}

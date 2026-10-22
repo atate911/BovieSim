@@ -1,0 +1,44 @@
+:root {
+  --bg: #0b0d10; --fg: #e6e6e6; --dim: #9aa3ad; --accent: #4fc3f7; --warn: #ffb300; --danger: #ff5252;
+  --panel: #14181d; --panel-border: #2a313a; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: var(--sans); overflow: hidden; }
+#app { position: relative; width: 100vw; height: 100vh; }
+#gpu-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+#hud { position: absolute; left: 12px; top: 12px; font-family: var(--mono); font-size: 12px; color: var(--dim); pointer-events: none; white-space: pre; line-height: 1.5; text-shadow: 0 1px 2px #000; }
+#hud b { color: var(--fg); }
+#panel { position: absolute; right: 12px; top: 12px; }
+#overlay { position: absolute; inset: 0; pointer-events: none; }
+.fatal { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; background: var(--bg); }
+.fatal h1 { font-weight: 500; font-size: 20px; margin: 0 0 8px; }
+.fatal p { color: var(--dim); max-width: 520px; line-height: 1.5; }
+.slice { position: absolute; right: 12px; bottom: 12px; width: 480px; height: 300px; border: 1px solid var(--panel-border); background: #000; image-rendering: pixelated; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
+/* FT10 panel */
+.ft10 { width: 330px; background: linear-gradient(#2b2f35, #1c1f24); border: 1px solid #3a3f47; border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,0.5); font-family: var(--sans); user-select: none; }
+.ft10-head { display: flex; justify-content: space-between; padding: 6px 10px; font-size: 12px; color: #cfd6de; border-bottom: 1px solid #3a3f47; }
+.ft10-brand { font-weight: 600; letter-spacing: 0.02em; }
+.ft10-rem { color: #5fdc7a; font-weight: 600; } .ft10-rem.fault { color: var(--danger); animation: blink 0.6s steps(2) infinite; }
+@keyframes blink { to { opacity: 0.3; } }
+.ft10-body { display: flex; gap: 6px; padding: 8px; }
+.ft10-block { flex: 1; background: #0e1217; border-radius: 6px; padding: 6px; border: 1px solid #2a313a; text-align: center; }
+.ft10-block.cut { border-top: 3px solid #e8c227; } .ft10-block.coag { border-top: 3px solid #3d8bff; } .ft10-block.dim { opacity: 0.4; }
+.ft10-title { font-size: 9px; color: #9aa3ad; letter-spacing: 0.06em; display: flex; justify-content: center; gap: 6px; align-items: center; }
+.ft10-lamp { width: 8px; height: 8px; border-radius: 50%; background: #333; display: inline-block; }
+.cut .ft10-lamp.on { background: #ffe54a; box-shadow: 0 0 8px #ffe54a; } .coag .ft10-lamp.on { background: #4aa3ff; box-shadow: 0 0 8px #4aa3ff; }
+.ft10-mode { font-size: 12px; color: #e6edf3; margin: 6px 0 2px; cursor: pointer; padding: 3px; border-radius: 4px; background: #182029; }
+.ft10-mode:hover { background: #22303d; }
+.ft10-watts { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.ft10-watts span { font-size: 30px; font-weight: 300; color: #d7f0ff; font-variant-numeric: tabular-nums; min-width: 60px; }
+.ft10-watts button { width: 30px; height: 30px; border-radius: 15px; border: 1px solid #3a4652; background: #1d2630; color: #cfd6de; font-size: 18px; cursor: pointer; }
+.ft10-watts button:hover { background: #2a3744; }
+.ft10-foot { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-top: 1px solid #3a3f47; font-size: 11px; color: #9aa3ad; }
+.ft10-pedals { display: flex; gap: 6px; }
+.pedal { padding: 6px 14px; border-radius: 6px; border: 1px solid #444; font-weight: 700; font-size: 11px; cursor: pointer; touch-action: none; }
+.pedal.cut { background: #b89a1a; color: #1a1a1a; } .pedal.coag { background: #2d6fd1; color: #fff; }
+.pedal:active { filter: brightness(1.3); }
+#events { position: absolute; left: 12px; bottom: 12px; width: 440px; max-height: 220px; overflow: hidden; font-family: var(--mono); font-size: 11px; color: var(--dim); pointer-events: none; }
+#events div { padding: 2px 0; border-left: 2px solid #444; padding-left: 6px; margin-bottom: 2px; background: rgba(0,0,0,0.35); }
+#events .warn { border-color: var(--warn); } #events .bad { border-color: var(--danger); }
+#events b { color: var(--fg); }

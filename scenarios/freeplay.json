@@ -1,0 +1,42 @@
+{
+  "id": "freeplay",
+  "name": "Free-play tissue bed",
+  "description": "Full-thickness bed: skin, subcutaneous fat with septa and perforators, Scarpa's fascia, deep fascia, muscle. A small subcutaneous lipoma sits off-centre. No procedure; learn what each setting does to each layer.",
+  "bed": { "sizeMm": [60, 60, 35], "voxelMm": 0.25 },
+  "layers": {
+    "epidermisMm": 0.15,
+    "dermisMm": 2.0,
+    "fatMm": 18,
+    "superficialFasciaMm": 0.4,
+    "superficialFasciaAt": 0.55,
+    "deepFasciaMm": 0.8,
+    "variation": 0.15
+  },
+  "septa": { "lobuleMm": 6, "thicknessMm": 0.35 },
+  "vessels": { "seed": 7, "perforatorsPerCm2": 1.2, "arterialFraction": 0.4, "radiusMm": [0.3, 1.2], "dermalPlexus": true },
+  "nerves": [ { "fromMm": [-30, 12], "toMm": [30, 20], "depthMm": 6, "radiusMm": 0.5 } ],
+  "lesion": { "type": "lipoma", "centerMm": [-10, -8], "topDepthMm": 4, "sizeMm": [12, 10, 7], "capsuleMm": 0.3, "plane": "subcutaneous" },
+  "skin": { "prep": "chlorhexidine", "tone": 0.35, "langerDeg": 20 },
+  "generator": { "cutMode": "pure", "coagMode": "fulgurate", "cutWatts": 30, "coagWatts": 30, "policy": "suggested" },
+  "faults": [],
+  "education": {
+    "goal": "Explore how each FT10 mode and power setting affects skin, fat, fascia and muscle. Make a clean 3 cm incision through dermis with a thermal rim under 0.5 mm, then control any bleeder you expose.",
+    "success": [
+      { "metric": "dermalEdgeDamageMm", "op": "<", "value": 0.5, "label": "Skin edge thermal rim < 0.5 mm" },
+      { "metric": "charVolumeMm3", "op": "<", "value": 5, "label": "Less than 5 mm3 of carbonized tissue" },
+      { "metric": "bloodLostMl", "op": "<", "value": 5, "label": "Blood loss under 5 ml" }
+    ],
+    "failurePoints": [
+      { "id": "held-coag", "trigger": "carbonized", "consequence": "Carbonized eschar: insulating, delays healing, hides deeper injury.", "teaching": "Char means the tissue has desiccated and current can no longer do useful work. Lift off earlier; use short taps." },
+      { "id": "skin-edge-burn", "trigger": "dermalEdgeDamage>1.0", "consequence": "Skin edge necrosis: wound dehiscence and a wide scar.", "teaching": "Cut mode at a steady pace keeps the thermal rim under half a millimetre. Slowing down or using coag on the edge widens it." },
+      { "id": "direct-touch-bleeder", "trigger": "vesselCharredNotSealed", "consequence": "Char plug over an open lumen rebleeds once the patient's blood pressure rises: hematoma.", "teaching": "Grasp the vessel with forceps first and buzz the forceps so the walls are apposed when they coagulate." }
+    ],
+    "decisionPoints": [
+      { "id": "fascia-reached", "trigger": "deepFasciaExposed", "prompt": "You have reached the deep fascia. Stay above it or go through?", "options": [ { "label": "Stay above", "outcome": "Appropriate for a subcutaneous lesion." }, { "label": "Go through", "outcome": "Enters muscle; expect bleeding and twitching." } ] }
+    ],
+    "ambiguity": [
+      { "id": "fat-depth", "description": "Fat thickness varies +-15 % so the fascia depth is not known in advance.", "affects": "layers.fatMm" },
+      { "id": "vessel-positions", "description": "Perforator positions are seeded per attempt.", "affects": "vessels.seed" }
+    ]
+  }
+}

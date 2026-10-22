@@ -1,0 +1,124 @@
+/** Procedural geometry for drapes and instruments. Interleaved pos(3) nrm(3) uv(2). */
+import { mat4, vec3 } from 'gl-matrix';
+
+export class MeshBuilder {
+  private data: number[] = [];
+  count = 0;
+  tri(a: vec3, b: vec3, c: vec3, n?: vec3, uva: [number, number] = [0, 0], uvb: [number, number] = [1, 0], uvc: [number, number] = [1, 1]) {
+    let nn = n;
+    if (!nn) {
+      const ab = vec3.sub(vec3.create(), b, a), ac = vec3.sub(vec3.create(), c, a);
+      nn = vec3.normalize(vec3.create(), vec3.cross(vec3.create(), ab, ac));
+    }
+    for (const [p, uv] of [[a, uva], [b, uvb], [c, uvc]] as [vec3, [number, number]][]) {
+      this.data.push(p[0], p[1], p[2], nn[0], nn[1], nn[2], uv[0], uv[1]);
+    }
+    this.count += 3;
+  }
+  quad(a: vec3, b: vec3, c: vec3, d: vec3, n?: vec3) {
+    this.tri(a, b, c, n, [0, 0], [1, 0], [1, 1]);
+    this.tri(a, c, d, n, [0, 0], [1, 1], [0, 1]);
+  }
+  /** axis-aligned box centred at c with half extents e */
+  box(c: vec3, e: vec3) {
+    const [cx, cy, cz] = c, [ex, ey, ez] = e;
+    const P = (sx: number, sy: number, sz: number) => vec3.fromValues(cx + sx * ex, cy + sy * ey, cz + sz * ez);
+    this.quad(P(-1, -1, 1), P(1, -1, 1), P(1, 1, 1), P(-1, 1, 1), vec3.fromValues(0, 0, 1));
+    this.quad(P(1, -1, -1), P(-1, -1, -1), P(-1, 1, -1), P(1, 1, -1), vec3.fromValues(0, 0, -1));
+    this.quad(P(1, -1, 1), P(1, -1, -1), P(1, 1, -1), P(1, 1, 1), vec3.fromValues(1, 0, 0));
+    this.quad(P(-1, -1, -1), P(-1, -1, 1), P(-1, 1, 1), P(-1, 1, -1), vec3.fromValues(-1, 0, 0));
+    this.quad(P(-1, 1, 1), P(1, 1, 1), P(1, 1, -1), P(-1, 1, -1), vec3.fromValues(0, 1, 0));
+    this.quad(P(-1, -1, -1), P(1, -1, -1), P(1, -1, 1), P(-1, -1, 1), vec3.fromValues(0, -1, 0));
+  }
+  /** cylinder along +Y from y0 to y1 with radii r0 (bottom) r1 (top) */
+  cylinder(r0: number, r1: number, y0: number, y1: number, seg = 24, caps = true) {
+    for (let s = 0; s < seg; s++) {
+      const a0 = (s / seg) * Math.PI * 2, a1 = ((s + 1) / seg) * Math.PI * 2;
+      const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+      const p00 = vec3.fromValues(c0 * r0, y0, s0 * r0), p10 = vec3.fromValues(c1 * r0, y0, s1 * r0);
+      const p01 = vec3.fromValues(c0 * r1, y1, s0 * r1), p11 = vec3.fromValues(c1 * r1, y1, s1 * r1);
+      const slope = (r0 - r1) / Math.max(y1 - y0, 1e-6);
+      const n0 = vec3.normalize(vec3.create(), vec3.fromValues(c0, slope, s0));
+      const n1 = vec3.normalize(vec3.create(), vec3.fromValues(c1, slope, s1));
+      this.tri(p00, p10, p11, undefined);
+      this.tri(p00, p11, p01, undefined);
+      // overwrite normals of the last 6 vertices with smooth normals
+      const base = this.data.length - 48;
+      const ns = [n0, n1, n1, n0, n1, n0];
+      for (let i = 0; i < 6; i++) { this.data[base + i * 8 + 3] = ns[i][0]; this.data[base + i * 8 + 4] = ns[i][1]; this.data[base + i * 8 + 5] = ns[i][2]; }
+      if (caps) {
+        if (r1 > 0) this.tri(vec3.fromValues(0, y1, 0), p01, p11, vec3.fromValues(0, 1, 0));
+        if (r0 > 0) this.tri(vec3.fromValues(0, y0, 0), p10, p00, vec3.fromValues(0, -1, 0));
+      }
+    }
+  }
+  transform(m: mat4, from = 0) {
+    for (let i = from; i < this.data.length; i += 8) {
+      const p = vec3.fromValues(this.data[i], this.data[i + 1], this.data[i + 2]);
+      const n = vec3.fromValues(this.data[i + 3], this.data[i + 4], this.data[i + 5]);
+      vec3.transformMat4(p, p, m);
+      const nm = mat4.clone(m); nm[12] = 0; nm[13] = 0; nm[14] = 0;
+      vec3.transformMat4(n, n, nm); vec3.normalize(n, n);
+      this.data[i] = p[0]; this.data[i + 1] = p[1]; this.data[i + 2] = p[2];
+      this.data[i + 3] = n[0]; this.data[i + 4] = n[1]; this.data[i + 5] = n[2];
+    }
+  }
+  get byteLength() { return this.data.length; }
+  toBuffer(device: GPUDevice, label: string): { buffer: GPUBuffer; count: number } {
+    const arr = new Float32Array(this.data);
+    const buffer = device.createBuffer({ label, size: arr.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(buffer, 0, arr);
+    return { buffer, count: this.count };
+  }
+}
+
+/** Drape frame around the bed aperture, lying just above the skin, with a soft lip. */
+export function buildDrapes(halfX: number, halfZ: number, margin = 2.5): MeshBuilder {
+  const mb = new MeshBuilder();
+  const ax = halfX - margin, az = halfZ - margin; // aperture half extents
+  const R = 400; // drape outer extent
+  const y = 0.6; // mm above skin
+  const lip = 3.0;
+  const q = (x0: number, z0: number, x1: number, z1: number, yy = y) =>
+    mb.quad(vec3.fromValues(x0, yy, z1), vec3.fromValues(x1, yy, z1), vec3.fromValues(x1, yy, z0), vec3.fromValues(x0, yy, z0), vec3.fromValues(0, 1, 0));
+  // four flat panels around the aperture
+  q(-R, -R, R, -az - lip); q(-R, az + lip, R, R); q(-R, -az - lip, -ax - lip, az + lip); q(ax + lip, -az - lip, R, az + lip);
+  // sloped lip down to the skin
+  const slope = (x0: number, z0: number, x1: number, z1: number, x2: number, z2: number, x3: number, z3: number) => {
+    mb.quad(vec3.fromValues(x0, y, z0), vec3.fromValues(x1, y, z1), vec3.fromValues(x2, 0.15, z2), vec3.fromValues(x3, 0.15, z3));
+  };
+  slope(ax + lip, -az - lip, -ax - lip, -az - lip, -ax, -az, ax, -az);          // front
+  slope(-ax - lip, az + lip, ax + lip, az + lip, ax, az, -ax, az);              // back
+  slope(-ax - lip, -az - lip, -ax - lip, az + lip, -ax, az, -ax, -az);          // left
+  slope(ax + lip, az + lip, ax + lip, -az - lip, ax, -az, ax, az);              // right
+  return mb;
+}
+
+/** Bovie pencil along -Y (tip at origin pointing down), length ~150 mm, blade electrode. */
+export function buildPencilBody(): MeshBuilder {
+  const mb = new MeshBuilder();
+  // body: tapered front, cylindrical rear
+  mb.cylinder(3.2, 5.2, 22, 60, 28);
+  mb.cylinder(5.2, 5.2, 60, 165, 28);
+  mb.cylinder(5.2, 4.6, 165, 172, 28);
+  // nose cone
+  mb.cylinder(1.8, 3.2, 14, 22, 20);
+  // rocker switch housing (blue)
+  return mb;
+}
+export function buildPencilButtons(): MeshBuilder {
+  const mb = new MeshBuilder();
+  mb.box(vec3.fromValues(4.6, 82, 0), vec3.fromValues(1.6, 9, 3.2));   // cut (yellow), on the upper face
+  mb.box(vec3.fromValues(4.6, 104, 0), vec3.fromValues(1.6, 9, 3.2));  // coag (blue)
+  return mb;
+}
+export function buildBlade(): MeshBuilder {
+  // stainless blade electrode: shaft 2.4 mm dia from y=4..14, blade 2.4 x 0.5 x 12 mm, tip at y=0
+  const mb = new MeshBuilder();
+  mb.cylinder(1.2, 1.2, 5, 15, 16);
+  mb.box(vec3.fromValues(0, 2.5, 0), vec3.fromValues(1.2, 2.5, 0.25));
+  // bevelled tip
+  mb.tri(vec3.fromValues(-1.2, 0, 0.25), vec3.fromValues(1.2, 0, 0.25), vec3.fromValues(0, -1.2, 0), vec3.fromValues(0, -0.2, 1));
+  mb.tri(vec3.fromValues(1.2, 0, -0.25), vec3.fromValues(-1.2, 0, -0.25), vec3.fromValues(0, -1.2, 0), vec3.fromValues(0, -0.2, -1));
+  return mb;
+}
