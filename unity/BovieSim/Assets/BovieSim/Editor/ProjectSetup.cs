@@ -32,8 +32,6 @@ namespace BovieSim.EditorTools
 
         /// <summary>Poly Haven HDRI ids tried in order (all CC0). The first one the API knows is used.</summary>
         static readonly string[] HdriCandidates = { "hospital_room", "hospital_room_2", "surgery", "studio_small_08", "studio_small_03" };
-        /// <summary>ambientCG fabric ids tried in order (all CC0).</summary>
-        static readonly string[] FabricCandidates = { "Fabric030", "Fabric026", "Fabric004" };
 
         static readonly StringBuilder downloadLog = new StringBuilder();
 
@@ -88,17 +86,22 @@ namespace BovieSim.EditorTools
 
                 Progress("Instrument and field materials", 0.62f);
                 assets.blood = LitMaterial("Blood", TissuePalette.BloodPooled, 0, 0.92f, 1f);
-                assets.steel = LitMaterial("Steel", new Color(0.80f, 0.80f, 0.81f), 1, 0.72f, 0); // satin-finish surgical stainless
-                assets.pencilBody = LitMaterial("PencilBody", new Color(0.93f, 0.92f, 0.88f), 0, 0.45f, 0); // off-white moulded plastic
+                Progress("Instrument textures (your files in Downloads, else ambientCG, CC0)", 0.63f);
+                // satin-finish (bead-blasted) surgical stainless: a brushed-metal set gives the fine lines, normalised to stainless grey
+                assets.steel = LitMaterial("Steel", new Color(0.80f, 0.80f, 0.81f), 1, 0.52f, 0);
+                ApplyTextureSet(assets.steel, TextureSet("Steel", new[] { "brushed metal", "brushed steel" }, new[] { "Metal007", "Metal006", "Metal032" }), new Color(0.80f, 0.80f, 0.81f), 1000f / 12f, 0.5f, 1f);
+                // off-white moulded plastic
+                assets.pencilBody = LitMaterial("PencilBody", new Color(0.93f, 0.92f, 0.88f), 0, 0.45f, 0);
+                ApplyTextureSet(assets.pencilBody, TextureSet("Plastic", new[] { "plastic" }, new[] { "Plastic010", "Plastic006" }), new Color(0.93f, 0.92f, 0.88f), 1000f / 20f, 0.5f, 0f);
                 assets.pencilCutButton = LitMaterial("PencilCut", new Color(0.96f, 0.80f, 0.08f), 0, 0.55f, 0);
                 assets.pencilCoagButton = LitMaterial("PencilCoag", new Color(0.10f, 0.34f, 0.84f), 0, 0.55f, 0);
 
-                Progress("Downloading drape fabric (ambientCG, CC0)", 0.66f);
-                assets.drape = DrapeMaterial();
-                var drapeNormal = assets.drape.GetTexture("_NormalMap");
-                // absorbent reinforcement around the fenestration: lighter blue, matte, same fibre normals
-                assets.drapePad = LitMaterial("DrapePad", new Color(0.36f, 0.50f, 0.66f), 0, 0.10f, 0);
-                if (drapeNormal != null) { assets.drapePad.SetTexture("_NormalMap", drapeNormal); assets.drapePad.SetFloat("_NormalScale", 0.5f); assets.drapePad.SetFloat("_UVBase", 5); assets.drapePad.SetFloat("_TexWorldScale", 1000f / 30f); HDMaterial.ValidateMaterial(assets.drapePad); }
+                Progress("Drape textures (your files in Downloads, else ambientCG, CC0)", 0.66f);
+                var drapeSet = TextureSet("Drape", new[] { "fabric nonwoven", "fabric felt", "fabric" }, new[] { "Fabric030", "Fabric026", "Fabric004" });
+                assets.drape = DrapeMaterial(drapeSet);
+                // absorbent reinforcement around the fenestration: a little lighter, matte; its own set if provided, else the drape's
+                assets.drapePad = LitMaterial("DrapePad", new Color(0.30f, 0.45f, 0.63f), 0, 0.08f, 0);
+                ApplyTextureSet(assets.drapePad, TextureSet("Pad", new string[0], new string[0]) ?? drapeSet, new Color(0.30f, 0.45f, 0.63f), 1000f / 30f, 0.6f, 0f);
                 // incise film adhered to the skin at the aperture edge: thin glossy plastic
                 assets.drapeFilm = LitMaterial("DrapeFilm", new Color(0.58f, 0.66f, 0.74f), 0, 0.74f, 0.4f);
                 // operating-light heads: the emissive face is what steel and wet tissue reflect (~150 000 nits at EV 15)
@@ -240,9 +243,11 @@ namespace BovieSim.EditorTools
         }
 
         // ---- textures ----------------------------------------------------------------------------------
-        static Texture2D SaveTexture(string name, Color[] px, int size, bool linear, bool normal)
+        static Texture2D SaveTexture(string name, Color[] px, int size, bool linear, bool normal) { return SaveTexture(name, px, size, size, linear, normal); }
+
+        static Texture2D SaveTexture(string name, Color[] px, int width, int height, bool linear, bool normal)
         {
-            var t = new Texture2D(size, size, TextureFormat.RGBA32, true, linear);
+            var t = new Texture2D(width, height, TextureFormat.RGBA32, true, linear);
             t.SetPixels(px); t.Apply();
             string path = Tex + "/" + name + ".png";
             File.WriteAllBytes(path, t.EncodeToPNG());
@@ -254,6 +259,7 @@ namespace BovieSim.EditorTools
             imp.wrapMode = TextureWrapMode.Repeat;
             imp.anisoLevel = 8;
             imp.mipmapEnabled = true;
+            imp.isReadable = true;
             imp.textureCompression = TextureImporterCompression.CompressedHQ;
             imp.SaveAndReimport();
             return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
@@ -384,56 +390,175 @@ namespace BovieSim.EditorTools
             return null;
         }
 
-        static Material DrapeMaterial()
+        // ---- texture sets: user files in Downloads, else CC0 downloads, else procedural --------------------------
+
+        sealed class TexSet { public Texture2D color, normal, roughness, metalness; public string id; }
+
+        static Texture2D ImportTexture(string path, bool normal, bool srgb)
         {
-            Texture2D albedo = null, normal = null;
-            foreach (var id in FabricCandidates)
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            var imp = (TextureImporter)AssetImporter.GetAtPath(path);
+            if (imp == null) return null;
+            imp.textureType = normal ? TextureImporterType.NormalMap : TextureImporterType.Default;
+            imp.sRGBTexture = srgb && !normal;
+            imp.wrapMode = TextureWrapMode.Repeat;
+            imp.anisoLevel = 8;
+            imp.isReadable = true; // the setup reads colours back (mean colour, derived normals)
+            imp.SaveAndReimport();
+            return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+        }
+
+        static string FindFile(string stem)
+        {
+            foreach (var ext in new[] { ".jpg", ".jpeg", ".png", ".tga" }) if (File.Exists(Dl + "/" + stem + ext)) return Dl + "/" + stem + ext;
+            return null;
+        }
+
+        /// <summary>
+        /// Texture set for a material slot: your own files `Downloads/&lt;Slot&gt;_Color.*` (+ `_NormalGL`, `_Roughness`,
+        /// `_Metalness`) win; otherwise the first ambientCG material the API returns for the search terms, then the
+        /// known ids; null when nothing is available (the procedural material stays). A missing normal map is derived
+        /// from the colour.
+        /// </summary>
+        static TexSet TextureSet(string slot, string[] acgQueries, string[] acgIds)
+        {
+            var set = UserTextureSet(slot);
+            if (set == null)
+                foreach (var id in AmbientCgCandidates(acgQueries, acgIds)) { set = AmbientCgSet(slot, id); if (set != null) break; }
+            if (set == null) return null;
+            if (set.normal == null) set.normal = DerivedNormal(slot, set.color);
+            return set;
+        }
+
+        static TexSet UserTextureSet(string slot)
+        {
+            string color = FindFile(slot + "_Color");
+            if (color == null) return null;
+            var set = new TexSet { id = "your " + slot + " files", color = ImportTexture(color, false, true) };
+            string n = FindFile(slot + "_NormalGL") ?? FindFile(slot + "_Normal"), r = FindFile(slot + "_Roughness"), m = FindFile(slot + "_Metalness");
+            if (n != null) set.normal = ImportTexture(n, true, false);
+            if (r != null) set.roughness = ImportTexture(r, false, false);
+            if (m != null) set.metalness = ImportTexture(m, false, false);
+            downloadLog.AppendLine("| " + slot + " texture | " + Path.GetFileName(color) + " | (your file in Downloads) | (yours) | (yours) | see docs/textures.md |");
+            return set.color != null ? set : null;
+        }
+
+        /// <summary>ambientCG asset ids: the API's results for each search term (first the 1K JPG links it lists), then the known ids.</summary>
+        static System.Collections.Generic.List<string> AmbientCgCandidates(string[] queries, string[] ids)
+        {
+            var list = new System.Collections.Generic.List<string>();
+            foreach (var q in queries)
             {
-                string zipPath = Dl + "/" + id + "_1K-JPG.zip";
-                if (!File.Exists(zipPath))
-                {
-                    var data = Fetch("https://ambientcg.com/get?file=" + id + "_1K-JPG.zip");
-                    if (data == null || data.Length < 1000) continue;
-                    File.WriteAllBytes(zipPath, data);
-                    downloadLog.AppendLine("| Drape fabric | " + id + " | https://ambientcg.com/view?id=" + id + " | CC0 | ambientCG | 1K JPG colour + NormalGL, tinted surgical blue |");
-                }
-                try
-                {
-                    using (var zip = ZipFile.OpenRead(zipPath))
-                        foreach (var e in zip.Entries)
-                        {
-                            bool isCol = e.Name.EndsWith("_Color.jpg", StringComparison.OrdinalIgnoreCase), isNrm = e.Name.EndsWith("_NormalGL.jpg", StringComparison.OrdinalIgnoreCase);
-                            if (!isCol && !isNrm) continue;
-                            string outPath = Dl + "/" + e.Name;
-                            using (var s = e.Open()) using (var f = File.Create(outPath)) s.CopyTo(f);
-                            AssetDatabase.ImportAsset(outPath, ImportAssetOptions.ForceSynchronousImport);
-                            var imp = (TextureImporter)AssetImporter.GetAtPath(outPath);
-                            imp.textureType = isNrm ? TextureImporterType.NormalMap : TextureImporterType.Default;
-                            imp.SaveAndReimport();
-                            if (isCol) albedo = AssetDatabase.LoadAssetAtPath<Texture2D>(outPath); else normal = AssetDatabase.LoadAssetAtPath<Texture2D>(outPath);
-                        }
-                }
-                catch (Exception ex) { Debug.LogWarning("[Bovie Sim] fabric archive unreadable: " + ex.Message); albedo = normal = null; }
-                if (albedo != null) break;
+                var json = Fetch("https://ambientcg.com/api/v2/full_json?type=Material&q=" + Uri.EscapeDataString(q) + "&limit=12&include=downloadData", 30);
+                if (json == null) continue;
+                foreach (Match m in Regex.Matches(Encoding.UTF8.GetString(json), "https://ambientcg\\.com/get\\?file=([A-Za-z0-9]+)_1K-JPG\\.zip"))
+                    if (!list.Contains(m.Groups[1].Value)) list.Add(m.Groups[1].Value);
             }
-            Texture2D mask = null;
-            if (albedo == null)
+            foreach (var id in ids) if (!list.Contains(id)) list.Add(id);
+            return list;
+        }
+
+        static TexSet AmbientCgSet(string slot, string id)
+        {
+            string zipPath = Dl + "/" + id + "_1K-JPG.zip";
+            if (!File.Exists(zipPath))
             {
-                var set = TissueTextures.Fabric(TexSize);
-                albedo = SaveTexture("Drape_Albedo", set.albedo, TexSize, false, false);
-                normal = SaveTexture("Drape_Normal", set.normal, TexSize, true, true);
-                mask = SaveTexture("Drape_Mask", set.mask, TexSize, true, false);
+                var data = Fetch("https://ambientcg.com/get?file=" + id + "_1K-JPG.zip");
+                if (data == null || data.Length < 1000) return null;
+                File.WriteAllBytes(zipPath, data);
             }
-            var m = NewLit("Drape");
-            m.SetTexture("_BaseColorMap", albedo);
-            // downloaded fabric is grey/neutral: tint it to drape blue
-            m.SetColor("_BaseColor", mask == null ? new Color(0.30f, 0.52f, 0.80f) : Color.white);
-            if (normal != null) { m.SetTexture("_NormalMap", normal); m.SetFloat("_NormalScale", 0.8f); }
-            if (mask != null) { m.SetTexture("_MaskMap", mask); m.SetFloat("_SmoothnessRemapMin", 0); m.SetFloat("_SmoothnessRemapMax", 1); }
-            else m.SetFloat("_Smoothness", 0.12f);
+            var set = new TexSet { id = id };
+            try
+            {
+                using (var zip = ZipFile.OpenRead(zipPath))
+                    foreach (var e in zip.Entries)
+                    {
+                        string kind = e.Name.EndsWith("_Color.jpg", StringComparison.OrdinalIgnoreCase) ? "color" : e.Name.EndsWith("_NormalGL.jpg", StringComparison.OrdinalIgnoreCase) ? "normal"
+                                    : e.Name.EndsWith("_Roughness.jpg", StringComparison.OrdinalIgnoreCase) ? "roughness" : e.Name.EndsWith("_Metalness.jpg", StringComparison.OrdinalIgnoreCase) ? "metalness" : null;
+                        if (kind == null) continue;
+                        string outPath = Dl + "/" + e.Name;
+                        using (var st = e.Open()) using (var f = File.Create(outPath)) st.CopyTo(f);
+                        var tex = ImportTexture(outPath, kind == "normal", kind == "color");
+                        if (kind == "color") set.color = tex; else if (kind == "normal") set.normal = tex; else if (kind == "roughness") set.roughness = tex; else set.metalness = tex;
+                    }
+            }
+            catch (Exception ex) { Debug.LogWarning("[Bovie Sim] " + id + " archive unreadable: " + ex.Message); return null; }
+            if (set.color == null) return null;
+            downloadLog.AppendLine("| " + slot + " texture | " + id + " | https://ambientcg.com/view?id=" + id + " | CC0 | Lennart Demes / ambientCG | 1K JPG Color, NormalGL, Roughness; tinted / normalised in the material |");
+            return set;
+        }
+
+        static Texture2D DerivedNormal(string slot, Texture2D color)
+        {
+            if (color == null) return null;
+            try
+            {
+                var px = TissueTextures.NormalFromColor(color.GetPixels(), color.width, color.height, 2.5f);
+                return SaveTexture(slot + "_DerivedNormal", px, color.width, color.height, true, true);
+            }
+            catch (Exception ex) { Debug.LogWarning("[Bovie Sim] could not derive a normal map for " + slot + ": " + ex.Message); return null; }
+        }
+
+        /// <summary>Mean colour of a readable texture (linear), sampled.</summary>
+        static Color MeanColor(Texture2D t)
+        {
+            var px = t.GetPixels32();
+            int step = Math.Max(1, px.Length / 20000); double r = 0, g = 0, b = 0; int n = 0;
+            for (int i = 0; i < px.Length; i += step) { r += px[i].r; g += px[i].g; b += px[i].b; n++; }
+            return new Color((float)(r / n / 255), (float)(g / n / 255), (float)(b / n / 255)).linear;
+        }
+
+        /// <summary>
+        /// Puts a texture set on an HDRP Lit material with triplanar world mapping (one tile per `tileMm`): colour
+        /// map tinted so a grey scan takes the slot's colour (a coloured photo is kept as it is), normal map with
+        /// `normalScale`, and a mask map built from the roughness (and metalness) maps when present.
+        /// </summary>
+        static void ApplyTextureSet(Material m, TexSet set, Color target, float texWorldScale, float normalScale, float metallic)
+        {
+            if (set == null || set.color == null) return;
+            m.SetTexture("_BaseColorMap", set.color);
+            var mean = MeanColor(set.color);
+            bool grey = Mathf.Max(mean.r, mean.g, mean.b) - Mathf.Min(mean.r, mean.g, mean.b) < 0.08f;
+            if (grey)
+            {
+                var t = target.linear;
+                m.SetColor("_BaseColor", new Color(Mathf.Clamp(t.r / Mathf.Max(mean.r, 0.02f), 0, 4), Mathf.Clamp(t.g / Mathf.Max(mean.g, 0.02f), 0, 4), Mathf.Clamp(t.b / Mathf.Max(mean.b, 0.02f), 0, 4), 1).gamma);
+            }
+            else m.SetColor("_BaseColor", Color.white);
+            if (set.normal != null) { m.SetTexture("_NormalMap", set.normal); m.SetFloat("_NormalScale", normalScale); }
+            if (set.roughness != null)
+            {
+                // HDRP mask map: R metallic, G ambient occlusion, B detail mask, A smoothness
+                var rp = set.roughness.GetPixels(); var mp = set.metalness != null && set.metalness.width == set.roughness.width ? set.metalness.GetPixels() : null;
+                var mask = new Color[rp.Length];
+                for (int i = 0; i < rp.Length; i++) mask[i] = new Color(mp != null ? mp[i].r : metallic, 1, 1, 1 - rp[i].r);
+                var maskTex = SaveTexture(m.name + "_Mask", mask, set.roughness.width, set.roughness.height, true, false);
+                m.SetTexture("_MaskMap", maskTex);
+                m.SetFloat("_SmoothnessRemapMin", 0); m.SetFloat("_SmoothnessRemapMax", 1);
+                m.SetFloat("_AORemapMin", 0); m.SetFloat("_AORemapMax", 1);
+            }
             m.SetFloat("_UVBase", 5);
-            m.SetFloat("_TexWorldScale", 1000f / 30f);
+            m.SetFloat("_TexWorldScale", texWorldScale);
+            HDMaterial.ValidateMaterial(m);
+            EditorUtility.SetDirty(m);
+        }
+
+        static Material DrapeMaterial(TexSet set)
+        {
+            var m = NewLit("Drape");
             m.SetMaterialType(MaterialId.LitStandard);
+            var blue = new Color(0.24f, 0.41f, 0.59f); // surgical blue (sRGB)
+            if (set != null) ApplyTextureSet(m, set, blue, 1000f / 30f, 0.8f, 0f);
+            else
+            {
+                var proc = TissueTextures.Fabric(TexSize);
+                m.SetTexture("_BaseColorMap", SaveTexture("Drape_Albedo", proc.albedo, TexSize, false, false));
+                m.SetColor("_BaseColor", Color.white);
+                m.SetTexture("_NormalMap", SaveTexture("Drape_Normal", proc.normal, TexSize, true, true)); m.SetFloat("_NormalScale", 0.8f);
+                m.SetTexture("_MaskMap", SaveTexture("Drape_Mask", proc.mask, TexSize, true, false)); m.SetFloat("_SmoothnessRemapMin", 0); m.SetFloat("_SmoothnessRemapMax", 1);
+                m.SetFloat("_UVBase", 5); m.SetFloat("_TexWorldScale", 1000f / 30f);
+            }
+            if (m.GetTexture("_MaskMap") == null) m.SetFloat("_Smoothness", 0.12f);
             HDMaterial.ValidateMaterial(m);
             EditorUtility.SetDirty(m);
             return m;
@@ -457,15 +582,16 @@ namespace BovieSim.EditorTools
                 env.skyType.Override((int)SkyType.HDRI);
                 var sky = Override<HDRISky>(p);
                 sky.hdriSky.Override(hdri);
-                // the room is dim next to the surgical light field (~1 000 lux vs ~120 000 lux)
-                sky.exposure.Override(9.5f);
+                // the theatre is a bright room (1 000-2 000 lux) but dim next to the light field; this keeps its
+                // walls and ceiling visible in satin steel and wet tissue without flattening the field's shadows
+                sky.exposure.Override(12.5f);
             }
             else
             {
                 env.skyType.Override((int)SkyType.Gradient);
                 var g = Override<GradientSky>(p);
                 g.top.Override(new Color(0.55f, 0.62f, 0.66f)); g.middle.Override(new Color(0.42f, 0.50f, 0.52f)); g.bottom.Override(new Color(0.20f, 0.24f, 0.26f));
-                g.exposure.Override(9.5f);
+                g.exposure.Override(12.5f);
             }
             var exp = Override<Exposure>(p);
             exp.mode.Override(ExposureMode.Fixed);

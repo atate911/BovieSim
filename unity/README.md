@@ -48,8 +48,9 @@ Detail adapts to the PC (see [docs/hardware.md](../docs/hardware.md)); updates a
    import to finish; the console says `[Bovie Sim] Installing ...`. If it does not start, use
    `Bovie Sim > Install Required Packages`.
 3. When HDRP is in, a dialog offers **Set up the project**. Accept (or run `Bovie Sim > Set Up Project`).
-   It configures HDRP and linear colour, bakes tissue textures and materials, downloads the HDRI and
-   drape fabric (falls back to procedural ones offline), and creates `Assets/BovieSim/Generated/Main.unity`.
+   It configures HDRP and linear colour, bakes tissue textures and materials, downloads the HDRI and CC0
+   texture sets for the drape, instruments and pencil (falls back to procedural ones offline), and creates
+   `Assets/BovieSim/Generated/Main.unity`.
 4. If `Window > Rendering > HDRP Wizard` lists problems, press **Fix All** (also on its *HDRP + DXR* tab if you
    have a ray-tracing card), then re-run Set Up Project. Setup switches the graphics API to DirectX 12; restart
    the editor when it asks.
@@ -127,4 +128,6 @@ flow, lattice gaping and lipoma freeing, scenario parsing, anatomy determinism a
 - **Ray tracing "not available"**: the editor or build must run on DirectX 12 (Project Settings > Player >
   Graphics APIs for Windows: Direct3D12 first, then restart) on an RTX / RX 6000 / Arc card with a current
   driver; check *HDRP Wizard > HDRP + DXR*.
-- **Downloads blocked**: put any `.hdr` into `Assets/BovieSim/Generated/Downloads` and re-run setup.
+- **Downloads blocked**: put any `.hdr` into `Assets/BovieSim/Generated/Downloads` and re-run setup. Texture
+  maps of your own go in the same folder as `Drape_Color.jpg`, `Steel_Color.jpg`, `Plastic_Color.jpg`, `Pad_Color.jpg`
+  (optional `_NormalGL`, `_Roughness`), see [docs/textures.md](../docs/textures.md).

@@ -200,6 +200,23 @@ namespace BovieSim.EditorTools
             h = h * 0.6f + mott * 0.3f;
         }
 
+        /// <summary>Tangent-space normal map from a colour image: luminance as height, central differences (wrapping, so tiles stay seamless).</summary>
+        public static Color[] NormalFromColor(Color[] px, int w, int h, float strength)
+        {
+            var lum = new float[w * h];
+            for (int i = 0; i < lum.Length; i++) lum[i] = 0.299f * px[i].r + 0.587f * px[i].g + 0.114f * px[i].b;
+            var o = new Color[w * h];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    float dx = lum[(x + 1) % w + y * w] - lum[(x - 1 + w) % w + y * w];
+                    float dy = lum[x + ((y + 1) % h) * w] - lum[x + ((y - 1 + h) % h) * w];
+                    var nrm = new Vector3(-dx * strength, -dy * strength, 1).normalized;
+                    o[x + y * w] = new Color(nrm.x * 0.5f + 0.5f, nrm.y * 0.5f + 0.5f, nrm.z * 0.5f + 0.5f, 1);
+                }
+            return o;
+        }
+
         static Color[] HeightToNormal(float[] h, int size, float strength)
         {
             var o = new Color[h.Length];

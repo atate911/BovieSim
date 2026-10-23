@@ -97,20 +97,29 @@ async function main() {
 
   // fenestrated surgical drape: incise film on the skin, absorbent pad, then the loose blue drape (albedos in linear sRGB)
   const drape = buildDrapeSet(sx / 2, sz / 2);
-  renderer.addMesh(drape.film, 'drapeFilm', [0.30, 0.40, 0.52], { rough: 0.22, kind: 3 });
-  renderer.addMesh(drape.pad, 'drapePad', [0.085, 0.19, 0.36], { rough: 0.95, kind: 2 });
-  renderer.addMesh(drape.drape, 'drape', [0.05, 0.14, 0.31], { rough: 0.9, kind: 1 });
+  renderer.addMesh(drape.film, 'drapeFilm', [0.17, 0.24, 0.36], { rough: 0.22, kind: 3 });   // clear adhesive film at the drape edge
+  const drapePad = renderer.addMesh(drape.pad, 'drapePad', [0.075, 0.18, 0.37], { rough: 0.95, kind: 2 });
+  const drapeDraw = renderer.addMesh(drape.drape, 'drape', [0.06, 0.16, 0.34], { rough: 0.9, kind: 1 });
+  // satin-finished stainless (f0 of steel) and off-white moulded plastic
+  const STEEL: [number, number, number] = [0.62, 0.62, 0.63];
   const pencilBody = renderer.addMesh(buildPencilBody(), 'pencilBody', [0.92, 0.86, 0.72], { rough: 0.45 });
   const pencilButtons = renderer.addMesh(buildPencilButtons(), 'pencilButtons', [0.85, 0.75, 0.1], { rough: 0.5 });
-  const blade = renderer.addMesh(buildBlade(), 'blade', [0.85, 0.85, 0.86], { rough: 0.25, metallic: 1 });
+  const blade = renderer.addMesh(buildBlade(), 'blade', STEEL, { rough: 0.45, metallic: 1 });
 
   const tool = new ElectrodeTool();
   const forceps = new ForcepsTool();
   const suction = new SuctionTool();
-  const forcepsA = renderer.addMesh(buildForcepsArm(), 'forcepsA', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
-  const forcepsB = renderer.addMesh(buildForcepsArm(), 'forcepsB', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
-  const frazier = renderer.addMesh(buildFrazier(), 'frazier', [0.8, 0.8, 0.82], { rough: 0.35, metallic: 1 });
-  const hookMesh = renderer.addMesh(buildSkinHook(), 'hook', [0.8, 0.8, 0.82], { rough: 0.3, metallic: 1 });
+  const forcepsA = renderer.addMesh(buildForcepsArm(), 'forcepsA', STEEL, { rough: 0.5, metallic: 1 });
+  const forcepsB = renderer.addMesh(buildForcepsArm(), 'forcepsB', STEEL, { rough: 0.5, metallic: 1 });
+  const frazier = renderer.addMesh(buildFrazier(), 'frazier', STEEL, { rough: 0.5, metallic: 1 });
+  const hookMesh = renderer.addMesh(buildSkinHook(), 'hook', STEEL, { rough: 0.5, metallic: 1 });
+  // texture maps from public/textures (CC0 sets via scripts/fetch-textures.mjs, or your own: docs/textures.md); applied as they load
+  void renderer.loadTextures([
+    { slot: 'drape', draws: [drapeDraw], tileMm: 30, tintIfGrey: [0.06, 0.16, 0.34] },
+    { slot: 'pad', draws: [drapePad], tileMm: 30, tintIfGrey: [0.075, 0.18, 0.37], fallbackSlot: 'drape' },
+    { slot: 'steel', draws: [blade, forcepsA, forcepsB, frazier, hookMesh], tileMm: 12, normalStrength: 0.6 },
+    { slot: 'plastic', draws: [pencilBody], tileMm: 20, tintIfGrey: [0.92, 0.86, 0.72] },
+  ]);
   const hookModel = mat4.create();
   let activeTool: ToolKind = TOOL_ORDER.includes(toolParam) ? toolParam : 'pencil';
   let pencilElectrode: 'blade' | 'needle' | 'ball' = 'blade';
@@ -370,7 +379,7 @@ async function main() {
         const pxPerMmX = SLICE_W / physics.slice.widthMm, pxPerMmY = SLICE_H / physics.slice.depthMm;
         return count ? { widthMm: (maxX - minX + 1) / pxPerMmX, depthMm: (maxY + 1) / pxPerMmY - 1.5, pixels: count } : { widthMm: 0, depthMm: 0, pixels: 0 };
       }, setCam: (az: number, el: number, dist: number, tx = 0, tz = 0) => { cam.azimuth = az; cam.elevation = el; cam.distance = dist; cam.target[0] = tx; cam.target[2] = tz; } };
-    window.__sim = { ready: true, frame: frameIndex, events: events.recent(12), tool: activeTool, lipomaFree: lattice.lipomaFree, capsule: [lattice.capsuleAlive, lattice.capsuleTotal], clusterRiseMm,
+    window.__sim = { ready: true, frame: frameIndex, textures: renderer.loadedTextures.slice(), events: events.recent(12), tool: activeTool, lipomaFree: lattice.lipomaFree, capsule: [lattice.capsuleAlive, lattice.capsuleTotal], clusterRiseMm,
       gapMm: lattice.distanceBetween(vec3.fromValues(gapPts[0], 0, gapPts[1]), vec3.fromValues(gapPts[2], 0, gapPts[3])), vertexCount, fps, report, readout: { ...r, hit: r.hit ? Array.from(r.hit) : null }, totals: physics.totals, simTime: physics.simTime, autoDone, settings: gen.settings };
     if (!headless) requestAnimationFrame(loop); else setTimeout(loop, 10);
   };

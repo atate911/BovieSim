@@ -318,7 +318,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4f {
   // wet sheen: the room and the lamp domes reflected in the moist surface
   let NoV = max(dot(N, V), 0.0);
   let Fa = F_Schlick(f0, NoV);
-  color += Fa * envReflection(reflect(-V, N), p) * (1.0 - m.rough) * 0.5;
+  color += Fa * envReflection(reflect(-V, N), p, m.rough) * mix(0.6, 0.15, m.rough);
 
   // arc / electrode point light
   if (frame.arcLight.w > 0.0) {

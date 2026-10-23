@@ -61,10 +61,21 @@ fn lightHead(idx: i32, wpos: vec3f, Ngeo: vec3f, px: vec2f) -> Head {
 /** Specular widening for the dome's angular size (Karis sphere-light approximation). */
 fn domeWiden() -> f32 { return frame.params2.x * 0.5; }
 
-/** Room reflected in a glossy surface: dim neutral theatre, a cool ceiling, and the two bright lamp domes. */
-fn envReflection(R: vec3f, wpos: vec3f) -> vec3f {
-  let room = mix(vec3f(0.16, 0.17, 0.19), vec3f(0.42, 0.46, 0.52), smoothstep(-0.2, 0.9, R.y));
-  let lampA = pow(max(dot(R, normalize(frame.lightPos.xyz - wpos)), 0.0), 14.0) * frame.lightPos.w;
-  let lampB = pow(max(dot(R, normalize(frame.light2Pos.xyz - wpos)), 0.0), 14.0) * frame.light2Pos.w;
-  return room * frame.lightColor.w * 2.5 + frame.lightColor.rgb * (lampA + lampB) * 1.6;
+/**
+ * Surroundings reflected in a glossy surface. Below the horizon the lit field itself (blue drape and pink
+ * tissue inside the ~100 klux pool, as bright as the skin); above, the dim theatre ceiling. The two lamp domes
+ * (~5 x the field's radiance) are seen through a lobe that widens with roughness, so satin instruments show a
+ * broad silver glow rather than a pin-point reflection; the lobe keeps the dome's energy as it widens.
+ */
+fn envReflection(R: vec3f, wpos: vec3f, rough: f32) -> vec3f {
+  let k = frame.lightColor.w / 0.22;
+  let up = smoothstep(-0.3, 0.5, R.y);
+  var env = mix(vec3f(0.30, 0.38, 0.50), vec3f(0.14, 0.15, 0.18), up) * k;
+  let sigma0 = atan(frame.params2.x);
+  let sigma = sigma0 + rough * rough * 2.4;
+  let keep = (sigma0 * sigma0) / (sigma * sigma);
+  let thA = acos(clamp(dot(R, normalize(frame.lightPos.xyz - wpos)), -1.0, 1.0));
+  let thB = acos(clamp(dot(R, normalize(frame.light2Pos.xyz - wpos)), -1.0, 1.0));
+  let lamps = exp(-(thA * thA) / (sigma * sigma)) * frame.lightPos.w + exp(-(thB * thB) / (sigma * sigma)) * frame.light2Pos.w;
+  return env + frame.lightColor.rgb * lamps * 2.2 * keep;
 }

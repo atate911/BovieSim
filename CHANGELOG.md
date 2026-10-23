@@ -20,6 +20,13 @@ after updating (the editor offers it automatically).
   occlusion; High: + reflections; Ultra: + global illumination and subsurface scattering), or Off / Shadows /
   Reflections / Full. GPU-rebuilt tissue meshes enter the acceleration structure as dynamic geometry. Without
   DXR the raster effects stay (screen-space reflections from High detail up).
+- **Texture maps.** Both clients take real maps for the drape, reinforcement pad, instrument steel and pencil
+  plastic (albedo, normal, roughness; a missing normal map is derived from the colour). CC0 sets download with
+  `npm run fetch:textures` (ambientCG, Poly Haven) for the browser build and by Set Up Project for Unity; your
+  own maps drop into `public/textures/<slot>/` or `Generated/Downloads/<Slot>_Color.jpg` (docs/textures.md, with
+  prompts for making them). Without maps: satin brushed steel that reflects the lit field and the lamp domes
+  instead of a dark room, a nonwoven drape with fibre texture, bonding dots and a rolled hem and package
+  creases in the folds.
 - **Colour rendering.** Browser build: Khronos PBR Neutral tone mapping (blood stays red, fat stays yellow) with a
   proper sRGB transfer curve and a lighter vignette; near-white 4300 K light with the room's cool ambient and
   blue drape bounce. Unity: ambient occlusion at wound scale (1.5 cm, not 25 cm); the scenario skin-tone and

@@ -331,15 +331,19 @@ namespace BovieSim
             return Mathf.Sqrt(ox * ox + oz * oz) + Mathf.Min(Mathf.Max(qx, qz), 0) - rc;
         }
 
+        static float Ridge(float t, float period) { float q = Mathf.Abs(Mathf.Repeat(t / period, 1f) - 0.5f) * period; return Mathf.Exp(-(q / 2.2f) * (q / 2.2f)); }
+
         /// <summary>
-        /// Drape height above the skin plane (mm). The incise film lies on the skin, the reinforcement pad is
-        /// thicker and flat, and beyond it the loose drape carries broad swells, pleats radiating from the
-        /// fenestration where it was pulled taut, and fine wrinkles; past the table edge it hangs down.
+        /// Drape height above the skin plane (mm). The incise film lies on the skin behind a rolled hem, the
+        /// reinforcement pad is thicker and flat, and beyond it the loose drape carries broad swells, pleats
+        /// radiating from the fenestration where it was pulled taut, the sharp creases left by its fan-folded
+        /// packaging, and fine wrinkles; past the table edge it hangs down.
         /// </summary>
         public static float DrapeHeight(float x, float z, float ax, float az, float rc)
         {
             float d = ApertureDist(x, z, ax, az, rc);
             float y = 0.12f + 0.35f * Smooth01(0, DrapeFilmMm, d) + 0.55f * Smooth01(DrapeFilmMm, DrapePadMm, d);
+            y += 1.1f * Mathf.Exp(-((d - 1.2f) / 0.9f) * ((d - 1.2f) / 0.9f));   // rolled hem at the aperture edge
             float loose = Smooth01(DrapePadMm - 4, 60, d);
             float far = Smooth01(60, 220, d);
             float swell = ((float)Noise.Fbm2(x / 70.0, z / 70.0, 3, 5) - 0.5f) * 2;
@@ -347,6 +351,13 @@ namespace BovieSim
             float pleat = Mathf.Sin(ang * 9 + ((float)Noise.Fbm2(x / 40.0, z / 40.0, 2, 11) - 0.5f) * 6) * 0.5f + 0.5f;
             float wrinkle = ((float)Noise.Fbm2(x / 14.0, z / 14.0, 2, 17) - 0.5f) * 2;
             y += loose * (swell * (2.5f + 6 * far) + pleat * pleat * (1.2f + 3 * far) + wrinkle * 0.5f);
+            // package creases: a slightly skewed grid of sharp ridges (120 x 170 mm fan folds) plus a few random creases
+            const float ca = 0.14f;
+            float u1 = x * Mathf.Cos(ca) + z * Mathf.Sin(ca), v1 = -x * Mathf.Sin(ca) + z * Mathf.Cos(ca);
+            float creaseGrid = Ridge(u1 + 37, 120) + Ridge(v1 + 61, 170);
+            float cr = Mathf.Abs((float)Noise.Fbm2(x / 55.0, z / 55.0, 2, 23) - 0.5f) / 0.012f;
+            float creaseRand = Mathf.Exp(-cr * cr);
+            y += loose * (creaseGrid * 1.8f + creaseRand * 1.2f);
             y -= Mathf.Max(0, d - 260) * 0.5f;
             return y;
         }
@@ -389,8 +400,8 @@ namespace BovieSim
         public static Mesh Drapes(float halfX, float halfZ, float margin = 2.5f)
         {
             float ax = halfX - margin, az = halfZ - margin, rc = 6f;
-            float[] rings = { 0, 1.5f, 3, DrapeFilmMm, 7, 10, 14, 17, DrapePadMm, 24, 28, 32, 36, 40, 46, 53, 61, 70, 80, 92, 106, 122, 140, 162, 188, 220, 260, 320, 400 };
-            const int n = 144;
+            float[] rings = { 0, 0.6f, 1.2f, 1.8f, 2.5f, 3.5f, DrapeFilmMm, 7, 10, 14, 17, DrapePadMm, 23, 26, 29, 32, 35, 38, 41, 44, 48, 52, 56, 60, 65, 70, 76, 82, 88, 95, 102, 110, 118, 127, 137, 148, 160, 175, 190, 210, 235, 260, 290, 330, 400 };
+            const int n = 256;
             var f = new MeshFactory();
             System.Func<int, float, Vector3> P = (k, d) => { var q = RingPoint(k % n, n, d, ax, az, rc); return new Vector3(q.x, DrapeHeight(q.x, q.y, ax, az, rc), q.y); };
             System.Func<int, float, Vector3> N = (k, d) => { var q = RingPoint(k % n, n, d, ax, az, rc); return DrapeNormal(q.x, q.y, ax, az, rc); };

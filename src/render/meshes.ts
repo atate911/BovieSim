@@ -114,13 +114,15 @@ export function apertureDist(x: number, z: number, s: DrapeSpec): number {
 }
 
 /**
- * Drape height above the skin plane (mm). The incise film lies on the skin, the reinforcement pad is thicker
- * and flat, and beyond it the loose drape carries broad swells, pleats radiating from the fenestration where
- * it was pulled taut, and fine wrinkles; past the table edge it hangs down.
+ * Drape height above the skin plane (mm). The incise film lies on the skin behind a rolled hem, the reinforcement
+ * pad is thicker and flat, and beyond it the loose drape carries broad swells, pleats radiating from the
+ * fenestration where it was pulled taut, the sharp creases left by its fan-folded packaging, and fine wrinkles;
+ * past the table edge it hangs down.
  */
 export function drapeHeight(x: number, z: number, s: DrapeSpec): number {
   const d = apertureDist(x, z, s);
   let y = 0.12 + 0.35 * smoothstep(0, DRAPE_FILM_MM, d) + 0.55 * smoothstep(DRAPE_FILM_MM, DRAPE_PAD_MM, d);
+  y += 1.1 * Math.exp(-(((d - 1.2) / 0.9) ** 2));                                   // rolled hem at the aperture edge
   const loose = smoothstep(DRAPE_PAD_MM - 4, 60, d);
   const far = smoothstep(60, 220, d);
   const swell = (fbm2(x / 70, z / 70, 3, 5) - 0.5) * 2;
@@ -128,6 +130,12 @@ export function drapeHeight(x: number, z: number, s: DrapeSpec): number {
   const pleat = Math.sin(ang * 9 + (fbm2(x / 40, z / 40, 2, 11) - 0.5) * 6) * 0.5 + 0.5;
   const wrinkle = (fbm2(x / 14, z / 14, 2, 17) - 0.5) * 2;
   y += loose * (swell * (2.5 + 6 * far) + pleat * pleat * (1.2 + 3 * far) + wrinkle * 0.5);
+  // package creases: a slightly skewed grid of sharp ridges (120 x 170 mm fan folds) plus a few random creases
+  const ca = 0.14, u1 = x * Math.cos(ca) + z * Math.sin(ca), v1 = -x * Math.sin(ca) + z * Math.cos(ca);
+  const ridge = (t: number, period: number) => { const q = Math.abs((((t / period) % 1) + 1) % 1 - 0.5) * period; return Math.exp(-((q / 2.2) ** 2)); };
+  const creaseGrid = ridge(u1 + 37, 120) + ridge(v1 + 61, 170);
+  const creaseRand = Math.exp(-((Math.abs(fbm2(x / 55, z / 55, 2, 23) - 0.5) / 0.012) ** 2));
+  y += loose * (creaseGrid * 1.8 + creaseRand * 1.2);
   y -= Math.max(0, d - 260) * 0.5;
   return y;
 }
@@ -168,8 +176,8 @@ export interface DrapeSet { film: MeshBuilder; pad: MeshBuilder; drape: MeshBuil
 /** Fenestrated drape around the bed aperture in three parts: incise film, reinforcement pad, loose blue drape. */
 export function buildDrapeSet(halfX: number, halfZ: number, margin = 2.5): DrapeSet {
   const spec: DrapeSpec = { ax: halfX - margin, az: halfZ - margin, rc: 6 };
-  const rings = [0, 1.5, 3, DRAPE_FILM_MM, 7, 10, 14, 17, DRAPE_PAD_MM, 24, 28, 32, 36, 40, 46, 53, 61, 70, 80, 92, 106, 122, 140, 162, 188, 220, 260, 320, 400];
-  const n = 144;
+  const rings = [0, 0.6, 1.2, 1.8, 2.5, 3.5, DRAPE_FILM_MM, 7, 10, 14, 17, DRAPE_PAD_MM, 23, 26, 29, 32, 35, 38, 41, 44, 48, 52, 56, 60, 65, 70, 76, 82, 88, 95, 102, 110, 118, 127, 137, 148, 160, 175, 190, 210, 235, 260, 290, 330, 400];
+  const n = 256;
   const film = new MeshBuilder(), pad = new MeshBuilder(), drape = new MeshBuilder();
   const P = (k: number, d: number) => { const [x, z] = ringPoint(k % n, n, d, spec); return vec3.fromValues(x, drapeHeight(x, z, spec), z); };
   const N = (k: number, d: number) => { const [x, z] = ringPoint(k % n, n, d, spec); return drapeNormal(x, z, spec); };

@@ -17,7 +17,7 @@ namespace BovieSim
         [Tooltip("Loose blue drape (CC0 fabric or procedural weave), reinforcement pad and incise film around the fenestration")] public Material drape, drapePad, drapeFilm;
         [Tooltip("Emissive face of the operating-light heads, seen in reflections")] public Material lampDome;
         public Material steel;
-        public Material pencilBody;
+        [Tooltip("Pencil body: off-white moulded plastic, textured when a Plastic set is available")] public Material pencilBody;
         public Material pencilCutButton;
         public Material pencilCoagButton;
         public Material particlesAlpha;
@@ -26,7 +26,7 @@ namespace BovieSim
         [Tooltip("UI Toolkit runtime theme (Generated/BovieTheme.tss)")] public UnityEngine.UIElements.ThemeStyleSheet uiTheme;
         [Tooltip("Set Up Project version that produced these assets; older registries trigger a re-run")] public int setupVersion;
         /// <summary>bump when Set Up Project must be re-run after an update</summary>
-        public const int CurrentSetupVersion = 4;
+        public const int CurrentSetupVersion = 5;
 
         public static SimAssets Load()
         {
