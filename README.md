@@ -71,7 +71,7 @@ own into `public/textures/` ([docs/textures.md](docs/textures.md)).
 URL options: `?scenario=freeplay|hemostasis|lipoma`, `?voxel=0.5` (coarser bed for slower GPUs;
 default 0.25 mm), `?seed=3` (re-randomise anatomy), `?cut=1|2|4|8` (pre-carved trench, pit, ring
 around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temperature / damage / tissue-type overlay), `?mech=0`
-(disable the mechanics lattice).
+(disable the mechanics lattice), `?peel=block,6` or `?peel=dissect,20` (start with the depth peel at that depth in mm).
 
 ### Controls (browser build)
 
@@ -88,6 +88,7 @@ around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temp
 | Watts | `[` `]` cut, `;` `'` coag (Shift = ±1) |
 | Electrode | `B` blade, `N` needle, `O` ball, `R` roll blade 45° |
 | Overlays | `V` surface overlay, `C` cross-section mode, `H` hide section |
+| Depth peel | `K` off → block cut → dissection; `,` `.` move the plane 0.5 mm (Shift: 0.1 mm); Ctrl + wheel scrubs it |
 | Camera | right-drag orbit, wheel zoom, Shift-drag pan |
 
 ## Layout
@@ -119,7 +120,8 @@ Locally:
 
 - `npm test` checks conduction against the analytic Gaussian, the field solver against a spherical
   electrode, Arrhenius against its closed form, phase-change energy bookkeeping and the FT10 curve.
-- `node scripts/shot.mjs name "voxel=0.5&cut=3"` renders headless (needs `npm run dev` on 5199).
+- `node scripts/shot.mjs name "voxel=0.5&cut=3" [timeoutMs] [settleFrames]` renders headless (needs `npm run dev` on 5199);
+  e.g. `node scripts/shot.mjs dissect "voxel=0.5&peel=dissect,20&cam=-0.6,0.6,110" 400000 3` for the dissected bed.
 - `node scripts/activate.mjs name "auto=cut,30,2.5,-0.3,-0.1,0.3,-0.1"` runs a scripted activation
   (mode, watts, seconds, optional start/end cursor positions) and saves normal, temperature and
   damage views plus the impedance / power trace.

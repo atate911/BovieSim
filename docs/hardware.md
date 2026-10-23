@@ -14,7 +14,9 @@ per PC and checks the frame rate while running.
 | Ultra | 0.16 mm | 96³ | 30 fps | RTX 4070+ / RX 7800 XT, RX 9070 XT, 12 GB+ |
 
 Each level also sets solver iterations, how many surface bricks are rebuilt per frame, ambient occlusion,
-shadow-map size, screen-space reflections (High and Ultra), the default ray-tracing tier and the replay length. Finer voxels show the thin thermal margins that matter
+shadow-map size, screen-space reflections (High and Ultra), the default ray-tracing tier, the replay length and
+the section image size (960 × 600 at Low, 1280 × 800 at Medium, 1600 × 1000 at High and Ultra). Finer voxels
+show the thin thermal margins that matter
 (a 0.5 mm skin-edge rim is 2 voxels at 0.25 mm, 3 at 0.16 mm) but cost roughly the cube of the refinement.
 
 **Auto** (the default) chooses from dedicated video memory and whether the GPU is integrated

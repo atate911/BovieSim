@@ -14,8 +14,11 @@ export class SurfaceExtractor {
   private finalizePipeline: GPUComputePipeline;
   private bindGroup: GPUBindGroup;
   private readback: GPUBuffer;
+  private clipBuf: GPUBuffer;
   lastVertexCount = 0;
   dirty = true;
+  /** depth peel: 0 off, 1 block cut, 2 dissection; plane normal and offset (mm) */
+  readonly clip = { mode: 0, n: [0, 1, 0] as [number, number, number], d: 0 };
 
   constructor(private device: GPUDevice, private volume: Volume, capacityVertices = 2_400_000) {
     const gpu = volume.gpu!;
@@ -24,6 +27,8 @@ export class SurfaceExtractor {
     this.counter = device.createBuffer({ label: 'surfaceCounter', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     this.indirect = device.createBuffer({ label: 'surfaceIndirect', size: 16, usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST });
     this.readback = device.createBuffer({ label: 'surfaceCountReadback', size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    this.clipBuf = device.createBuffer({ label: 'surfaceClip', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.writeClip();
     const module = createShader(device, 'surface', VOLUME_INFO_WGSL + surfaceWgsl);
     const layout = device.createBindGroupLayout({
       entries: [
@@ -31,6 +36,7 @@ export class SurfaceExtractor {
         ...[1, 2, 3, 4, 5].map((b) => ({ binding: b, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' as GPUBufferBindingType } })),
         { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
       ],
     });
     const pl = device.createPipelineLayout({ bindGroupLayouts: [layout] });
@@ -47,8 +53,27 @@ export class SurfaceExtractor {
         { binding: 5, resource: { buffer: gpu.omega } },
         { binding: 6, resource: { buffer: this.vertexBuffer } },
         { binding: 7, resource: { buffer: this.counter } },
+        { binding: 8, resource: { buffer: this.clipBuf } },
       ],
     });
+  }
+
+  /**
+   * Depth peel (display only): mode 0 off, 1 block cut, 2 dissection. The plane removes voxel centres with
+   * dot(n, p) > d; a horizontal peel to `depthMm` below the skin is n = (0, 1, 0), d = -depthMm.
+   */
+  setClip(mode: number, n: [number, number, number], d: number) {
+    const c = this.clip;
+    if (c.mode === mode && c.d === d && c.n[0] === n[0] && c.n[1] === n[1] && c.n[2] === n[2]) return;
+    c.mode = mode; c.n = [n[0], n[1], n[2]]; c.d = d;
+    this.writeClip();
+    this.dirty = true;
+  }
+
+  private writeClip() {
+    const c = this.clip;
+    const len = Math.hypot(c.n[0], c.n[1], c.n[2]) || 1;
+    this.device.queue.writeBuffer(this.clipBuf, 0, new Float32Array([c.n[0] / len, c.n[1] / len, c.n[2] / len, c.d, c.mode, 0, 0, 0]));
   }
 
   /** Encodes the extraction. Indirect args: [count, 1, 0, 0]; count copied from the counter. */

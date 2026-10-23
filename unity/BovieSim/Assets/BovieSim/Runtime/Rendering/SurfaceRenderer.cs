@@ -61,6 +61,9 @@ namespace BovieSim
         public bool capped;
         readonly Mesh bloodMesh; readonly GraphicsBuffer bloodVb; public readonly GameObject bloodGo;
         readonly Bounds brickBoundsPad;
+        // depth peel (display only): see _Clip in Surface.compute
+        int clipMode; Vector4 clipPlane = new Vector4(0, 1, 0, 0);
+        public int ClipMode { get { return clipMode; } }
 
         public SurfaceRenderer(ComputeShader shader, GpuVolume volume, Transform fieldRoot, Material[] bucketMaterials, Material bloodMat)
         {
@@ -124,6 +127,7 @@ namespace BovieSim
 
             vol.SetVolumeInfo(cs);
             cs.SetFloat("_BloodShowMm", 0.015f);
+            cs.SetInt("_ClipMode", 0); cs.SetVector("_Clip", clipPlane);
             cs.SetInts("_LatDims", 2, 2, 2, 0);
             cs.SetVector("_LatOrigin", new Vector4(0, 0, 0, 1));
             foreach (var k in new[] { kSmooth, kCount, kEmit }) cs.SetBuffer(k, "_OccS", occSmooth);
@@ -189,6 +193,33 @@ namespace BovieSim
         }
 
         public int QueuedBricks { get { return queue.Count; } }
+
+        /// <summary>
+        /// Depth peel of the displayed surface (the physics keeps the whole bed): mode 0 off, 1 block cut, 2 dissection.
+        /// Voxel centres with dot(n, p) > d are removed; a horizontal peel to depthMm below the skin is n = up, d = -depthMm.
+        /// Moving a horizontal plane rebuilds only the bricks in the band it crossed; anything else rebuilds every brick.
+        /// </summary>
+        public void SetClip(int mode, Vector3 n, float d)
+        {
+            var plane = new Vector4(n.x, n.y, n.z, d);
+            if (mode == clipMode && plane == clipPlane) return;
+            if (mode == 0 && clipMode == 0) { clipPlane = plane; cs.SetVector("_Clip", plane); return; } // off: the plane is not shown
+            bool horizontal = Mathf.Abs(n.y) > 0.999f && Mathf.Abs(clipPlane.y) > 0.999f;
+            if (mode != 0 && mode == clipMode && horizontal) MarkYRange(Mathf.Min(d, clipPlane.w), Mathf.Max(d, clipPlane.w));
+            else MarkAll();
+            clipMode = mode; clipPlane = plane;
+            cs.SetInt("_ClipMode", mode);
+            cs.SetVector("_Clip", plane);
+        }
+
+        /// <summary>Marks every brick with cells in a band of heights (field mm), with a margin for the smoothing apron.</summary>
+        public void MarkYRange(float yLo, float yHi)
+        {
+            var v = vol.cpu;
+            float surf = v.nz - v.airLayers - 0.5f;
+            int kLo = Mathf.FloorToInt(yLo / v.h + surf) - 2, kHi = Mathf.CeilToInt(yHi / v.h + surf) + 3;
+            MarkVoxelBox(new[] { 0, 0, Math.Max(0, kLo) }, new[] { v.nx, v.ny, Math.Min(v.nz, kHi) });
+        }
 
         // ------------------------------------------------------------------ extraction
         /// <summary>Rebuilds up to maxBricksPerFrame dirty bricks, nearest the focus point (mm) first.</summary>

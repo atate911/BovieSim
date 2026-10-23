@@ -54,6 +54,8 @@ namespace BovieSim
         ReplayBuffer replay; bool paused; float replayT;
         readonly System.Collections.Generic.Dictionary<string, float> lastMoment = new System.Collections.Generic.Dictionary<string, float>();
         Material overlayMat; int overlayMode; // 0 off, 1 temperature, 2 damage
+        // depth peel of the 3D view (display only): 0 off, 1 block cut, 2 dissection; depth below the original skin (mm)
+        int peelMode; float peelMm = 3f; bool peelSweep; float peelSweepDir = 1f; int shownPeelMode = -1; float shownPeelMm = -1f;
         static string SettingsPath { get { return System.IO.Path.Combine(Application.persistentDataPath, "settings.json"); } }
 
         // ---- scene objects
@@ -136,7 +138,7 @@ namespace BovieSim
             field.localScale = Vector3.one * 0.001f;
 
             gpu = new GpuVolume(volume);
-            physics = new PhysicsPipeline(simCs, gpu, detail.maxSubdomain);
+            physics = new PhysicsPipeline(simCs, gpu, detail.maxSubdomain, detail.sliceScale);
             physics.relaxSweeps = detail.relaxSweeps;
             surface = new SurfaceRenderer(surfCs, gpu, field, SkinCorrectedMaterials(), assets.blood);
             surface.maxBricksPerFrame = detail.bricksPerFrame;
@@ -154,6 +156,10 @@ namespace BovieSim
             ui = new SimUI(transform, assets.uiTheme, gen, physics);
             ui.SetScenario(scenario);
             ui.ToggleOrientation += () => slicePerp = !slicePerp;
+            ui.PeelModeChosen += SetPeelMode;
+            ui.PeelCycle += () => SetPeelMode((peelMode + 1) % 3);
+            ui.PeelDepthChanged += mm => { peelMm = Mathf.Clamp(mm, 0, volume.SizeDepth); peelSweep = false; };
+            ui.PeelSweepToggled += () => peelSweep = !peelSweep;
             events.OnEvent += ui.Push;
             events.OnEvent += OnTeachingMoment;
             ui.DetailChosen += l => { chosenLevel = l; settings.detail = l.ToString(); SaveSettings(); };
@@ -329,8 +335,12 @@ namespace BovieSim
             float frameDt = Mathf.Min(0.05f, Time.deltaTime);
             input.Update();
             bool overUi = ui.PointerOverUi(input.mouse);
-            orbit.HandleInput(overUi);
+            // Ctrl + wheel scrubs the depth peel; the plain wheel zooms
+            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            orbit.HandleInput(overUi, !ctrlHeld);
+            if (ctrlHeld && !overUi) { float wheel = Input.mouseScrollDelta.y; if (Mathf.Abs(wheel) > 0.01f) StepPeel(-wheel * 0.25f); }
             HandleKeys();
+            ApplyPeel(frameDt);
 
             // ---- generator activation: footswitch (keys or on-screen) or hand switch on the pencil
             bool lmb = input.leftHeld && !overUi && !orbit.Dragging;
@@ -617,7 +627,10 @@ namespace BovieSim
             if (Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.Q)) activeTool = HandPose.Order[(Array.IndexOf(HandPose.Order, activeTool) + 1) % HandPose.Order.Length];
             if (Input.GetKeyDown(KeyCode.T)) forceps.toothed = !forceps.toothed;
             if (Input.GetKeyDown(KeyCode.R)) tool.roll += Mathf.PI / 4;
-            if (Input.GetKeyDown(KeyCode.C)) physics.sliceMode = (physics.sliceMode + 1) % 6;
+            if (Input.GetKeyDown(KeyCode.C)) { if (shift) ui.largeSection = !ui.largeSection; else physics.sliceMode = (physics.sliceMode + 1) % 6; }
+            if (Input.GetKeyDown(KeyCode.K)) { if (shift) peelSweep = !peelSweep; else SetPeelMode((peelMode + 1) % 3); }
+            if (Input.GetKeyDown(KeyCode.Comma) || Input.GetKeyDown(KeyCode.PageDown)) StepPeel(shift ? 0.1f : 0.5f);
+            if (Input.GetKeyDown(KeyCode.Period) || Input.GetKeyDown(KeyCode.PageUp)) StepPeel(shift ? -0.1f : -0.5f);
             if (Input.GetKeyDown(KeyCode.H)) physics.sliceEnabled = !physics.sliceEnabled;
             if (Input.GetKeyDown(KeyCode.J)) slicePerp = !slicePerp;
             if (Input.GetKeyDown(KeyCode.Y)) InputState.invertTiltY = !InputState.invertTiltY;
@@ -632,6 +645,44 @@ namespace BovieSim
             if (Input.GetKeyDown(KeyCode.G)) ToggleSetting("tipGauge");
             if (Input.GetKeyDown(KeyCode.V)) SetOverlayMode((overlayMode + 1) % 3);
             if (Input.GetKeyDown(KeyCode.P)) StartReplay("Paused", "Replay of the last " + replay.Seconds.ToString("0") + " seconds.", null);
+        }
+
+        // ------------------------------------------------------------------ depth peel
+        // A clip plane in the surface extraction only: the physics, the pick and the instruments keep the whole bed.
+        // Block cut hides everything above the plane, so the cut face shows each layer and what the energy did at that
+        // depth; dissection strips skin, fat, septa and fasciae and leaves vessels, the nerve, the lipoma and any heated
+        // tissue standing, so the architecture under the skin and the thermal injury can be seen in 3D.
+        void SetPeelMode(int m)
+        {
+            peelMode = Mathf.Clamp(m, 0, 2);
+            if (peelMode == 0) peelSweep = false;
+            else if (peelMm <= 0.05f) peelMm = 3f; // start below the dermis so the first view already shows the fat
+        }
+
+        void StepPeel(float dMm)
+        {
+            if (peelMode == 0) SetPeelMode(1);
+            peelSweep = false;
+            peelMm = Mathf.Clamp(peelMm + dMm, 0, volume.SizeDepth);
+        }
+
+        /// <summary>Hands the peel plane to the surface extractor and the section; a sweep glides it down and up the bed.</summary>
+        void ApplyPeel(float dt)
+        {
+            if (peelSweep && peelMode != 0)
+            {
+                peelMm += peelSweepDir * 4f * dt;
+                if (peelMm >= volume.SizeDepth) { peelMm = volume.SizeDepth; peelSweepDir = -1f; }
+                else if (peelMm <= 0.5f) { peelMm = 0.5f; peelSweepDir = 1f; }
+            }
+            // quantised so a sweep rebuilds a band of bricks a few times a second, not every frame
+            float q = peelSweep ? 0.25f : 0.05f;
+            float mm = Mathf.Round(peelMm / q) * q;
+            if (peelMode == shownPeelMode && mm == shownPeelMm) return;
+            shownPeelMode = peelMode; shownPeelMm = mm;
+            surface.SetClip(peelMode, Vector3.up, -mm);
+            physics.peelY = peelMode != 0 ? -mm : 1e9f;
+            surface.bloodGo.SetActive(peelMode == 0); // the pool lies on the original surface
         }
 
         // ------------------------------------------------------------------ settings and detail
@@ -835,6 +886,7 @@ namespace BovieSim
             d.frameMs = fps > 0 ? 1000f / fps : 0; d.cpuMs = cpuMs; d.gpuMs = gpuMs;
             d.stateAge = physics.stateAgeFrames; d.heightsAge = picker.heightsAgeFrames; d.surfaceAge = surface.lastAgeFrames;
             d.sliceTopY = physics.sliceOrigin.y; d.slicePerp = slicePerp;
+            d.peelMode = peelMode; d.peelMm = peelMm; d.bedDepthMm = volume.SizeDepth; d.peelSweep = peelSweep;
             UpdateLayerLabels(physics.sliceOrigin.x, physics.sliceOrigin.z);
         }
 
