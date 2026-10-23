@@ -3,16 +3,19 @@
 The native desktop client. It runs the same voxel tissue model, FT10 generator model, physics kernels
 (ported from WGSL to HLSL compute), bleeding, XPBD mechanics, instruments, events and scenario JSON as
 the web build in the repo root, and renders them with Unity's High Definition Render Pipeline:
-subsurface-scattering skin and fat, HDRI lighting, dual-head surgical light with soft shadows, SSAO,
-depth of field focused at the tip, bloom, TAA and ACES tonemapping.
+subsurface-scattering skin and fat, HDRI lighting, a dual-head surgical light with dome-soft shadows, a
+folded blue fenestrated drape, SSAO, contact shadows, screen-space or ray-traced reflections, optional DXR ray
+tracing (shadows, AO, reflections, global illumination), depth of field at the tip, bloom, SMAA and Neutral
+tonemapping.
 
 ## Requirements
 - Unity **6.6** (6000.6.x, the current release) via Unity Hub, Personal licence is fine. Unity 6.3 LTS
   (6000.3.x) also works. Unity 6.0 LTS reached end of support in October 2026.
 - **Windows 10 or 11, 64-bit** (the target platform; macOS/Metal should also work but is untested).
-  DirectX 12 or DirectX 11 both work (every compute kernel stays within DX11's 8 writable buffers).
-  A discrete GPU (NVIDIA GTX 1060 / AMD RX 580 class or better) is recommended; integrated graphics
-  will run at a coarser voxel size.
+  DirectX 12 or DirectX 11 both work (every compute kernel stays within DX11's 8 writable buffers); Set Up
+  Project puts DirectX 12 first because ray tracing needs it. A discrete GPU (NVIDIA GTX 1060 / AMD RX 580
+  class or better) is recommended; integrated graphics will run at a coarser voxel size. Ray tracing needs an
+  RTX 20-series / RX 6000 / Arc card (see [docs/hardware.md](../docs/hardware.md)).
 - Internet on first setup (Unity packages; optional CC0 HDRI and fabric downloads).
 
 The full instruction manual (installation and operation, with a guided first session) is
@@ -48,9 +51,12 @@ steps 2-3 below from the command line with Unity closed. By hand:
    import to finish; the console says `[Bovie Sim] Installing ...`. If it does not start, use
    `Bovie Sim > Install Required Packages`.
 3. When HDRP is in, a dialog offers **Set up the project**. Accept (or run `Bovie Sim > Set Up Project`).
-   It configures HDRP and linear colour, bakes tissue textures and materials, downloads the HDRI and
-   drape fabric (falls back to procedural ones offline), and creates `Assets/BovieSim/Generated/Main.unity`.
-4. If `Window > Rendering > HDRP Wizard` lists problems, press **Fix All**, then re-run Set Up Project.
+   It configures HDRP and linear colour, bakes tissue textures and materials, downloads the HDRI and CC0
+   texture sets for the drape, instruments and pencil (falls back to procedural ones offline), and creates
+   `Assets/BovieSim/Generated/Main.unity`.
+4. If `Window > Rendering > HDRP Wizard` lists problems, press **Fix All** (also on its *HDRP + DXR* tab if you
+   have a ray-tracing card), then re-run Set Up Project. Setup switches the graphics API to DirectX 12; restart
+   the editor when it asks.
 5. Open `Assets/BovieSim/Generated/Main.unity` and press **Play**.
 
 Everything in `Assets/BovieSim/Generated` is rebuilt by Set Up Project and is not committed. After an
@@ -78,11 +84,13 @@ from the repo root to copy it into `Assets/BovieSim/Resources/BovieSim/Scenarios
 | Space (forceps closed) | Lift the jaws (traction on a grasped edge, delivering a freed lipoma) |
 | C / J / H | Cross-section mode / orientation (across view or across the blade) / hide |
 | - / = | Section zoom out / in (16 × 10 mm up to the full 56 × 35 mm) |
+| Shift+C | Large section (800 px over the field) |
+| K / , . | Depth peel of the field: off, block cut, dissection / plane deeper, shallower (Shift: 0.1 mm). Ctrl + wheel scrubs it, Shift+K sweeps it, or drag the ruler |
 | RMB or Alt+LMB, MMB or Shift+LMB, wheel | Orbit, pan, zoom |
 | F1 / F2 / F3 | Scenario brief / controls / timing readout (frame, CPU, GPU ms; result ages) |
 | F7 / F8 | Depth of field on/off (off by default) / anti-aliasing SMAA, TAA, FXAA, off |
 | V / G / P | Teaching view on the tissue (temperature, damage) / tip gauge / pause and replay (Enter continues) |
-| F9 | Settings: detail level (Auto, Low 0.35, Medium 0.25, High 0.20, Ultra 0.16 mm), display, teaching |
+| F9 | Settings: detail level (Auto, Low 0.35, Medium 0.25, High 0.20, Ultra 0.16 mm), ray tracing (Auto, Off, Shadows, Reflections, Full), display, teaching |
 | F5 / F6 | Restart / next scenario (freeplay, hemostasis, lipoma, viscera) |
 | F11 / Esc | Toggle fullscreen / quit (built app only) |
 | Pen (Wacom) | Pressure sets electrode depth; tilt sets the instrument angle; Y flips tilt direction |
@@ -124,5 +132,13 @@ flow, lattice gaping and lipoma freeing, scenario parsing, anatomy determinism a
   Active Input Handling must be *Both*; the bootstrap sets it, then the editor must restart.
 - **Pen moves the cursor but pressure/tilt do nothing**: check Use Windows Ink in the Wacom settings and
   that `com.unity.inputsystem` is installed (Window > Package Manager).
-- **Slow**: set Voxel Override to 0.4 or 0.5 on the `Bovie Sim` object; turn off DoF/SSAO in the volume.
-- **Downloads blocked**: put any `.hdr` into `Assets/BovieSim/Generated/Downloads` and re-run setup.
+- **Slow**: choose a lower detail level (F9) and set ray tracing to Off or Shadows; or set Voxel Override to
+  0.4 or 0.5 on the `Bovie Sim` object.
+- **Ray tracing "not available"**: the editor or build must run on DirectX 12 (Project Settings > Player >
+  Graphics APIs for Windows: Direct3D12 first, then restart) on an RTX / RX 6000 / Arc card with a current
+  driver; check *HDRP Wizard > HDRP + DXR*.
+- **Instrument models**: drop a purchased pack's FBX and textures into `Assets/BovieSim/Models` (git-ignored)
+  and re-run setup; `tweezers` becomes the forceps, other instruments rest on the drape ([docs/textures.md](../docs/textures.md)).
+- **Downloads blocked**: put any `.hdr` into `Assets/BovieSim/Generated/Downloads` and re-run setup. Texture
+  maps of your own go in the same folder as `Drape_Color.jpg`, `Steel_Color.jpg`, `Plastic_Color.jpg`, `Pad_Color.jpg`
+  (optional `_NormalGL`, `_Roughness`), see [docs/textures.md](../docs/textures.md).

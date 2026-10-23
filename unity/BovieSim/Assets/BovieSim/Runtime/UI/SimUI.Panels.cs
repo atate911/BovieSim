@@ -5,7 +5,7 @@ using UnityEngine.UIElements;
 
 namespace BovieSim
 {
-    /// <summary>Tip gauge, settings panel, frame-budget banner and the pause-and-replay overlay.</summary>
+    /// <summary>Tip gauge, settings panel, frame-budget banner, the pause-and-replay overlay and the depth-peel ruler.</summary>
     public sealed partial class SimUI
     {
         // tip gauge
@@ -24,8 +24,14 @@ namespace BovieSim
         VisualElement replay; Image replayImg; Label replayTitle, replayDetail, replayTeach; VisualElement replayBar;
         public event Action ReplayAgain, ReplayContinue;
         public bool ReplayVisible { get { return replay.style.display == DisplayStyle.Flex; } }
+        // depth peel: a ruler through the layers that drags the clip plane of the 3D view
+        VisualElement depthCard, rulerCol, rulerFill, rulerHandle, rulerTicks; Label depthRead, depthHint; readonly List<Button> peelButtons = new List<Button>(); Button sweepBtn;
+        public event Action<int> PeelModeChosen; public event Action<float> PeelDepthChanged; public event Action PeelSweepToggled, PeelCycle;
+        const float RulerH = 400f, RulerPad = 8f;
+        bool rulerDrag; float rulerBedMm = 35f; string lastTickKey;
+        static readonly string[] PeelNames = { "Off", "Block cut", "Dissect" };
 
-        void BuildPanels() { BuildGauge(); BuildSettings(); BuildBanner(); BuildReplay(); }
+        void BuildPanels() { BuildGauge(); BuildSettings(); BuildBanner(); BuildReplay(); BuildDepthCard(); }
 
         // ------------------------------------------------------------------ tip gauge
         void BuildGauge()
@@ -88,7 +94,7 @@ namespace BovieSim
             levelNote = Text(settingsCard, "", 13, Muted); levelNote.style.whiteSpace = WhiteSpace.Normal; levelNote.style.marginBottom = 8f;
             Sub(settingsCard, "Display and teaching");
             var t = Box(settingsCard, true); t.pickingMode = PickingMode.Position; t.style.flexWrap = Wrap.Wrap;
-            foreach (var key in new[] { "teachingMoments", "tipGauge", "depthOfField", "antialiasing", "invertTiltY", "showTiming" })
+            foreach (var key in new[] { "teachingMoments", "tipGauge", "depthOfField", "antialiasing", "rayTracing", "invertTiltY", "showTiming" })
             {
                 var k = key;
                 var b = Btn(t, key, () => { if (SettingToggled != null) SettingToggled(k); });
@@ -98,13 +104,14 @@ namespace BovieSim
             settingsCard.style.display = DisplayStyle.None;
         }
 
-        public void RefreshSettings(UserSettings s, DetailLevel running, string reason, DetailLevel chosen)
+        public void RefreshSettings(UserSettings s, DetailLevel running, string reason, DetailLevel chosen, string rayTracingText)
         {
             settingsCard.style.display = showSettings ? DisplayStyle.Flex : DisplayStyle.None;
             if (!showSettings) return;
             var cur = DetailSettings.For(running);
             hwLabel.text = HardwareProfile.Gpu + " · " + (HardwareProfile.VramMb / 1024f).ToString("0.#") + " GB video memory · " + SystemInfo.graphicsDeviceType + "\n" +
-                           "Running at " + running + " (" + cur.voxelMm.ToString("0.00") + " mm voxels, target " + (cur.frameBudgetMs > 20 ? "30" : "60") + " fps): " + reason;
+                           "Running at " + running + " (" + cur.voxelMm.ToString("0.00") + " mm voxels, target " + (cur.frameBudgetMs > 20 ? "30" : "60") + " fps): " + reason + "\n" +
+                           HardwareProfile.RayTracingNote();
             foreach (var kv in levelButtons) SetActive(kv.Value, kv.Key == chosen, Accent);
             levelNote.text = chosen != DetailLevel.Auto && chosen != running || chosen == DetailLevel.Auto && reason == "chosen in Settings"
                 ? "Restart the scenario (F5) to apply the new detail level."
@@ -114,6 +121,7 @@ namespace BovieSim
             SetToggle("depthOfField", "Depth of field: " + OnOff(s.depthOfField), s.depthOfField);
             string[] aa = { "SMAA", "TAA", "FXAA", "off" };
             SetToggle("antialiasing", "Anti-aliasing: " + aa[Mathf.Clamp(s.antialiasing, 0, 3)], true);
+            SetToggle("rayTracing", "Ray tracing: " + rayTracingText, s.rayTracing != "Off");
             SetToggle("invertTiltY", "Pen tilt: " + (s.invertTiltY ? "flipped" : "normal"), s.invertTiltY);
             SetToggle("showTiming", "Timing readout: " + OnOff(s.showTiming), s.showTiming);
         }
@@ -158,6 +166,88 @@ namespace BovieSim
             var go = Btn(btns, "Continue (Enter)", () => { if (ReplayContinue != null) ReplayContinue(); }); go.style.height = 34f;
             SetActive(go, true, Accent);
             replay.style.display = DisplayStyle.None;
+        }
+
+        // ------------------------------------------------------------------ depth peel ruler
+        void BuildDepthCard()
+        {
+            depthCard = CardBox(root);
+            depthCard.style.position = Position.Absolute; depthCard.style.right = 608f; depthCard.style.top = 16f; depthCard.style.width = 214f;
+            Heading(depthCard, "Depth peel · K");
+            var modes = Box(depthCard, true); modes.pickingMode = PickingMode.Position;
+            for (int m = 0; m < PeelNames.Length; m++)
+            {
+                int mm = m;
+                var b = Btn(modes, PeelNames[m], () => { if (PeelModeChosen != null) PeelModeChosen(mm); });
+                b.style.flexGrow = 1f; b.style.marginRight = m < PeelNames.Length - 1 ? 3f : 0f; b.style.paddingLeft = 4f; b.style.paddingRight = 4f; b.style.fontSize = 12f;
+                peelButtons.Add(b);
+            }
+            depthRead = Text(depthCard, "—", 16, Ink, true); depthRead.style.marginTop = 8f;
+            depthHint = Text(depthCard, "", 11, Muted); depthHint.style.whiteSpace = WhiteSpace.Normal; depthHint.style.marginTop = 2f;
+            var body = Box(depthCard, true); body.style.marginTop = 8f; body.style.height = RulerH + 2 * RulerPad;
+            rulerCol = Box(body); rulerCol.pickingMode = PickingMode.Position; rulerCol.style.width = 30f; rulerCol.style.height = RulerH + 2 * RulerPad;
+            var track = Box(rulerCol); track.style.position = Position.Absolute; track.style.left = 11f; track.style.top = RulerPad; track.style.width = 8f; track.style.height = RulerH; track.style.backgroundColor = new Color(1, 1, 1, 0.12f); Radius(track, 4);
+            rulerFill = Box(track); rulerFill.style.width = 8f; rulerFill.style.height = 0f; rulerFill.style.backgroundColor = new Color(Accent.r, Accent.g, Accent.b, 0.7f); Radius(rulerFill, 4);
+            rulerHandle = Box(rulerCol); rulerHandle.style.position = Position.Absolute; rulerHandle.style.left = 3f; rulerHandle.style.top = RulerPad - 6f; rulerHandle.style.width = 24f; rulerHandle.style.height = 12f; rulerHandle.style.backgroundColor = Accent; Radius(rulerHandle, 6);
+            rulerTicks = Box(body); rulerTicks.style.flexGrow = 1f; rulerTicks.style.height = RulerH + 2 * RulerPad;
+            rulerCol.RegisterCallback<PointerDownEvent>(e => { rulerDrag = true; rulerCol.CapturePointer(e.pointerId); RulerAt(e.localPosition.y); });
+            rulerCol.RegisterCallback<PointerMoveEvent>(e => { if (rulerDrag) RulerAt(e.localPosition.y); });
+            rulerCol.RegisterCallback<PointerUpEvent>(e => { rulerDrag = false; rulerCol.ReleasePointer(e.pointerId); });
+            rulerCol.RegisterCallback<PointerCaptureOutEvent>(e => rulerDrag = false);
+            var foot = Box(depthCard, true); foot.pickingMode = PickingMode.Position; foot.style.marginTop = 6f;
+            sweepBtn = Btn(foot, "Sweep down and up (Shift+K)", () => { if (PeelSweepToggled != null) PeelSweepToggled(); }); sweepBtn.style.flexGrow = 1f; sweepBtn.style.marginRight = 0f; sweepBtn.style.fontSize = 12f;
+            var note = Text(depthCard, "Drag the ruler, press , and . or hold Ctrl and roll the wheel. Display only: the instrument still works on the real surface.", 11, Muted);
+            note.style.whiteSpace = WhiteSpace.Normal; note.style.marginTop = 6f;
+            depthCard.style.display = DisplayStyle.None;
+        }
+
+        void RulerAt(float y)
+        {
+            float f = Mathf.Clamp01((y - RulerPad) / RulerH);
+            if (PeelDepthChanged != null) PeelDepthChanged(f * rulerBedMm);
+        }
+
+        /// <summary>Name of the layer at a depth below the skin, from the section column's layer tops.</summary>
+        static string LayerAt(List<KeyValuePair<string, float>> layers, float mm)
+        {
+            string name = "above the skin";
+            foreach (var kv in layers) { if (kv.Value <= mm + 0.01f) name = kv.Key; else break; }
+            return name;
+        }
+
+        public void RefreshDepth(HudData d)
+        {
+            bool on = d.peelMode != 0;
+            depthCard.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
+            if (!on) return;
+            // the large section floats where the ruler normally sits: move the ruler into the column space it vacated
+            depthCard.style.right = largeSection ? 199f : 608f; depthCard.style.top = largeSection ? 250f : 16f;
+            rulerBedMm = Mathf.Max(1f, d.bedDepthMm);
+            for (int m = 0; m < peelButtons.Count; m++) SetActive(peelButtons[m], m == d.peelMode, Accent);
+            SetActive(sweepBtn, d.peelSweep, Accent);
+            float f = Mathf.Clamp01(d.peelMm / rulerBedMm);
+            rulerFill.style.height = RulerH * f;
+            rulerHandle.style.top = RulerPad + RulerH * f - 6f;
+            depthRead.text = d.peelMm.ToString("0.0") + " mm · " + LayerAt(d.layers, d.peelMm);
+            depthHint.text = d.peelMode == 1
+                ? "Block cut: everything above the plane is hidden; the cut face shows each layer and what the energy did at this depth."
+                : "Dissection: skin, fat, septa and fasciae above the plane are stripped. Vessels, the nerve, the lipoma and any heated tissue stay, standing in 3D.";
+            string key = rulerBedMm.ToString("0.0") + ":" + d.layers.Count + (d.layers.Count > 0 ? ":" + d.layers[d.layers.Count - 1].Value.ToString("0.0") : "");
+            if (key == lastTickKey) return;
+            lastTickKey = key;
+            rulerTicks.Clear();
+            for (float mm = 0; mm <= rulerBedMm + 0.01f; mm += 5f)
+            {
+                float y = RulerPad + RulerH * mm / rulerBedMm;
+                var tick = Box(rulerTicks); tick.style.position = Position.Absolute; tick.style.left = 0f; tick.style.top = y; tick.style.width = 6f; tick.style.height = 1f; tick.style.backgroundColor = new Color(1, 1, 1, 0.5f);
+                var l = Text(rulerTicks, mm.ToString("0") + (mm == 0 ? " mm" : ""), 11, Muted); l.style.position = Position.Absolute; l.style.left = 9f; l.style.top = y - 7f;
+            }
+            foreach (var kv in d.layers)
+            {
+                float y = RulerPad + RulerH * Mathf.Clamp01(kv.Value / rulerBedMm);
+                var line = Box(rulerTicks); line.style.position = Position.Absolute; line.style.left = 0f; line.style.top = y; line.style.width = 44f; line.style.height = 1f; line.style.backgroundColor = new Color(Accent.r, Accent.g, Accent.b, 0.6f);
+                var l = Text(rulerTicks, kv.Key, 11, Accent, true); l.style.position = Position.Absolute; l.style.left = 48f; l.style.top = y - 7f;
+            }
         }
 
         public void ShowReplay(string title, string detail, string teaching)

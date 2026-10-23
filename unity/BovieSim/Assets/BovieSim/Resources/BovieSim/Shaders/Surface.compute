@@ -36,8 +36,39 @@ RWStructuredBuffer<uint> _BucketOffset;  // COUNT_STRIDE per brick
 RWByteAddressBuffer _Verts;              // mesh vertex buffer: float3 pos, float3 normal, float4 tangent, float2 uv0
 int _Capacity;                           // vertex capacity of the mesh
 float _BloodShowMm;                      // blood thinner than this is not drawn
+// Depth peel (display only; the physics keeps the whole bed). A voxel centre p is on the removed side of the
+// plane when dot(_Clip.xyz, p) > _Clip.w. _ClipMode 0 off; 1 block cut: everything above the plane goes;
+// 2 dissection: skin, fat, septa and fasciae above the plane go, while vessels, the nerve, the lipoma with
+// its capsule and any tissue the energy has changed stay standing in 3D (SurfaceRenderer.SetClip).
+float4 _Clip;
+int _ClipMode;
 
 static const float ISO = 0.5;
+
+/** 1 on the kept side of the peel plane, 0 on the removed side, fractional for the voxel the plane crosses. */
+float ClipFrac(int i, int j, int k)
+{
+    float s = _Clip.w - dot(_Clip.xyz, WorldOf(i, j, k));
+    return saturate(s / HMM + 0.5);
+}
+/** Dissection keeps vessels, nerve, lipoma, capsule, blood and anything the energy has changed. */
+bool KeptInDissection(uint c, uint idx)
+{
+    uint ty = CellType(c);
+    if (ty == T_AIR) return false;
+    if (ty == T_ARTERY || ty == T_VEIN || ty == T_NERVE || ty == T_LIPOMA || ty == T_CAPSULE || ty == T_BLOOD) return true;
+    return CellState(c) != S_NORMAL || _OmegaR[idx] >= 0.53;
+}
+/** Occupancy after the peel, for the voxel idx at (i, j, k). */
+float EffOcc(uint idx, int i, int j, int k)
+{
+    float o = _Occ[idx];
+    if (_ClipMode == 0) return o;
+    float f = ClipFrac(i, j, k);
+    if (f >= 1.0) return o;
+    if (_ClipMode == 2 && KeptInDissection(_Cells[idx], idx)) return o;
+    return o * f;
+}
 
 /** Tissue class 0..8 x state -> bucket. Must match SurfaceRenderer.BucketMaterial order (SimAssets.TissueBuckets = 20). */
 uint BucketOf(uint c)
@@ -60,7 +91,8 @@ uint BucketOf(uint c)
 
 float OccAt(int i, int j, int k)
 {
-    return _Occ[Idx3(clamp(i, 0, NX - 1), clamp(j, 0, NY - 1), clamp(k, 0, NZ - 1))];
+    i = clamp(i, 0, NX - 1); j = clamp(j, 0, NY - 1); k = clamp(k, 0, NZ - 1);
+    return EffOcc(Idx3(i, j, k), i, j, k);
 }
 float OccS(int i, int j, int k)
 {
@@ -87,7 +119,15 @@ void SmoothOcc(uint3 gid : SV_DispatchThreadID)
                 float w = (di == 0 ? 2.0 : 1.0) * (dj == 0 ? 2.0 : 1.0) * (dk == 0 ? 2.0 : 1.0);
                 sum += w * OccAt(i + di, j + dj, k + dk);
             }
-    _OccS[Idx3(i, j, k)] = sum / 64.0;
+    float s = sum / 64.0;
+    // dissection: a kept structure one or two voxels wide (a perforator, the capsule) must survive the smoothing
+    // once the fat around it is gone; hold its centre above the iso level
+    if (_ClipMode == 2 && ClipFrac(i, j, k) < 1.0)
+    {
+        uint idx = Idx3(i, j, k);
+        if (KeptInDissection(_Cells[idx], idx)) s = max(s, 0.75 * _Occ[idx]);
+    }
+    _OccS[Idx3(i, j, k)] = s;
 }
 
 static float cF[8];
@@ -107,10 +147,14 @@ V EdgeVertex(uint a, uint b)
     v.p = VoxelToWorld(p);
     // index-space gradient -> world axes (i->x, j->z, k->y); normal points toward air
     v.n = normalize(-float3(g.x, g.z, g.y) + float3(1e-6, 0, 0));
-    // material from the more solid of the two raw corners (the smoothed field can mark an air voxel inside)
+    // material from the more solid of the two raw corners (the smoothed field can mark an air voxel inside);
+    // a corner the peel removed counts as air, so the cut face takes the colour of the tissue below it
     uint ia = cIdx[a], ib = cIdx[b];
     uint ca = _Cells[ia], cb = _Cells[ib];
-    bool pickA = CellType(cb) == T_AIR || (CellType(ca) != T_AIR && _Occ[ia] >= _Occ[ib]);
+    int3 va = (int3)cP[a], vb = (int3)cP[b];
+    float oa = EffOcc(ia, va.x, va.y, va.z), ob = EffOcc(ib, vb.x, vb.y, vb.z);
+    bool airA = CellType(ca) == T_AIR || oa <= 0.0, airB = CellType(cb) == T_AIR || ob <= 0.0;
+    bool pickA = airB || (!airA && oa >= ob);
     v.cell = pickA ? ca : cb;
     uint ic = pickA ? ia : ib;
     v.to = float2(_Temp[ic], _OmegaR[ic]);

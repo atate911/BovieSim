@@ -178,6 +178,7 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
       <li><a href="#first">Your first session</a></li>
       <li><a href="#screen">The screen</a></li>
       <li><a href="#controls">Controls</a></li>
+      <li><a href="#depth">Beneath the surface</a></li>
       <li><a href="#generator">Generator and modes</a></li>
       <li><a href="#instruments">Instruments</a></li>
       <li><a href="#technique">Technique in the sim</a></li>
@@ -367,9 +368,9 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
         <li><b class="n">2</b><span><b>Scenario brief.</b> Goal, failure points, decisions and what is not known in advance. <kbd>F1</kbd> shows or hides it.</span></li>
         <li><b class="n">3</b><span><b>Event feed.</b> The last four events with their teaching points. The colour bar shows severity.</span></li>
         <li><b class="n">4</b><span><b>Objectives.</b> The scenario's success criteria, live: each shows its current value and an OK, NEAR, FAIL or DONE badge.</span></li>
-        <li><b class="n">5</b><span><b>Section view.</b> A live cross-section through the tip with display buttons, zoom up to the full 35 mm depth, depth scale, layer labels, a colour legend, isotherms and the damage outline.</span></li>
+        <li><b class="n">5</b><span><b>Section view.</b> A live cross-section through the tip, rendered at 1280 × 800, with display buttons, zoom up to the full 35 mm depth, <b>Large</b> to float it over the field, <b>Peel 3D</b> (see <a href="#depth">Beneath the surface</a>), depth scale, layer labels, a colour legend, isotherms and the damage outline.</span></li>
         <li><b class="n">6</b><span><b>FT10 panel.</b> Laid out like the generator's touchscreen: yellow CUT and blue COAG tiles with the power and up/down arrows, a row of mode buttons under each, REM status, impedance, and on-screen footswitch pedals.</span></li>
-        <li><b class="n">7</b><span><b>The field.</b> Tissue under a two-head surgical light, with the instrument in your hand.</span></li>
+        <li><b class="n">7</b><span><b>The field.</b> Tissue under a two-head surgical light, framed by the fenestrated blue drape, with the instrument in your hand.</span></li>
       </ol>
       <p>Press <kbd>F3</kbd> for a timing readout: frame time, CPU and GPU time, and how many frames old each result is. The instrument itself follows the cursor in the same frame.</p>
     </section>
@@ -401,6 +402,9 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           <tr><td>Mouse wheel</td><td>Zoom</td></tr>
           <tr><td><kbd>C</kbd> / <kbd>J</kbd> / <kbd>H</kbd></td><td>Section view: next display / across the view or across the blade / hide (or use the buttons on the section panel)</td></tr>
           <tr><td><kbd>-</kbd> / <kbd>=</kbd></td><td>Section zoom out / in: 16 × 10 mm up to the full 56 × 35 mm</td></tr>
+          <tr><td><kbd>Shift</kbd> + <kbd>C</kbd></td><td>Large section: floats the section over the field at 800 px (or the <b>Large</b> button)</td></tr>
+          <tr><td><kbd>K</kbd></td><td>Depth peel of the field: off → block cut → dissection (or the <b>Peel 3D</b> button; see <a href="#depth">Beneath the surface</a>)</td></tr>
+          <tr><td><kbd>,</kbd> / <kbd>.</kbd></td><td>Peel plane deeper / shallower by 0.5 mm (hold <kbd>Shift</kbd> for 0.1 mm). <kbd>Ctrl</kbd> + wheel scrubs it; <kbd>Shift</kbd> + <kbd>K</kbd> sweeps it down and up; or drag the ruler</td></tr>
           <tr class="grp"><td colspan="2">Session</td></tr>
           <tr><td><kbd>F1</kbd> / <kbd>F2</kbd> / <kbd>F3</kbd></td><td>Scenario brief / list of controls on screen / timing readout</td></tr>
           <tr><td><kbd>V</kbd></td><td>Teaching view on the tissue: off → temperature → damage</td></tr>
@@ -413,6 +417,21 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           <tr><td><kbd>F11</kbd> / <kbd>Esc</kbd></td><td>Fullscreen on or off / quit (built app only)</td></tr>
         </tbody>
       </table></div>
+    </section>
+
+    <section id="depth">
+      <h2>Beneath the surface</h2>
+      <p>The field shows the tissue surface, so before the first cut it is a flat sheet of skin. The <b>depth peel</b> takes the field apart in the Z direction: a horizontal plane that you move down through the layers, with the tissue above it removed from the display. The physics is untouched: nothing is actually cut, the instruments still work on the real surface, and the section, the readouts and the objectives carry on as before.</p>
+      <ol class="steps">
+        <li><div><b>Turn it on.</b> Press <kbd>K</kbd> or click <b>Peel 3D</b> on the section panel. A ruler appears beside the field, marked with the layers under the cursor (epidermis, dermis, subcutaneous fat, Scarpa's fascia, deep fascia, muscle), and the plane starts 3 mm down, just below the dermis.</div></li>
+        <li><div><b>Move the plane.</b> Drag the ruler's handle, press <kbd>,</kbd> and <kbd>.</kbd> (0.5 mm; hold <kbd>Shift</kbd> for 0.1 mm), or hold <kbd>Ctrl</kbd> and roll the wheel. <b>Sweep</b> (<kbd>Shift</kbd> + <kbd>K</kbd>) glides it down to the muscle and back up at 4 mm per second. The section draws the plane as a dashed line, so the two views agree.<br><span class="see">You should see: a cut face at the chosen depth showing fat lobules with white septa, red arterial and purple venous cross-sections, the lipoma as a paler disc, and the layers in the walls around the edge of the bed.</span></div></li>
+        <li><div><b>Choose what is removed.</b> <b>Block cut</b> removes everything above the plane: the cut face is a map of that depth. <b>Dissect</b> removes only skin, fat, septa and fasciae: the perforators stand up from the muscle as the tree they are, the cutaneous nerve runs across, the lipoma sits in place with its capsule and feeding vessel, and any tissue the energy has changed (blanched, dried or charred) stays as a solid shape. Dissect at full depth is the anatomy of the whole bed.</div></li>
+        <li><div><b>See what the energy did.</b> Coagulate or cut on the skin, then peel to 1 or 2 mm: the blanched footprint shows on the cut face, wider than the mark on the surface. Peel deeper to find where it stops. Press <kbd>V</kbd> for the temperature or damage colouring on the cut face as well, with the isotherms and the irreversible-damage line. In dissection the coagulated volume is left standing, so you can judge its depth next to a vessel or the nerve.</div></li>
+        <li><div><b>Turn it off.</b> Press <kbd>K</kbd> until the ruler disappears (<b>Off</b> on the ruler does the same). The field rebuilds from the real tissue.</div></li>
+      </ol>
+      <div class="callout note"><span class="tag">Note</span><p>While peeled, the instrument stays on the real surface, so it floats above the cut face by the peel depth. Energy applied there heats the hidden tissue above the plane, which is what you then see spreading onto the face.</p></div>
+      <h3>A larger section</h3>
+      <p>The section is rendered at twice the resolution of earlier versions (1280 × 800 at Medium detail, 1600 × 1000 at High and Ultra), and <kbd>Shift</kbd> + <kbd>C</kbd> (or <b>Large</b>) floats it over the field at 800 px, close to one screen pixel per rendered pixel. Use it with the Damage display to measure a skin-edge rim or the depth of a coagulation footprint against the mm scale, then press <kbd>Shift</kbd> + <kbd>C</kbd> again.</p>
     </section>
 
     <section id="generator">
@@ -607,7 +626,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
         </tbody>
       </table></div>
       <p><b>Auto</b> picks the level from the graphics card. Finer voxels show thinner thermal margins and smoother cuts; the region solved around the electrode, solver iterations, shadows and ambient occlusion scale with the level too. A new level applies when you restart the scenario (<kbd>F5</kbd>). If the PC stays over its frame budget, a banner offers to restart one level lower.</p>
-      <p>Settings also switch teaching moments, the tip gauge, depth of field, anti-aliasing, the pen tilt direction and the timing readout. They are saved for your Windows user and survive updates. More detail on hardware is in <code>docs/hardware.md</code> in the repository.</p>
+      <p>Settings also switch teaching moments, the tip gauge, depth of field, anti-aliasing, ray tracing (Auto follows the detail level; Off, Shadows, Reflections or Full on a DirectX 12 PC with an RTX or RX&nbsp;6000-class card), the pen tilt direction and the timing readout. They are saved for your Windows user and survive updates. More detail on hardware is in <code>docs/hardware.md</code> in the repository.</p>
     </section>
 
     <div class="part-head">Part 3<span>Help</span></div>
@@ -661,9 +680,10 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           <tr><td>Keys and mouse do nothing, or an <code>InvalidOperationException</code> about the Input class</td><td><i>Project Settings → Player → Active Input Handling</i> must be <b>Both</b>. Set it and restart the editor.</td></tr>
           <tr><td>Pen moves the cursor but pressure and tilt do nothing</td><td>Tick <i>Use Windows Ink</i> in the Wacom settings. Check <code>com.unity.inputsystem</code> is installed in <i>Window → Package Manager</i>.</td></tr>
           <tr><td>Package import errors mentioning long paths</td><td>Move the project to a short path such as <code>E:\claude\bovie-sim</code>, outside OneDrive.</td></tr>
-          <tr><td>Slow or stuttering</td><td>Press <kbd>F9</kbd> and choose a lower detail level, then <kbd>F5</kbd>. <kbd>F3</kbd> shows frame, CPU and GPU times. Keep depth of field off (<kbd>F7</kbd>).</td></tr>
+          <tr><td>Slow or stuttering</td><td>Press <kbd>F9</kbd> and choose a lower detail level, then <kbd>F5</kbd>; set ray tracing to Off or Shadows. <kbd>F3</kbd> shows frame, CPU and GPU times. Keep depth of field off (<kbd>F7</kbd>).</td></tr>
           <tr><td>Laptop runs slowly although it has a good graphics card</td><td>Windows may be using the integrated GPU. <code>maintain doctor</code> sets Unity and any build in <code>Builds</code> to the graphics card; by hand: <i>Settings → System → Display → Graphics</i>, add Unity (and <code>BovieSim.exe</code>) and choose <i>High performance</i>. F9 shows which GPU is in use.</td></tr>
           <tr><td>"Cannot start: … compute shaders …"</td><td>The graphics card or driver is too old, or you are in remote desktop / a virtual machine. Update the driver or run on the PC itself.</td></tr>
+          <tr><td>Ray tracing shows "not available"</td><td>The editor or build must run on DirectX 12 (<i>Project Settings → Player → Graphics APIs for Windows</i>: Direct3D12 first, then restart Unity) on an RTX, RX&nbsp;6000 or Arc card with a current driver. <i>Window → Rendering → HDRP Wizard → HDRP + DXR</i>, <i>Fix All</i>.</td></tr>
           <tr><td>No sky image or drape texture</td><td>The downloads were blocked; the sim falls back to built-in ones. Put any <code>.hdr</code> file into <code>Assets/BovieSim/Generated/Downloads</code> and run Set Up Project again.</td></tr>
           <tr><td>Instrument tilts the wrong way with the pen</td><td>Press <kbd>Y</kbd>.</td></tr>
           <tr><td>Keys do nothing in the editor while playing</td><td>Click inside the Game view to give it keyboard focus.</td></tr>

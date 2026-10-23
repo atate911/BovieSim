@@ -48,7 +48,7 @@ float4 _RayDir;    // pick ray direction, w = max distance (mm)
 float4 _SliceO;    // slice origin (mm), w = width (mm)
 float4 _SliceU;    // slice horizontal axis, w = pixel width
 float4 _SliceV;    // slice vertical axis, w = pixel height
-float4 _SliceParams; // depth (mm), mode, flags (1 isotherms, 2 damage outline), unused
+float4 _SliceParams; // depth (mm), mode, flags (1 isotherms, 2 damage outline), depth-peel plane y (mm; 1e9 = none)
 int4 _WBox0;       // wound box origin, w = substeps this frame
 int4 _WBox1;       // wound box size
 float4 _Tool2;     // secondary tool point A (mm), w = radius (mm)
@@ -1155,6 +1155,9 @@ void Slice(uint3 gid : SV_DispatchThreadID)
         if ((flags & 2u) != 0u && Crosses(s0.y, s1.y, s2.y, 1.0) && ((gid.x + gid.y) / 4u) % 2u == 0u)
             col = mode == 2u ? float3(0, 0, 0) : float3(1, 1, 1);
     }
+    // depth-peel plane of the 3D view (SurfaceRenderer.SetClip): dashed line at its height
+    float peelY = _SliceParams.w;
+    if (peelY < 1e8 && abs(p.y - peelY) <= 0.5 * _SliceParams.x / H && ((gid.x / 6u) % 2u) == 0u) col = float3(0.40, 1.00, 0.90);
     if (ElectrodeDistance(p) <= 0.0 && _Gen2.w > 0.0) col = float3(0.75, 0.75, 0.78);
     // texture row 0 is the bottom in Unity; flip so depth increases downward on screen
     _SliceTex[uint2(gid.x, H - 1u - gid.y)] = float4(col, 1.0);

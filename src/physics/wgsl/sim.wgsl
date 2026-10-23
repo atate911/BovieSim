@@ -28,7 +28,7 @@ struct SimParams {
   sliceO: vec4f,   // slice plane origin (mm, top centre), w = width (mm)
   sliceU: vec4f,   // slice horizontal unit axis, w = pixel width
   sliceV: vec4f,   // slice vertical unit axis (downward), w = pixel height
-  sliceParams: vec4f, // x depth (mm), y mode, z 0, w 0
+  sliceParams: vec4f, // x depth (mm), y mode, z depth-peel plane y (mm; 1e9 = none), w 0
   wbox0: vec4i,    // wound box origin (bleeding scan), w = substeps this frame
   wbox1: vec4i,    // wound box size
   tool2: vec4f,    // secondary tool point A (mm), w = radius (mm)
@@ -978,28 +978,81 @@ fn tempRamp(t: f32) -> vec3f {
   return mix(c4, vec3f(1.0), smoothstep(0.85, 1.0, x));
 }
 
+/** fractional voxel coordinates (i, j, k) of a point in mm: inverse of voxelToWorld */
+fn voxelFrac(p: vec3f) -> vec3f {
+  return vec3f(p.x / info.hMm + f32(info.nx) * 0.5 - 0.5, p.z / info.hMm + f32(info.ny) * 0.5 - 0.5, p.y / info.hMm + f32(info.nz - info.airLayers) - 0.5);
+}
+
+/** Display colour of one voxel in section modes 0-4 (mode 5 needs neighbour differences; see slice). */
+fn cellModeColor(v: vec3i, idx: u32, mode: u32) -> vec3f {
+  let c = cells[idx];
+  let ty = cellType(c); let st = cellState(c);
+  if (mode == 4u) { return tempRamp(37.0 + 263.0 * clamp(srcA[idx], 0.0, 1.0)); }   // potential, 0..1 of the electrode voltage
+  if (mode == 1u) { return tempRamp(srcA[idx]); }
+  if (mode == 2u) { if (st == S_CARBON) { return vec3f(0.0); } return mix(vec3f(0.1, 0.2, 0.6), vec3f(1.0, 0.95, 0.9), clamp(omega[idx], 0.0, 1.0)); }
+  if (mode == 3u) { let w0 = max(props.t[ty].water, 1e-3); return mix(vec3f(0.5, 0.3, 0.15), vec3f(0.2, 0.5, 1.0), clamp(water[idx] / w0, 0.0, 1.0)); }
+  var col = tissueColor(ty);
+  let blanch = smoothstep(0.25, 1.0, omega[idx]);
+  col = mix(col, vec3f(0.88, 0.85, 0.82), blanch * 0.85);
+  if (st == S_DESIC) { col = mix(col, vec3f(0.45, 0.33, 0.22), 0.7); }
+  if (st == S_CARBON) { col = vec3f(0.03, 0.025, 0.02); }
+  if (srcA[idx] > 98.0) { col = mix(col, vec3f(1.0), 0.15); }
+  if ((c & FLAG_SEALED) != 0u) { col = mix(col, vec3f(0.2, 0.9, 0.3), 0.5); }
+  if ((c & FLAG_CHARPLUG) != 0u) { col = mix(col, vec3f(0.1, 0.05, 0.0), 0.7); }
+  if ((c & FLAG_COAPTED) != 0u) { col = mix(col, vec3f(0.3, 0.6, 1.0), 0.4); }
+  // a bleeding vessel end, an oozing raw surface: fresh red tint fading as the exposure clock runs
+  let ex = exposure(v.x, v.y, v.z);
+  if (ex >= 2u && cellClock(c) < 31u && (ty == T_ARTERY || ty == T_VEIN || props.t[ty].ooze > 0.0) && st == S_NORMAL) {
+    col = mix(col, vec3f(0.6, 0.05, 0.05), 0.35 * exp(-f32(cellClock(c)) / 7.0));
+  }
+  return col;
+}
+
+/** Trilinear, occupancy-weighted sample of the section colour; w = tissue coverage (0 in air). */
+fn sampleSection(p: vec3f, mode: u32) -> vec4f {
+  let f = voxelFrac(p);
+  let fl = floor(f);
+  let b = vec3i(fl); let t = f - fl;
+  var acc = vec3f(0.0); var wsum = 0.0; var haze = 0.0;
+  for (var n = 0u; n < 8u; n++) {
+    let o = vec3i(i32(n & 1u), i32((n >> 1u) & 1u), i32((n >> 2u) & 1u));
+    let v = b + o;
+    if (!inVolume(v.x, v.y, v.z)) { continue; }
+    let w = select(1.0 - t.x, t.x, o.x == 1) * select(1.0 - t.y, t.y, o.y == 1) * select(1.0 - t.z, t.z, o.z == 1);
+    let idx = idx3(v.x, v.y, v.z);
+    let c = cells[idx];
+    if (cellType(c) == T_AIR) {
+      // dissected plane: a faint haze marks where tissue was separated bluntly
+      if (cellState(c) == S_DISSECT && occ[idx] < 0.5) { haze += w; }
+      continue;
+    }
+    let wo = w * clamp(occ[idx], 0.0, 1.0);
+    if (wo <= 0.0) { continue; }
+    wsum += wo;
+    acc += cellModeColor(v, idx, mode) * wo;
+  }
+  if (wsum <= 0.0) { return vec4f(0.14, 0.13, 0.12, haze); }
+  return vec4f(acc / wsum, wsum);
+}
+
 @compute @workgroup_size(8, 8)
 fn slice(@builtin(global_invocation_id) gid: vec3u) {
   let W = u32(sim.sliceU.w); let H = u32(sim.sliceV.w);
   if (gid.x >= W || gid.y >= H) { return; }
   let fu = (f32(gid.x) + 0.5) / f32(W) - 0.5;
   let fv = (f32(gid.y) + 0.5) / f32(H);
-  // plane: horizontal extent sliceO.w mm along u, depth sliceV.x.. mm along -y
+  // plane: horizontal extent sliceO.w mm along u, depth sliceParams.x mm along v (downward)
   let p = sim.sliceO.xyz + sim.sliceU.xyz * (fu * sim.sliceO.w) + sim.sliceV.xyz * (fv * sim.sliceParams.x);
-  let v = voxelOfWorld(p);
-  let i = v.x; let j = v.y; let k = v.z;
-  var col = vec3f(0.06, 0.07, 0.09);
-  if (inVolume(i, j, k)) {
-    let idx = idx3(i, j, k);
-    let c = cells[idx];
-    let ty = cellType(c); let st = cellState(c);
-    if (occ[idx] >= 0.5 && ty != T_AIR) {
-      let mode = u32(sim.sliceParams.y);
-      if (mode == 4u) {
-        // electrical potential (srcA bound to `potential`), 0..1 of the electrode voltage
-        col = tempRamp(37.0 + 263.0 * clamp(srcA[idx], 0.0, 1.0));
-      } else if (mode == 5u) {
-        // Joule heating density from the potential gradient, log scale over 4 decades
+  let mode = u32(sim.sliceParams.y);
+  let bg = vec3f(0.06, 0.07, 0.09);
+  var col = bg;
+  if (mode == 5u) {
+    // Joule heating density stays per voxel (a difference of neighbouring potentials), log scale over 6 decades
+    let f = voxelFrac(p);
+    let i = i32(round(f.x)); let j = i32(round(f.y)); let k = i32(round(f.z));
+    if (inVolume(i, j, k)) {
+      let idx = idx3(i, j, k);
+      if (occ[idx] >= 0.5 && cellType(cells[idx]) != T_AIR) {
         let s0 = sigmaOfPot(idx);
         var q = 0.0;
         let nb = array<vec3i, 6>(vec3i(1,0,0), vec3i(-1,0,0), vec3i(0,1,0), vec3i(0,-1,0), vec3i(0,0,1), vec3i(0,0,-1));
@@ -1013,30 +1066,16 @@ fn slice(@builtin(global_invocation_id) gid: vec3u) {
         // q at 1 V; typical peak ~1e8..1e9 W/m3 per V^2 near the electrode
         let l = clamp((log(max(q, 1.0)) / log(10.0) - 3.0) / 6.0, 0.0, 1.0);
         col = tempRamp(37.0 + 263.0 * l);
-      } else if (mode == 1u) { col = tempRamp(srcA[idx]); }
-      else if (mode == 2u) { col = mix(vec3f(0.1, 0.2, 0.6), vec3f(1.0, 0.95, 0.9), clamp(omega[idx], 0.0, 1.0)); if (st == S_CARBON) { col = vec3f(0.0); } }
-      else if (mode == 3u) { let w0 = max(props.t[ty].water, 1e-3); col = mix(vec3f(0.5, 0.3, 0.15), vec3f(0.2, 0.5, 1.0), clamp(water[idx] / w0, 0.0, 1.0)); }
-      else {
-        col = tissueColor(ty);
-        let blanch = smoothstep(0.25, 1.0, omega[idx]);
-        col = mix(col, vec3f(0.88, 0.85, 0.82), blanch * 0.85);
-        if (st == S_DESIC) { col = mix(col, vec3f(0.45, 0.33, 0.22), 0.7); }
-        if (st == S_CARBON) { col = vec3f(0.03, 0.025, 0.02); }
-        if (srcA[idx] > 98.0) { col = mix(col, vec3f(1.0), 0.15); }
-        if ((c & FLAG_SEALED) != 0u) { col = mix(col, vec3f(0.2, 0.9, 0.3), 0.5); }
-        if ((c & FLAG_CHARPLUG) != 0u) { col = mix(col, vec3f(0.1, 0.05, 0.0), 0.7); }
-        if ((c & FLAG_COAPTED) != 0u) { col = mix(col, vec3f(0.3, 0.6, 1.0), 0.4); }
-        // a bleeding vessel end, an oozing raw surface: fresh red tint fading as the exposure clock runs
-        let ex = exposure(i, j, k);
-        if (ex >= 2u && cellClock(c) < 31u && (ty == T_ARTERY || ty == T_VEIN || props.t[ty].ooze > 0.0) && st == S_NORMAL) {
-          col = mix(col, vec3f(0.6, 0.05, 0.05), 0.35 * exp(-f32(cellClock(c)) / 7.0));
-        }
       }
-    } else if (ty == T_AIR && occ[idx] < 0.5) {
-      // dissected plane: a faint haze marks where tissue was separated bluntly
-      if (st == S_DISSECT) { col = vec3f(0.14, 0.13, 0.12); }
     }
+  } else {
+    // trilinear, occupancy-weighted: layer boundaries and cut walls are smooth instead of voxel steps
+    let smp = sampleSection(p, mode);
+    col = mix(bg, smp.rgb, smoothstep(0.35, 0.65, smp.a));
   }
+  // depth-peel plane of the 3D view: dashed line
+  let peelY = sim.sliceParams.z;
+  if (peelY < 1e8 && abs(p.y - peelY) <= 0.5 * sim.sliceParams.x / f32(H) && ((gid.x / 6u) % 2u) == 0u) { col = vec3f(0.40, 1.00, 0.90); }
   if (electrodeDistance(p) <= 0.0) { col = vec3f(0.75, 0.75, 0.78); }
   sliceOut[gid.x + gid.y * W] = packRGBA(col);
 }

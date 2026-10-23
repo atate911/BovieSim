@@ -14,12 +14,32 @@ per PC and checks the frame rate while running.
 | Ultra | 0.16 mm | 96³ | 30 fps | RTX 4070+ / RX 7800 XT, RX 9070 XT, 12 GB+ |
 
 Each level also sets solver iterations, how many surface bricks are rebuilt per frame, ambient occlusion,
-shadow-map size and the replay length. Finer voxels show the thin thermal margins that matter
+shadow-map size, screen-space reflections (High and Ultra), the default ray-tracing tier, the replay length and
+the section image size (960 × 600 at Low, 1280 × 800 at Medium, 1600 × 1000 at High and Ultra). Finer voxels
+show the thin thermal margins that matter
 (a 0.5 mm skin-edge rim is 2 voxels at 0.25 mm, 3 at 0.16 mm) but cost roughly the cube of the refinement.
 
 **Auto** (the default) chooses from dedicated video memory and whether the GPU is integrated
 (`Runtime/App/HardwareProfile.cs`). Override it in **Settings (F9)**; the new level applies on restart (F5).
 The inspector's *Voxel Override* on the `Bovie Sim` object still wins, for development.
+
+## Ray tracing
+
+With **DirectX 12** and a card that supports DirectX Raytracing (NVIDIA RTX 20-series or newer, AMD RX 6000 or
+newer, Intel Arc), the lights, reflections and bounce light are ray traced. *Settings (F9) > Ray tracing*:
+
+| Setting | Effects | Typical cost |
+|---|---|---|
+| Off | PCSS soft shadows, SSAO, screen-space reflections (High+) | none |
+| Shadows (Auto at Medium) | ray-traced shadows from the 50 cm light domes, ray-traced ambient occlusion | small |
+| Reflections (Auto at High) | + ray-traced reflections on steel instruments, wet tissue and blood | moderate |
+| Full (Auto at Ultra) | + ray-traced global illumination (blue drape and red wound bounce) and subsurface scattering | large: RTX 4070 / RX 7800 XT class |
+
+Set Up Project puts DirectX 12 first in the graphics API list (restart the editor once) and enables ray tracing on
+the HDRP asset; if *Window > Rendering > HDRP Wizard > HDRP + DXR* lists problems, press *Fix All*. Without DXR
+the setting shows "not available" and the raster effects are used. The tissue surface is rebuilt on the GPU, so
+it is registered as dynamic geometry; its acceleration structure is rebuilt each frame, which is the main
+ray-tracing cost at Ultra.
 
 ## When the PC cannot keep up
 

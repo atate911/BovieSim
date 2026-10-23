@@ -66,10 +66,13 @@ npm test           # analytic physics tests (vitest)
 npm run build
 ```
 
+Texture maps for the drape and instruments are optional: `npm run fetch:textures` downloads CC0 sets, or drop your
+own into `public/textures/` ([docs/textures.md](docs/textures.md)).
+
 URL options: `?scenario=freeplay|hemostasis|lipoma|viscera`, `?voxel=0.5` (coarser bed for slower GPUs;
 default 0.25 mm), `?seed=3` (re-randomise anatomy), `?cut=1|2|4|8` (pre-carved trench, pit, ring
 around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temperature / damage / tissue-type overlay), `?mech=0`
-(disable the mechanics lattice).
+(disable the mechanics lattice), `?peel=block,6` or `?peel=dissect,20` (start with the depth peel at that depth in mm).
 
 ### Controls (browser build)
 
@@ -88,6 +91,7 @@ around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temp
 | Watts | `[` `]` cut, `;` `'` coag (Shift = ±1) |
 | Electrode | `B` blade, `N` needle, `O` ball, `R` roll blade 45° |
 | Overlays | `V` surface overlay, `C` cross-section mode, `H` hide section |
+| Depth peel | `K` off → block cut → dissection; `,` `.` move the plane 0.5 mm (Shift: 0.1 mm); Ctrl + wheel scrubs it |
 | Camera | right-drag orbit, wheel zoom, Shift-drag pan |
 
 ## Layout
@@ -124,7 +128,8 @@ Locally:
 - `node scripts/probe.mjs name seconds "query"` runs a scenario headless for a few seconds with any tool
   (`tool=gauze&grasp=1&hold=1&aim=-8,0`, `tool=hemostat&spread=1`, ...) and prints the readout, events,
   mechanics counters and blood-column statistics (needs `npm run dev` on 5199).
-- `node scripts/shot.mjs name "voxel=0.5&cut=3"` renders headless (needs `npm run dev` on 5199).
+- `node scripts/shot.mjs name "voxel=0.5&cut=3" [timeoutMs] [settleFrames]` renders headless (needs `npm run dev` on 5199);
+  e.g. `node scripts/shot.mjs dissect "voxel=0.5&peel=dissect,20&cam=-0.6,0.6,110" 400000 3` for the dissected bed.
 - `node scripts/activate.mjs name "auto=cut,30,2.5,-0.3,-0.1,0.3,-0.1"` runs a scripted activation
   (mode, watts, seconds, optional start/end cursor positions) and saves normal, temperature and
   damage views plus the impedance / power trace.
@@ -138,6 +143,7 @@ Locally:
 - [docs/calibration.md](docs/calibration.md): simulated vs published values
 - [docs/tools.md](docs/tools.md): instrument model
 - [docs/visual-spec.md](docs/visual-spec.md): what the surgeon should see
+- [docs/textures.md](docs/textures.md): texture maps for drapes and instruments (CC0 downloads or your own, with prompts)
 - [docs/status.md](docs/status.md): what is built, verified and still missing
 - [docs/hardware.md](docs/hardware.md): detail levels, requirements, laptops with two GPUs
 - [docs/upgrading.md](docs/upgrading.md): updating (`maintain update`), rolling back, and what developers bump

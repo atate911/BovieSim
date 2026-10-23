@@ -81,7 +81,41 @@
 - Upgrade path: version constant, changelog, tags, setup/settings/scenario versioning (docs/upgrading.md).
 - Not yet verified in Unity.
 
-## Sprint 5: tissue behaviour, bleeding and blood (this block)
+## Unity client, round 3 (0.5.0: section resolution, depth peel)
+- Section rendered at 1280 × 800 (`DetailSettings.sliceScale`: 960 × 600 at Low, 1600 × 1000 at High and Ultra),
+  bilinear; large view (Shift+C) floats the card over the field at 800 px.
+- Depth peel: a clip plane in the brick extraction (`Surface.compute` `_Clip` / `_ClipMode`). Block cut removes
+  every voxel centre above the plane (fractional occupancy for the voxel it crosses, so the face slides smoothly);
+  dissection keeps vessels, nerve, lipoma, capsule, blood and any voxel with a changed thermal state or Ω ≥ 0.53,
+  holding thin kept structures above the iso level so the smoothing does not erase them. Moving the plane rebuilds
+  only the bricks in the band it crossed. Ruler card with layer ticks, keys, Ctrl + wheel, sweep; the section draws
+  the plane as a dashed line. Display only: physics, pick and instruments keep the whole bed.
+- Browser build: the same peel, verified headless at 0.5 mm: a block cut at 6 mm shows fat lobules, septa and vessel
+  cross-sections on the cut face with the strata on the walls; a dissection at 20 mm shows the perforator tree, the
+  nerve and the lipoma over the muscle (336 k triangles); a coag activation then a block cut at 1.5 mm shows the
+  blanched footprint on the cut face. Section sampled trilinearly at 640 × 400.
+- Not yet verified in Unity (compiled and unit-tested here only).
+
+## Surgical field (0.6.0)
+- Drapes: folded fenestrated sheet (incise film, reinforcement pad, loose blue drape) built from one shared
+  heightfield (`src/render/meshes.ts`, `MeshFactory.Drapes`); three materials in Unity, three procedural fabric
+  kinds in the browser build.
+- Lights: two dome-sized surgical light heads; soft shadows with contact-sharp penumbrae (PCSS in both clients),
+  dome-widened highlights, emissive lamp heads for reflections, contact shadows and wound-scale AO in Unity.
+- Ray tracing (Unity, DXR): shadows + AO / + reflections / + GI and subsurface by tier, Auto from the detail level;
+  HDRP asset and DirectX 12 configured by Set Up Project; tissue bricks as dynamic ray-tracing geometry.
+- Colour: PBR Neutral tone mapping and sRGB output in the browser build; sRGB-correct scenario skin tint in Unity.
+- Squared field: four towels with Backhaus clips over a seeded, irregular drape (warped swells, waves, bunching,
+  creases); skin line network, mottling and sponge-stroke prep film. Generated instrument models (pencil with
+  switches, electrodes, Frazier, hook) and a purchased forceps pack import through Set Up Project.
+- Texture maps: optional albedo / normal / roughness sets per slot (drape, pad, steel, plastic) in both clients,
+  CC0 downloads (`npm run fetch:textures`, Set Up Project) or user-made (docs/textures.md); normal maps derived
+  from colour when absent. Procedural fallbacks: satin brushed steel reflecting the lit field and lamp domes,
+  nonwoven drape with fibre texture, bonding dots, rolled hem and package creases.
+- Verified: browser build headless at 0.5 mm (drape, soft shadows, tone mapping); Unity C# compile check and
+  EditMode tests under Mono. **Not yet verified in Unity**: HDRP rendering, DXR on real hardware, performance.
+
+## Sprint 5: tissue behaviour, bleeding and blood (0.7.0)
 - Tissue table: areolar tissue, viscera and serosa added (17 types); every tissue carries mechanical properties
   (compliance, J-curve knee, yield, tear, cohesion, coag shrink and stiffening, capillary ooze). The cell word
   now holds a 3-bit state, a 5-bit exposure clock and two kinds of air (cut vs bluntly dissected).
@@ -119,7 +153,7 @@
   two float4, 20 material buckets with a viscera class, Kelly hemostat and gauze instruments, strand ribbons,
   spatter, the new events and HUD rows, `viscera` scenario, 41 EditMode tests); every kernel compiles with
   glslang and all C# compiles and passes under Mono, but it has not yet been opened in a Unity editor or run
-  on a real GPU (Set Up Project must be re-run: setup version 4 bakes the new buckets and the strand material).
+  on a real GPU (Set Up Project must be re-run: setup version 9 bakes the new buckets and the strand material).
 
 ## Known gaps (next)
 - Blood is a height field: blood from a vertical wound wall is assigned to the column above the voxel and runs
@@ -128,6 +162,8 @@
   dissection propagation rate (one voxel layer per frame) need the surgeon's eye.
 - Vessel ends recoil through lattice pre-tension only; the voxel end does not retract into the fat.
 - Visceral organ is a generic bowel/liver parenchyma without a lumen; no peristalsis.
+- The depth peel is display-only: an instrument used while peeled still acts on the hidden tissue above the plane,
+  so the tip floats over the cut face.
 - Picking and tool placement use material coordinates: with large deformation the instrument
   draws slightly off the displaced surface.
 - Blood is shaded on the tissue surface (depth-tinted), not as a separate fluid surface mesh.

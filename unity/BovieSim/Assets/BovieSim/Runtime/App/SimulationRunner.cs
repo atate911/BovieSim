@@ -58,14 +58,20 @@ namespace BovieSim
         ReplayBuffer replay; bool paused; float replayT;
         readonly System.Collections.Generic.Dictionary<string, float> lastMoment = new System.Collections.Generic.Dictionary<string, float>();
         Material overlayMat; int overlayMode; // 0 off, 1 temperature, 2 damage
+        // depth peel of the 3D view (display only): 0 off, 1 block cut, 2 dissection; depth below the original skin (mm)
+        int peelMode; float peelMm = 3f; bool peelSweep; float peelSweepDir = 1f; int shownPeelMode = -1; float shownPeelMm = -1f;
         static string SettingsPath { get { return System.IO.Path.Combine(Application.persistentDataPath, "settings.json"); } }
 
         // ---- scene objects
         Transform field;
         GameObject pencil, forcepsA, forcepsB, hemoA, hemoB, frazier, gauzeGo, hookGo, drapes;
-        MeshFilter electrodeFilter; Mesh bladeMesh, needleMesh, ballMesh;
+        MeshFilter electrodeFilter; MeshRenderer electrodeRenderer; Mesh bladeMesh, needleMesh, ballMesh; Material[] bladeMats, needleMats, ballMats;
         MeshRenderer cutButton, coagButton; MaterialPropertyBlock buttonMpb;
         Light arcLight; DepthOfField dof;
+        // render-side effects driven by detail level and the ray-tracing tier (runtime copies of the volume profile)
+        ScreenSpaceAmbientOcclusion ao; ScreenSpaceReflection ssr; GlobalIllumination gi; SubSurfaceScattering sssRt; ContactShadows contactShadows;
+        readonly System.Collections.Generic.List<HDAdditionalLightData> headLights = new System.Collections.Generic.List<HDAdditionalLightData>();
+        int rtTier; string rtText = "";
         SimAssets assets;
         int frames; float fps, fpsT;
 
@@ -136,7 +142,7 @@ namespace BovieSim
             field.localScale = Vector3.one * 0.001f;
 
             gpu = new GpuVolume(volume);
-            physics = new PhysicsPipeline(simCs, gpu, detail.maxSubdomain);
+            physics = new PhysicsPipeline(simCs, gpu, detail.maxSubdomain, detail.sliceScale);
             physics.relaxSweeps = detail.relaxSweeps;
             surface = new SurfaceRenderer(surfCs, gpu, field, SkinCorrectedMaterials(), assets.blood);
             surface.maxBricksPerFrame = detail.bricksPerFrame;
@@ -155,6 +161,10 @@ namespace BovieSim
             ui = new SimUI(transform, assets.uiTheme, gen, physics);
             ui.SetScenario(scenario);
             ui.ToggleOrientation += () => slicePerp = !slicePerp;
+            ui.PeelModeChosen += SetPeelMode;
+            ui.PeelCycle += () => SetPeelMode((peelMode + 1) % 3);
+            ui.PeelDepthChanged += mm => { peelMm = Mathf.Clamp(mm, 0, volume.SizeDepth); peelSweep = false; };
+            ui.PeelSweepToggled += () => peelSweep = !peelSweep;
             events.OnEvent += ui.Push;
             events.OnEvent += OnTeachingMoment;
             ui.DetailChosen += l => { chosenLevel = l; settings.detail = l.ToString(); SaveSettings(); };
@@ -177,7 +187,12 @@ namespace BovieSim
             orbit = new OrbitCamera(viewCamera, field);
             audioOut = gameObject.AddComponent<ActivationAudio>();
             if (postVolume == null) postVolume = FindAnyObjectByType<UnityEngine.Rendering.Volume>();
-            if (postVolume != null && postVolume.sharedProfile != null) postVolume.sharedProfile.TryGet(out dof);
+            if (postVolume != null && postVolume.sharedProfile != null)
+            {
+                // the volume's runtime copy: focus and ray-tracing changes must not be written into the generated asset
+                var prof = postVolume.profile;
+                prof.TryGet(out dof); prof.TryGet(out ao); prof.TryGet(out ssr); prof.TryGet(out gi); prof.TryGet(out sssRt); prof.TryGet(out contactShadows);
+            }
             if (dof != null) dof.active = dofOn; // off by default: blur reads as lag when the view moves
             ApplyRenderDetail();
             status = "";
@@ -187,7 +202,8 @@ namespace BovieSim
         /// <summary>
         /// Epidermis textures are baked for one skin tone and prep; tint runtime copies of those materials so the
         /// skin matches this scenario's tone and prep (chlorhexidine, povidone-iodine or none). The ratio is taken in
-        /// linear space because HDRP multiplies the base map by _BaseColor there.
+        /// linear space because HDRP multiplies the base map by _BaseColor there, then converted back to sRGB because
+        /// Unity gamma-decodes every non-HDR colour property on upload in a linear-colour-space project.
         /// </summary>
         Material[] SkinCorrectedMaterials()
         {
@@ -195,7 +211,7 @@ namespace BovieSim
             Color want = TissuePalette.Skin(scenario.skin.tone) * TissuePalette.Prep(scenario.skin.prep);
             Color baked = TissuePalette.Skin(TissuePalette.BakedTone) * TissuePalette.Prep(TissuePalette.BakedPrep);
             Color w = want.linear, b = baked.linear;
-            var k = new Color(Mathf.Clamp(w.r / Mathf.Max(b.r, 1e-3f), 0, 2), Mathf.Clamp(w.g / Mathf.Max(b.g, 1e-3f), 0, 2), Mathf.Clamp(w.b / Mathf.Max(b.b, 1e-3f), 0, 2), 1);
+            var k = new Color(Mathf.Clamp(w.r / Mathf.Max(b.r, 1e-3f), 0, 2), Mathf.Clamp(w.g / Mathf.Max(b.g, 1e-3f), 0, 2), Mathf.Clamp(w.b / Mathf.Max(b.b, 1e-3f), 0, 2), 1).gamma;
             foreach (int bucket in new[] { 0, 8 }) // epidermis, and coagulated epidermis (half strength: blanching hides the stain)
             {
                 if (mats[bucket] == null) continue;
@@ -206,35 +222,65 @@ namespace BovieSim
             return mats;
         }
 
-        GameObject MakePart(string name, Mesh mesh, Material mat, Transform parent)
+        GameObject MakePart(string name, Mesh mesh, Material mat, Transform parent) { return MakePart(name, mesh, new[] { mat }, parent); }
+
+        GameObject MakePart(string name, Mesh mesh, Material[] mats, Transform parent)
         {
             var go = new GameObject(name);
             go.transform.SetParent(parent, false);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = mat;
+            mr.sharedMaterials = mats;
+            // instruments move, drapes do not: HDRP keeps their ray-tracing acceleration structures accordingly
+            mr.rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.DynamicTransform;
             return go;
         }
 
         void BuildInstruments()
         {
-            drapes = MakePart("Drapes", MeshFactory.Drapes(volume.SizeX / 2, volume.SizeZ / 2), assets.drape, field);
+            int drapeSeed = scenario.vessels != null ? scenario.vessels.seed : 0;
+            drapes = MakePart("Drapes", MeshFactory.Drapes(volume.SizeX / 2, volume.SizeZ / 2, drapeSeed), new[] { assets.drapeFilm, assets.drapePad, assets.drape }, field);
+            drapes.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            // four towels square the window on top of the drape, held by Backhaus clips at the corners
+            var towelMat = assets.towel != null ? assets.towel : assets.drapePad;
+            for (int k = 0; k < 4; k++)
+                MakePart("Towel " + k, MeshFactory.Towel(k, volume.SizeX / 2, volume.SizeZ / 2, drapeSeed), towelMat, field).GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            var clipMesh = MeshFactory.TowelClip();
+            for (int i = 0; i < 4; i++)
+            {
+                Vector3 cpos, cdir; MeshFactory.TowelClipPose(i, volume.SizeX / 2, volume.SizeZ / 2, drapeSeed, out cpos, out cdir);
+                var clip = MakePart("Towel clip " + i, clipMesh, assets.packSteel != null ? assets.packSteel : assets.steel, field);
+                clip.transform.localPosition = cpos;
+                clip.transform.localRotation = Quaternion.LookRotation(Vector3.up, cdir); // local +Z (the clip's up) to +Y, local +Y along the diagonal
+                clip.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            }
+            BuildLampDomes();
+            BuildDressing();
+            // modelled instruments (Assets/BovieSim/Models, fitted by ProjectSetup.ImportToolModels) replace the procedural parts they cover
             pencil = new GameObject("Bovie pencil"); pencil.transform.SetParent(field, false);
-            MakePart("Body", MeshFactory.PencilBody(), assets.pencilBody, pencil.transform);
-            cutButton = MakePart("Cut button", MeshFactory.PencilButton(44, 58), assets.pencilCutButton, pencil.transform).GetComponent<MeshRenderer>();
-            coagButton = MakePart("Coag button", MeshFactory.PencilButton(62, 76), assets.pencilCoagButton, pencil.transform).GetComponent<MeshRenderer>();
-            bladeMesh = MeshFactory.Blade(); needleMesh = MeshFactory.Needle(); ballMesh = MeshFactory.Ball();
-            electrodeFilter = MakePart("Electrode", bladeMesh, assets.steel, pencil.transform).GetComponent<MeshFilter>();
-            // arm A sits on the -Z side of the jaw centre and arm B on +Z: their teeth (1 x 2) face each other
-            forcepsA = MakePart("Adson forceps A", MeshFactory.ForcepsArm(forceps.armLength, true, 1), assets.steel, field);
-            forcepsB = MakePart("Adson forceps B", MeshFactory.ForcepsArm(forceps.armLength, false, 2), assets.steel, field);
+            ToolModel pb = assets.pencilModel, pc = assets.pencilCutModel, pg = assets.pencilCoagModel;
+            if (pb != null && pb.IsSet) MakePart("Body", pb.mesh, pb.materials, pencil.transform); else MakePart("Body", MeshFactory.PencilBody(), assets.pencilBody, pencil.transform);
+            cutButton = (pc != null && pc.IsSet ? MakePart("Cut button", pc.mesh, pc.materials, pencil.transform) : MakePart("Cut button", MeshFactory.PencilButton(44, 58), assets.pencilCutButton, pencil.transform)).GetComponent<MeshRenderer>();
+            coagButton = (pg != null && pg.IsSet ? MakePart("Coag button", pg.mesh, pg.materials, pencil.transform) : MakePart("Coag button", MeshFactory.PencilButton(62, 76), assets.pencilCoagButton, pencil.transform)).GetComponent<MeshRenderer>();
+            var steelOnly = new[] { assets.steel };
+            bladeMesh = assets.bladeModel != null && assets.bladeModel.IsSet ? assets.bladeModel.mesh : MeshFactory.Blade(); bladeMats = assets.bladeModel != null && assets.bladeModel.IsSet ? assets.bladeModel.materials : steelOnly;
+            needleMesh = assets.needleModel != null && assets.needleModel.IsSet ? assets.needleModel.mesh : MeshFactory.Needle(); needleMats = assets.needleModel != null && assets.needleModel.IsSet ? assets.needleModel.materials : steelOnly;
+            ballMesh = assets.ballModel != null && assets.ballModel.IsSet ? assets.ballModel.mesh : MeshFactory.Ball(); ballMats = assets.ballModel != null && assets.ballModel.IsSet ? assets.ballModel.materials : steelOnly;
+            var electrodeGo = MakePart("Electrode", bladeMesh, bladeMats, pencil.transform);
+            electrodeFilter = electrodeGo.GetComponent<MeshFilter>(); electrodeRenderer = electrodeGo.GetComponent<MeshRenderer>();
+            // arm A sits on the -Z side of the jaw centre and arm B on +Z. Each arm's local +Z (HandPose: cross(x, arm axis))
+            // points away from the jaw centre, so arm A's teeth go to local -Z and arm B's to local +Z to face each other.
+            // An instrument pack in Assets/BovieSim/Models replaces the procedural arms (ProjectSetup.ImportInstrumentPack).
+            bool packForceps = assets.forcepsArmA != null && assets.forcepsArmB != null && assets.packSteel != null;
+            forcepsA = MakePart("Adson forceps A", packForceps ? assets.forcepsArmA : MeshFactory.ForcepsArm(forceps.armLength, false, 1), packForceps ? assets.packSteel : assets.steel, field);
+            forcepsB = MakePart("Adson forceps B", packForceps ? assets.forcepsArmB : MeshFactory.ForcepsArm(forceps.armLength, true, 2), packForceps ? assets.packSteel : assets.steel, field);
             var hArm = MeshFactory.HemostatArm(hemostat.armLength);
             hemoA = MakePart("Kelly hemostat A", hArm, assets.steel, field);
             hemoB = MakePart("Kelly hemostat B", hArm, assets.steel, field);
-            frazier = MakePart("Frazier suction", MeshFactory.Frazier(), assets.steel, field);
+            frazier = assets.frazierModel != null && assets.frazierModel.IsSet ? MakePart("Frazier suction", assets.frazierModel.mesh, assets.frazierModel.materials, field) : MakePart("Frazier suction", MeshFactory.Frazier(), assets.steel, field);
             gauzeGo = MakePart("Gauze", MeshFactory.Gauze(gauze.radius), assets.drape != null ? assets.drape : assets.pencilBody, field);
             gauzeRenderer = gauzeGo.GetComponent<MeshRenderer>(); gauzeMpb = new MaterialPropertyBlock();
-            hookGo = MakePart("Skin hook", MeshFactory.SkinHook(), assets.steel, field);
+            hookGo = assets.skinHookModel != null && assets.skinHookModel.IsSet ? MakePart("Skin hook", assets.skinHookModel.mesh, assets.skinHookModel.materials, field) : MakePart("Skin hook", MeshFactory.SkinHook(), assets.steel, field);
             foreach (var go in new[] { pencil, forcepsA, forcepsB, hemoA, hemoB, frazier, gauzeGo, hookGo })
                 foreach (var r in go.GetComponentsInChildren<MeshRenderer>()) r.shadowCastingMode = ShadowCastingMode.On;
             buttonMpb = new MaterialPropertyBlock();
@@ -251,6 +297,41 @@ namespace BovieSim
             arcLight.enabled = false;
         }
 
+        /// <summary>Pack instruments resting on the drape beside the field (visual only), seated on the drape's own height.</summary>
+        void BuildDressing()
+        {
+            if (assets.dressing == null) return;
+            float ax = volume.SizeX / 2 - 2.5f, az = volume.SizeZ / 2 - 2.5f;
+            foreach (var d in assets.dressing)
+            {
+                if (d == null || d.mesh == null) continue;
+                var go = MakePart(d.name, d.mesh, d.material != null ? d.material : assets.packSteel != null ? assets.packSteel : assets.steel, field);
+                float y = MeshFactory.DrapeHeight(d.positionMm.x, d.positionMm.z, ax, az, 6f, scenario.vessels != null ? scenario.vessels.seed : 0);
+                go.transform.localPosition = new Vector3(d.positionMm.x, y + 0.3f, d.positionMm.z);
+                go.transform.localRotation = Quaternion.Euler(0, d.yawDeg, 0);
+                go.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            }
+        }
+
+        /// <summary>
+        /// The operating-light heads themselves: an emissive dome on each surgical light so steel instruments and wet
+        /// tissue reflect the lamps (screen-space or ray-traced reflections), as they do in theatre.
+        /// </summary>
+        void BuildLampDomes()
+        {
+            if (assets.lampDome == null) return;
+            var mesh = MeshFactory.LampDome();
+            foreach (var n in new[] { "Surgical light A", "Surgical light B" })
+            {
+                var lightGo = GameObject.Find(n); if (lightGo == null || lightGo.transform.Find("Dome") != null) continue;
+                var dome = MakePart("Dome", mesh, assets.lampDome, lightGo.transform);
+                dome.transform.localRotation = Quaternion.Euler(90, 0, 0); // mesh +Y (the emissive face) toward the light's forward axis, i.e. the field
+                var mr = dome.GetComponent<MeshRenderer>();
+                mr.shadowCastingMode = ShadowCastingMode.Off;
+                mr.rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            }
+        }
+
         // ------------------------------------------------------------------------------------------------
         void Update()
         {
@@ -264,8 +345,12 @@ namespace BovieSim
             float frameDt = Mathf.Min(0.05f, Time.deltaTime);
             input.Update();
             bool overUi = ui.PointerOverUi(input.mouse);
-            orbit.HandleInput(overUi);
+            // Ctrl + wheel scrubs the depth peel; the plain wheel zooms
+            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            orbit.HandleInput(overUi, !ctrlHeld);
+            if (ctrlHeld && !overUi) { float wheel = Input.mouseScrollDelta.y; if (Mathf.Abs(wheel) > 0.01f) StepPeel(-wheel * 0.25f); }
             HandleKeys();
+            ApplyPeel(frameDt);
 
             // ---- generator activation: footswitch (keys or on-screen) or hand switch on the pencil
             bool lmb = input.leftHeld && !overUi && !orbit.Dragging;
@@ -539,7 +624,8 @@ namespace BovieSim
                 pencil.SetActive(tool.visible);
                 if (tool.visible)
                 {
-                    electrodeFilter.sharedMesh = pencilElectrode == ElectrodeType.Needle ? needleMesh : pencilElectrode == ElectrodeType.Ball ? ballMesh : bladeMesh;
+                    var wantMesh = pencilElectrode == ElectrodeType.Needle ? needleMesh : pencilElectrode == ElectrodeType.Ball ? ballMesh : bladeMesh;
+                    if (electrodeFilter.sharedMesh != wantMesh) { electrodeFilter.sharedMesh = wantMesh; electrodeRenderer.sharedMaterials = pencilElectrode == ElectrodeType.Needle ? needleMats : pencilElectrode == ElectrodeType.Ball ? ballMats : bladeMats; }
                     // mesh frame: +Y along the handle axis, +Z the blade face normal (includes roll)
                     HandPose.Apply(pencil.transform, tool.tip + DisplayOffset(tool.tip), tool.axis, tool.ndir);
                 }
@@ -639,7 +725,10 @@ namespace BovieSim
             if (Input.GetKeyDown(KeyCode.T)) forceps.toothed = !forceps.toothed;
             if (Input.GetKeyDown(KeyCode.U)) gauze.Fresh();
             if (Input.GetKeyDown(KeyCode.R)) tool.roll += Mathf.PI / 4;
-            if (Input.GetKeyDown(KeyCode.C)) physics.sliceMode = (physics.sliceMode + 1) % 6;
+            if (Input.GetKeyDown(KeyCode.C)) { if (shift) ui.largeSection = !ui.largeSection; else physics.sliceMode = (physics.sliceMode + 1) % 6; }
+            if (Input.GetKeyDown(KeyCode.K)) { if (shift) peelSweep = !peelSweep; else SetPeelMode((peelMode + 1) % 3); }
+            if (Input.GetKeyDown(KeyCode.Comma) || Input.GetKeyDown(KeyCode.PageDown)) StepPeel(shift ? 0.1f : 0.5f);
+            if (Input.GetKeyDown(KeyCode.Period) || Input.GetKeyDown(KeyCode.PageUp)) StepPeel(shift ? -0.1f : -0.5f);
             if (Input.GetKeyDown(KeyCode.H)) physics.sliceEnabled = !physics.sliceEnabled;
             if (Input.GetKeyDown(KeyCode.J)) slicePerp = !slicePerp;
             if (Input.GetKeyDown(KeyCode.Y)) InputState.invertTiltY = !InputState.invertTiltY;
@@ -654,6 +743,44 @@ namespace BovieSim
             if (Input.GetKeyDown(KeyCode.G)) ToggleSetting("tipGauge");
             if (Input.GetKeyDown(KeyCode.V)) SetOverlayMode((overlayMode + 1) % 3);
             if (Input.GetKeyDown(KeyCode.P)) StartReplay("Paused", "Replay of the last " + replay.Seconds.ToString("0") + " seconds.", null);
+        }
+
+        // ------------------------------------------------------------------ depth peel
+        // A clip plane in the surface extraction only: the physics, the pick and the instruments keep the whole bed.
+        // Block cut hides everything above the plane, so the cut face shows each layer and what the energy did at that
+        // depth; dissection strips skin, fat, septa and fasciae and leaves vessels, the nerve, the lipoma and any heated
+        // tissue standing, so the architecture under the skin and the thermal injury can be seen in 3D.
+        void SetPeelMode(int m)
+        {
+            peelMode = Mathf.Clamp(m, 0, 2);
+            if (peelMode == 0) peelSweep = false;
+            else if (peelMm <= 0.05f) peelMm = 3f; // start below the dermis so the first view already shows the fat
+        }
+
+        void StepPeel(float dMm)
+        {
+            if (peelMode == 0) SetPeelMode(1);
+            peelSweep = false;
+            peelMm = Mathf.Clamp(peelMm + dMm, 0, volume.SizeDepth);
+        }
+
+        /// <summary>Hands the peel plane to the surface extractor and the section; a sweep glides it down and up the bed.</summary>
+        void ApplyPeel(float dt)
+        {
+            if (peelSweep && peelMode != 0)
+            {
+                peelMm += peelSweepDir * 4f * dt;
+                if (peelMm >= volume.SizeDepth) { peelMm = volume.SizeDepth; peelSweepDir = -1f; }
+                else if (peelMm <= 0.5f) { peelMm = 0.5f; peelSweepDir = 1f; }
+            }
+            // quantised so a sweep rebuilds a band of bricks a few times a second, not every frame
+            float q = peelSweep ? 0.25f : 0.05f;
+            float mm = Mathf.Round(peelMm / q) * q;
+            if (peelMode == shownPeelMode && mm == shownPeelMm) return;
+            shownPeelMode = peelMode; shownPeelMm = mm;
+            surface.SetClip(peelMode, Vector3.up, -mm);
+            physics.peelY = peelMode != 0 ? -mm : 1e9f;
+            surface.bloodGo.SetActive(peelMode == 0); // the pool lies on the original surface
         }
 
         // ------------------------------------------------------------------ settings and detail
@@ -687,25 +814,87 @@ namespace BovieSim
                 case "antialiasing": settings.antialiasing = (settings.antialiasing + 1) % AaModes.Length; aaIndex = settings.antialiasing; if (hdCam != null) hdCam.antialiasing = AaModes[aaIndex]; break;
                 case "invertTiltY": settings.invertTiltY = !settings.invertTiltY; InputState.invertTiltY = settings.invertTiltY; break;
                 case "showTiming": settings.showTiming = !settings.showTiming; ui.showPerf = settings.showTiming; break;
+                case "rayTracing":
+                {
+                    var opts = UserSettings.RayTracingOptions;
+                    settings.rayTracing = opts[(Mathf.Max(0, Array.IndexOf(opts, settings.rayTracing)) + 1) % opts.Length];
+                    ApplyRayTracing();
+                    break;
+                }
             }
             SaveSettings();
         }
 
-        /// <summary>Render-side detail: ambient occlusion and the surgical lights' shadow maps scale with the level.</summary>
+        /// <summary>Render-side detail: ambient occlusion and the surgical lights' shadow maps scale with the level; then the ray-tracing tier.</summary>
         void ApplyRenderDetail()
         {
-            if (postVolume != null && postVolume.sharedProfile != null)
-            {
-                ScreenSpaceAmbientOcclusion ao;
-                if (postVolume.sharedProfile.TryGet(out ao)) ao.active = detail.ssao;
-            }
+            if (ao != null) ao.active = detail.ssao;
+            headLights.Clear();
             foreach (var n in new[] { "Surgical light A", "Surgical light B" })
             {
                 var go = GameObject.Find(n); if (go == null) continue;
                 var hd = go.GetComponent<HDAdditionalLightData>();
-                if (hd != null) { hd.SetShadowResolutionOverride(true); hd.SetShadowResolution(detail.shadowResolution); }
+                if (hd != null) { hd.SetShadowResolutionOverride(true); hd.SetShadowResolution(detail.shadowResolution); headLights.Add(hd); }
                 var l = go.GetComponent<Light>(); if (l != null) l.shadows = detail.softShadows ? LightShadows.Soft : LightShadows.Hard;
             }
+            ApplyRayTracing();
+        }
+
+        /// <summary>
+        /// DirectX Raytracing by tier (Settings > Ray tracing; Auto follows the detail level): 1 ray-traced shadows
+        /// from the light domes plus ray-traced ambient occlusion, 2 adds ray-traced reflections (steel, wet
+        /// tissue, the lamps), 3 adds global illumination (blue drape and red wound bounce) and ray-traced
+        /// subsurface scattering. Without DXR the raster effects stay: PCSS soft shadows, SSAO, and screen-space
+        /// reflections from High detail up. The tissue meshes are rebuilt on the GPU, so they enter the acceleration
+        /// structure as dynamic geometry (SurfaceRenderer.SetRayTracing).
+        /// </summary>
+        void ApplyRayTracing()
+        {
+            rtTier = ResolveRayTracing(out rtText);
+            bool rt = rtTier > 0;
+            foreach (var hd in headLights)
+            {
+                if (hd == null) continue;
+                hd.useRayTracedShadows = rt;
+                hd.numRayTracingSamples = rtTier >= 3 ? 8 : 4;
+                hd.filterTracedShadow = true; hd.filterSizeTraced = 16;
+            }
+            if (ao != null) { ao.rayTracing.Override(rt); ao.rayLength.Override(0.03f); ao.sampleCount.Override(rtTier >= 3 ? 4 : 2); ao.denoise.Override(true); }
+            if (ssr != null)
+            {
+                ssr.enabled.Override(detail.ssr || rtTier >= 2);
+                ssr.tracing.Override(rtTier >= 2 ? RayCastingMode.RayTracing : RayCastingMode.RayMarching);
+                ssr.mode.Override(UnityEngine.Rendering.HighDefinition.RayTracingMode.Performance);
+                ssr.rayLength.Override(3f); ssr.clampValue.Override(2f); ssr.denoise.Override(true); ssr.denoiserRadius.Override(8);
+            }
+            if (gi != null)
+            {
+                gi.enable.Override(rtTier >= 3);
+                gi.tracing.Override(RayCastingMode.RayTracing);
+                gi.mode.Override(UnityEngine.Rendering.HighDefinition.RayTracingMode.Performance);
+                gi.rayLength.Override(1.5f); gi.clampValue.Override(3f); gi.denoise.Override(true); gi.fullResolution.Override(false);
+            }
+            if (sssRt != null) { sssRt.rayTracing.Override(rtTier >= 3); sssRt.sampleCount.Override(2); }
+            if (contactShadows != null) contactShadows.rayTracing.Override(rt);
+            if (surface != null) surface.SetRayTracing(rt);
+        }
+
+        /// <summary>Ray-tracing tier 0-3 from the setting, the detail level and whether the GPU can ray trace at all; `text` describes it for the settings panel.</summary>
+        int ResolveRayTracing(out string text)
+        {
+            string[] names = { "off", "shadows + ambient occlusion", "shadows, AO + reflections", "full (shadows, AO, reflections, global illumination, subsurface)" };
+            if (!HardwareProfile.RayTracingSupported) { text = settings.rayTracing == "Off" ? "off" : "not available on this PC"; return 0; }
+            int tier;
+            switch (settings.rayTracing)
+            {
+                case "Off": tier = 0; break;
+                case "Shadows": tier = 1; break;
+                case "Reflections": tier = 2; break;
+                case "Full": tier = 3; break;
+                default: tier = detail.rayTracing; break;
+            }
+            text = (settings.rayTracing == "Auto" ? "Auto · " : "") + names[tier];
+            return tier;
         }
 
         void SetOverlayMode(int m)
@@ -724,7 +913,7 @@ namespace BovieSim
             if (budget.overBudget && !budgetDismissed && detail.level > DetailLevel.Low)
                 ui.ShowBudgetWarning("At " + detail.Name + " detail this PC takes about " + hud.frameMs.ToString("0") + " ms per frame, over the " + detail.frameBudgetMs.ToString("0") + " ms budget (" + (detail.frameBudgetMs > 20 ? "30" : "60") + " fps). Restart at " + (DetailLevel)((int)detail.level - 1) + " detail?");
             else ui.ShowBudgetWarning(null);
-            ui.RefreshSettings(settings, detail.level, detailReason, chosenLevel);
+            ui.RefreshSettings(settings, detail.level, detailReason, chosenLevel, rtText);
         }
 
         // ------------------------------------------------------------------ teaching moments (pause and replay)
@@ -801,6 +990,7 @@ namespace BovieSim
             d.frameMs = fps > 0 ? 1000f / fps : 0; d.cpuMs = cpuMs; d.gpuMs = gpuMs;
             d.stateAge = physics.stateAgeFrames; d.heightsAge = picker.heightsAgeFrames; d.surfaceAge = surface.lastAgeFrames;
             d.sliceTopY = physics.sliceOrigin.y; d.slicePerp = slicePerp;
+            d.peelMode = peelMode; d.peelMm = peelMm; d.bedDepthMm = volume.SizeDepth; d.peelSweep = peelSweep;
             UpdateLayerLabels(physics.sliceOrigin.x, physics.sliceOrigin.z);
         }
 

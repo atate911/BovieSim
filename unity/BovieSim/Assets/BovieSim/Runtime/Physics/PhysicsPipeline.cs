@@ -13,7 +13,8 @@ namespace BovieSim
     /// </summary>
     public sealed class PhysicsPipeline : IDisposable
     {
-        public const int SliceW = 640, SliceH = 400;
+        /// <summary>section image size in pixels: 640 x 400 at scale 1 (DetailSettings.sliceScale), drawn with bilinear filtering</summary>
+        public readonly int sliceW, sliceH;
         const int StateWords = 96;
         const int MaxDrops = 16;
         public const int MaxTears = 16;
@@ -43,6 +44,8 @@ namespace BovieSim
         public Vector3 sliceOrigin; public Vector3 sliceU = Vector3.right; public float sliceWidthMm = 32, sliceDepthMm = 20; public int sliceMode; public bool sliceEnabled = true;
         /// <summary>section overlays: 1 isotherms (45/60/100 C), 2 irreversible-damage outline (Omega = 1)</summary>
         public int sliceFlags = 3;
+        /// <summary>depth-peel plane of the 3D view (world y, mm), drawn as a dashed line on the section; 1e9 = none</summary>
+        public float peelY = 1e9f;
 
         /// <summary>skin-edge thermal rim (mm): high percentile of the distance from damaged skin to the nearest incision wall</summary>
         public float rimMm; public int rimSamples;
@@ -81,9 +84,11 @@ namespace BovieSim
         byte[] probeFlags; float[] probeOmega, probeDry; bool probeFresh;
 
         /// <param name="maxSubdomain">largest field-solve region (voxels per side); the region aims for ~14 mm</param>
-        public PhysicsPipeline(ComputeShader shader, GpuVolume volume, int maxSubdomain = 64)
+        /// <param name="sliceScale">section image scale: 1 = 640 x 400, 2 = 1280 x 800</param>
+        public PhysicsPipeline(ComputeShader shader, GpuVolume volume, int maxSubdomain = 64, float sliceScale = 2f)
         {
             cs = shader; vol = volume;
+            sliceW = Math.Max(1, (int)Math.Round(640 * sliceScale / 8)) * 8; sliceH = Math.Max(1, (int)Math.Round(400 * sliceScale / 8)) * 8;
             float h = vol.cpu.h;
             subdomain = Math.Max(24, Math.Min(maxSubdomain, (int)Math.Round(14 / h)));
             subdomain = (subdomain + 3) / 4 * 4;
@@ -99,7 +104,7 @@ namespace BovieSim
             dummyU4 = new ComputeBuffer(1, 16);
             rimHist = new ComputeBuffer(16, 4);
             latDisp = new ComputeBuffer(1, 16);
-            sliceTex = new RenderTexture(SliceW, SliceH, 0, RenderTextureFormat.ARGB32) { enableRandomWrite = true, filterMode = FilterMode.Point, name = "BovieSlice" };
+            sliceTex = new RenderTexture(sliceW, sliceH, 0, RenderTextureFormat.ARGB32) { enableRandomWrite = true, filterMode = FilterMode.Bilinear, name = "BovieSlice" };
             sliceTex.Create();
 
             kSeed = cs.FindKernel("SeedPotential"); kRed = cs.FindKernel("RelaxRed"); kBlack = cs.FindKernel("RelaxBlack");
@@ -255,9 +260,9 @@ namespace BovieSim
             cs.SetVector("_Ray", rayO);
             cs.SetVector("_RayDir", new Vector4(rayD.x, rayD.y, rayD.z, 600));
             cs.SetVector("_SliceO", new Vector4(sliceOrigin.x, sliceOrigin.y, sliceOrigin.z, sliceWidthMm));
-            cs.SetVector("_SliceU", new Vector4(sliceU.x, sliceU.y, sliceU.z, SliceW));
-            cs.SetVector("_SliceV", new Vector4(0, -1, 0, SliceH));
-            cs.SetVector("_SliceParams", new Vector4(sliceDepthMm, sliceMode, sliceFlags, 0));
+            cs.SetVector("_SliceU", new Vector4(sliceU.x, sliceU.y, sliceU.z, sliceW));
+            cs.SetVector("_SliceV", new Vector4(0, -1, 0, sliceH));
+            cs.SetVector("_SliceParams", new Vector4(sliceDepthMm, sliceMode, sliceFlags, peelY));
             int[] wo, ws; WoundBox(out wo, out ws);
             SetBox("_WBox0", wo[0], wo[1], wo[2], substeps);
             SetBox("_WBox1", ws[0], ws[1], ws[2], 0);
@@ -335,7 +340,7 @@ namespace BovieSim
             if (sliceEnabled)
             {
                 if (sliceMode >= 4) Bind(kSlice, vol.potential, vol.potentialNext); else Bind(kSlice, vol.temp, vol.tempNext);
-                cs.Dispatch(kSlice, Ceil(SliceW, 8), Ceil(SliceH, 8), 1);
+                cs.Dispatch(kSlice, Ceil(sliceW, 8), Ceil(sliceH, 8), 1);
             }
             if (ws[0] > 0 && ws[1] > 0 && ws[2] > 0 && !rimInFlight && rimEvery++ % 15 == 0)
             {

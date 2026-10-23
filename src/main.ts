@@ -17,10 +17,10 @@ import { initWebGPU } from '@/render/gpu';
 import { SurfaceExtractor } from '@/render/surface';
 import { Renderer, SceneParams } from '@/render/renderer';
 import { OrbitCamera } from '@/render/camera';
-import { buildDrapes, buildPencilBody, buildPencilButtons, buildBlade } from '@/render/meshes';
+import { buildDrapeSet, buildPencilBody, buildPencilButtons, buildBlade } from '@/render/meshes';
 import { Volume, cellType, cellState } from '@/core/volume';
 import { TISSUE_NAMES, STATE_NAMES, Tissue } from '@/core/tissueProperties';
-import { PhysicsPipeline, SecondaryToolMode } from '@/physics/pipeline';
+import { PhysicsPipeline, SecondaryToolMode, SLICE_W, SLICE_H } from '@/physics/pipeline';
 import { ElectrodeTool } from '@/tools/electrode';
 import { attachPointer } from '@/input/pointer';
 import { Pedal } from '@/input/pedal';
@@ -54,6 +54,8 @@ const aim = params.get('aim')?.split(',').map(parseFloat) ?? null;
 const headlessDt = params.has('dt') ? parseFloat(params.get('dt')!) : 1 / 30;
 /** headless gap measurement between two surface points: gap=x0,z0,x1,z1 (mm) */
 const gapPts = params.get('gap')?.split(',').map(parseFloat) ?? [-1.5, 12, 1.5, 12];
+/** depth peel of the 3D view at start: peel=block|dissect[,mm below the skin] */
+const peelParam = params.get('peel')?.split(',') ?? null;
 
 declare global { interface Window { __sim: Record<string, unknown>; __simControl: Record<string, (...a: number[]) => unknown> } }
 
@@ -102,24 +104,41 @@ async function main() {
     arcLight: { x: 0, y: 0, z: 0, intensity: 0 },
   };
 
-  renderer.addMesh(buildDrapes(sx / 2, sz / 2), 'drapes', [0.12, 0.22, 0.40], { rough: 0.9, kind: 1 });
+  // fenestrated surgical drape: incise film on the skin, absorbent pad, then the loose blue drape (albedos in linear sRGB)
+  const drape = buildDrapeSet(sx / 2, sz / 2, scenario.vessels?.seed ?? 0);
+  renderer.addMesh(drape.film, 'drapeFilm', [0.46, 0.31, 0.25], { rough: 0.18, kind: 3 });   // clear incise film: the skin shows through, glossy
+  const drapePad = renderer.addMesh(drape.pad, 'drapePad', [0.075, 0.18, 0.37], { rough: 0.95, kind: 2 });
+  const drapeDraw = renderer.addMesh(drape.drape, 'drape', [0.06, 0.16, 0.34], { rough: 0.9, kind: 1 });
+  // four cotton towels square the window on top of the drape, held by Backhaus clips at the corners
+  const towelDraws = drape.towels.map((t, i) => renderer.addMesh(t, 'towel' + i, [0.065, 0.17, 0.30], { rough: 0.95, kind: 4 }));
+  const clipDraws = drape.clips.map((c, i) => renderer.addMesh(c.mesh, 'towelClip' + i, [0.62, 0.62, 0.63], { rough: 0.5, metallic: 1, model: c.model }));
+  // satin-finished stainless (f0 of steel) and off-white moulded plastic
+  const STEEL: [number, number, number] = [0.62, 0.62, 0.63];
   const pencilBody = renderer.addMesh(buildPencilBody(), 'pencilBody', [0.92, 0.86, 0.72], { rough: 0.45 });
   const pencilButtons = renderer.addMesh(buildPencilButtons(), 'pencilButtons', [0.85, 0.75, 0.1], { rough: 0.5 });
-  const blade = renderer.addMesh(buildBlade(), 'blade', [0.85, 0.85, 0.86], { rough: 0.25, metallic: 1 });
+  const blade = renderer.addMesh(buildBlade(), 'blade', STEEL, { rough: 0.45, metallic: 1 });
 
   const tool = new ElectrodeTool();
   const forceps = new ForcepsTool();
   const hemostat = new HemostatTool();
   const gauze = new GauzeTool();
   const suction = new SuctionTool();
-  const forcepsA = renderer.addMesh(buildForcepsArm(), 'forcepsA', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
-  const forcepsB = renderer.addMesh(buildForcepsArm(), 'forcepsB', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
-  const hemoA = renderer.addMesh(buildHemostatArm(hemostat.armLength), 'hemostatA', [0.88, 0.88, 0.9], { rough: 0.25, metallic: 0.9 });
-  const hemoB = renderer.addMesh(buildHemostatArm(hemostat.armLength), 'hemostatB', [0.88, 0.88, 0.9], { rough: 0.25, metallic: 0.9 });
-  const gauzePad = renderer.addMesh(buildGauze(gauze.radius), 'gauze', [0.96, 0.96, 0.94], { rough: 0.95, kind: 2 });
-  const frazier = renderer.addMesh(buildFrazier(), 'frazier', [0.8, 0.8, 0.82], { rough: 0.35, metallic: 1 });
-  const hookMesh = renderer.addMesh(buildSkinHook(), 'hook', [0.8, 0.8, 0.82], { rough: 0.3, metallic: 1 });
+  const forcepsA = renderer.addMesh(buildForcepsArm(), 'forcepsA', STEEL, { rough: 0.5, metallic: 1 });
+  const forcepsB = renderer.addMesh(buildForcepsArm(), 'forcepsB', STEEL, { rough: 0.5, metallic: 1 });
+  const hemoA = renderer.addMesh(buildHemostatArm(hemostat.armLength), 'hemostatA', STEEL, { rough: 0.5, metallic: 1 });
+  const hemoB = renderer.addMesh(buildHemostatArm(hemostat.armLength), 'hemostatB', STEEL, { rough: 0.5, metallic: 1 });
+  const gauzePad = renderer.addMesh(buildGauze(gauze.radius), 'gauze', [0.96, 0.96, 0.94], { rough: 0.95, kind: 4 });   // cotton weave (towel kind), stays procedural
+  const frazier = renderer.addMesh(buildFrazier(), 'frazier', STEEL, { rough: 0.5, metallic: 1 });
+  const hookMesh = renderer.addMesh(buildSkinHook(), 'hook', STEEL, { rough: 0.5, metallic: 1 });
   const allInstruments = [pencilBody, pencilButtons, blade, forcepsA, forcepsB, hemoA, hemoB, gauzePad, frazier, hookMesh];
+  // texture maps from public/textures (CC0 sets via scripts/fetch-textures.mjs, or your own: docs/textures.md); applied as they load
+  void renderer.loadTextures([
+    { slot: 'drape', draws: [drapeDraw], tileMm: 30, tintIfGrey: [0.06, 0.16, 0.34], normalStrength: 1.8 },
+    { slot: 'pad', draws: [drapePad], tileMm: 30, tintIfGrey: [0.075, 0.18, 0.37], fallbackSlot: 'drape', normalStrength: 1.8 },
+    { slot: 'towel', draws: towelDraws, tileMm: 30, tintIfGrey: [0.065, 0.17, 0.30], fallbackSlot: 'pad', normalStrength: 1.8 },
+    { slot: 'steel', draws: [blade, forcepsA, forcepsB, hemoA, hemoB, frazier, hookMesh, ...clipDraws], tileMm: 12, normalStrength: 0.6 },
+    { slot: 'plastic', draws: [pencilBody], tileMm: 20, tintIfGrey: [0.92, 0.86, 0.72] },
+  ]);
   const hookModel = mat4.create();
   let activeTool: ToolKind = TOOL_ORDER.includes(toolParam) ? toolParam : 'pencil';
   let pencilElectrode: 'blade' | 'needle' | 'ball' = 'blade';
@@ -143,9 +162,19 @@ async function main() {
   physics.slice.widthMm = 16; physics.slice.depthMm = 10;
   window.addEventListener('keyup', (e) => { if (e.code === 'Space') spaceHeld = false; });
   window.addEventListener('blur', () => { spaceHeld = false; });
+  // depth peel of the 3D view (display only; the physics keeps the whole bed): K cycles off / block cut /
+  // dissection, , and . step the depth (Shift: 0.1 mm), Ctrl + wheel scrubs it. Block cut hides everything
+  // above the plane; dissection strips skin, fat, septa and fasciae above it, leaving vessels, the nerve,
+  // the lipoma and any tissue the energy has changed standing in 3D.
+  const bedDepthMm = volume.sizeMm[1];
+  let peelMode = 0, peelMm = 3;
+  if (peelParam) { peelMode = peelParam[0] === 'dissect' ? 2 : peelParam[0] === 'block' ? 1 : 0; if (peelParam[1] !== undefined && isFinite(parseFloat(peelParam[1]))) peelMm = parseFloat(peelParam[1]); }
+  const stepPeel = (d: number) => { peelMm = Math.min(bedDepthMm, Math.max(0, peelMm + d)); };
+  canvas.addEventListener('wheel', (e) => { if (e.ctrlKey) stepPeel(e.deltaY * 0.0025); }, { passive: true });
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Space') { spaceHeld = true; e.preventDefault(); }
-    if (e.repeat) return;
+    const scrub = e.code === 'Comma' || e.code === 'Period' || e.code === 'PageDown' || e.code === 'PageUp';
+    if (e.repeat && !scrub) return;
     switch (e.code) {
       case 'Digit1': gen.settings.cutMode = 'pure'; break;
       case 'Digit2': gen.settings.cutMode = 'blend'; break;
@@ -168,6 +197,9 @@ async function main() {
       case 'KeyC': physics.slice.mode = (physics.slice.mode + 1) % 6; break;
       case 'KeyH': physics.slice.enabled = !physics.slice.enabled; sliceView.canvas.style.display = physics.slice.enabled ? '' : 'none'; break;
       case 'KeyJ': slicePerp = !slicePerp; break;
+      case 'KeyK': peelMode = (peelMode + 1) % 3; break;
+      case 'Comma': case 'PageDown': stepPeel(e.shiftKey ? 0.1 : 0.5); e.preventDefault(); break;
+      case 'Period': case 'PageUp': stepPeel(e.shiftKey ? -0.1 : -0.5); e.preventDefault(); break;
     }
     gen.adjust('cut', 0); gen.adjust('coag', 0);
   });
@@ -294,7 +326,7 @@ async function main() {
       events.gauzeDab = on && speed < 15; events.gauzeWipe = on && speed >= 15;
       // the pad reddens as it fills
       const s = gauze.saturation;
-      renderer.setMaterial(gauzePad, [0.96 - 0.6 * s, 0.96 - 0.9 * s, 0.94 - 0.9 * s], { rough: 0.95 - 0.5 * s, kind: 2 });
+      renderer.setMaterial(gauzePad, [0.96 - 0.6 * s, 0.96 - 0.9 * s, 0.94 - 0.9 * s], { rough: 0.95 - 0.5 * s, kind: 4 });
       noElectrode();
     } else {
       // skin hook: press to attach the nearest lattice node, drag to retract, release to let go
@@ -407,6 +439,10 @@ async function main() {
       if (mode && r.hit && tool.visible && cellType(r.hitCell) === Tissue.Lipoma && !lesionBreachReported) { lesionBreachReported = true; events.emit({ t: physics.simTime, type: 'lesion.breached', detail: 'energy applied inside the lipoma', teaching: 'You have entered the lipoma. Fat spills, the plane is lost and fragments left behind recur.', severity: 'bad' }); }
     }
 
+    // depth peel: a display-only clip plane in the surface extraction; the section marks it with a dashed line
+    surface.setClip(peelMode, [0, 1, 0], -peelMm);
+    physics.slice.peelY = peelMode ? -peelMm : 1e9;
+
     renderer.writeFrame(cam, scene);
     const enc = gpu.device.createCommandEncoder();
     const changed = physics.step(enc, tool, gen, frameDt);
@@ -434,12 +470,12 @@ async function main() {
       `blood lost ${r.bloodLostMl.toFixed(2)} ml · pooled ${r.poolMl.toFixed(2)} ml (clot ${r.clotMl.toFixed(2)}) · ooze ${r.oozeMl.toFixed(2)} ml from ${r.oozeVoxels} vx · bleeding ends: ${r.exposedArterial} art / ${r.exposedVenous} ven · sealed ${r.sealedVoxels} · char plug ${r.charPlugVoxels} · rebleeds ${r.rebleeds}\n` +
       `mechanics: ${strandCount} strands · torn ${lattice.tornLinks} links / ${physics.totals.tornVoxels} vx · dissected ${physics.totals.dissectedVoxels} vx · gauze soaked ${(physics.totals.gauzeSoakUl / 1000).toFixed(2)} ml\n` +
       `under tip: ${hv}\n` +
+      `peel: ${peelMode ? `<b>${peelMode === 1 ? 'block cut' : 'dissection'} ${peelMm.toFixed(1)} mm</b> below the skin (display only; K mode · , . depth · Ctrl+wheel)` : 'off (K)'}\n` +
       `volume ${volume.dims.nx}×${volume.dims.ny}×${volume.dims.nz} @ ${volume.dims.h} mm · tris ${(vertexCount / 3 | 0).toLocaleString()}${vertexCount >= surface.capacity ? ' (CAPPED)' : ''} · ${fps.toFixed(0)} fps\n` +
-      `Z/X pedal cut/coag · LMB hand-switch cut (pencil) / grasp (forceps, hemostat) / suck (suction) / press (gauze) · Space spread (hemostat) · U fresh gauze · Tab tool · 1-4 cut mode · 5-6 coag mode · [ ] ; ' watts · B/N/O electrode · T toothed · R roll · V overlay · C section · RMB orbit`;
+      `Z/X pedal cut/coag · LMB hand-switch cut (pencil) / grasp (forceps, hemostat) / suck (suction) / press (gauze) · Space spread (hemostat) · U fresh gauze · Tab tool · 1-4 cut mode · 5-6 coag mode · [ ] ; ' watts · B/N/O electrode · T toothed · R roll · V overlay · C section · K peel · RMB orbit`;
     window.__simControl = { setDebug: (n: number) => { debugMode = n; scene.debugMode = n; }, getDebug: () => scene.debugMode, setSlice: (m: number) => { physics.slice.mode = m; },
       /** damage-zone extent in the current section (needs slice mode 2): width and depth in mm of pixels with omega >= ~0.53 */
       measureSlice: () => {
-        const { SLICE_W, SLICE_H } = { SLICE_W: 320, SLICE_H: 200 };
         const px = physics.slicePixels; let minX = 1e9, maxX = -1, maxY = -1; let count = 0;
         for (let y = 0; y < SLICE_H; y++) for (let x = 0; x < SLICE_W; x++) {
           const o = (x + y * SLICE_W) * 4; const rr = px[o], gg = px[o + 1], bb = px[o + 2];
@@ -450,8 +486,10 @@ async function main() {
         return count ? { widthMm: (maxX - minX + 1) / pxPerMmX, depthMm: (maxY + 1) / pxPerMmY - 1.5, pixels: count } : { widthMm: 0, depthMm: 0, pixels: 0 };
       }, setCam: (az: number, el: number, dist: number, tx = 0, tz = 0) => { cam.azimuth = az; cam.elevation = el; cam.distance = dist; cam.target[0] = tx; cam.target[2] = tz; },
       setTool: (n: number) => { activeTool = TOOL_ORDER[Math.max(0, Math.min(TOOL_ORDER.length - 1, n))]; },
-      bloodStats: () => physics.debugBlood() as unknown as number };
-    window.__sim = { ready: true, frame: frameIndex, events: events.recent(12), tool: activeTool, lipomaFree: lattice.lipomaFree, capsule: [lattice.capsuleAlive, lattice.capsuleTotal], clusterRiseMm,
+      bloodStats: () => physics.debugBlood() as unknown as number,
+      /** depth peel of the 3D view: mode 0 off, 1 block cut, 2 dissection; depth in mm below the skin */
+      setPeel: (mode: number, mm: number) => { peelMode = Math.max(0, Math.min(2, mode | 0)); peelMm = Math.min(bedDepthMm, Math.max(0, mm)); } };
+    window.__sim = { ready: true, frame: frameIndex, textures: renderer.loadedTextures.slice(), events: events.recent(12), tool: activeTool, peel: { mode: peelMode, mm: peelMm }, lipomaFree: lattice.lipomaFree, capsule: [lattice.capsuleAlive, lattice.capsuleTotal], clusterRiseMm,
       gapMm: lattice.distanceBetween(vec3.fromValues(gapPts[0], 0, gapPts[1]), vec3.fromValues(gapPts[2], 0, gapPts[3])), vertexCount, fps, report, readout: { ...r, hit: r.hit ? Array.from(r.hit) : null }, totals: physics.totals, simTime: physics.simTime, autoDone, settings: gen.settings,
       strands: strandCount, tornLinks: lattice.tornLinks, yieldedLinks: lattice.yieldedLinks, gauzeUl: gauze.soakedUl };
     if (!headless) requestAnimationFrame(loop); else setTimeout(loop, 10);
