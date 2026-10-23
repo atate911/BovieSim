@@ -6,7 +6,7 @@
 struct Vtx { @location(0) pos: vec3f, @location(1) nrm: vec3f, @location(2) uv: vec2f };
 struct Material {
   color: vec4f,      // rgb albedo or texture tint (linear), a = metallic
-  params: vec4f,     // x rough, y kind (0 solid, 1 drape, 2 pad, 3 film), z emissive, w texture flags (1 albedo, 2 normal, 4 roughness)
+  params: vec4f,     // x rough, y kind (0 solid, 1 drape, 2 pad, 3 film, 4 towel), z emissive, w texture flags (1 albedo, 2 normal, 4 roughness)
   tex: vec4f,        // x tile size (mm), y normal strength, z roughness scale, w unused
   model: mat4x4f,
   invModel: mat4x4f,
@@ -90,7 +90,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4f {
       N = normalize(N + (mat.model * vec4f(pert * mat.tex.y, 0.0)).xyz);
     }
     f0 = mix(vec3f(0.04), albedo, metallic);
-    if (kind > 0.5 && kind < 2.5) {
+    if ((kind > 0.5 && kind < 2.5) || kind > 3.5) {
       // cloth tiles are often painted flat: keep a little procedural fibre mottling and the sheen on top of them
       let fib = fbm3(vec3f(lp.x * 1.6, lp.z * 0.35, 3.0), 3);
       let fib2 = fbm3(lp * 0.5, 3);
@@ -117,6 +117,19 @@ fn fs_main(in: VSOut) -> @location(0) vec4f {
     let dq = vec2f(worley3(vec3f(lp.x + e, 0.0, lp.z) * 0.16).x - q.x, worley3(vec3f(lp.x, 0.0, lp.z + e) * 0.16).x - q.x) / e;
     N = normalize(N + wrinkleNormal(lp, 0.2, 0.5) + vec3f(dq.x, 0.0, dq.y) * 0.35);
     rough = 0.96; sheen = 0.5;
+  } else if (kind > 3.5) {
+    // cotton huck towel: diamond weave on a 1.2 mm pitch, fuzzy fibres, soft wrinkles, strong sheen
+    let q = vec2f(lp.x + lp.z, lp.x - lp.z) / 1.7;
+    let w = abs(fract(q.x) - 0.5) + abs(fract(q.y) - 0.5);
+    let weave = smoothstep(0.35, 0.65, w);
+    let fuzz = fbm3(lp * 2.2, 2);
+    albedo = albedo * (0.86 + 0.2 * weave) * (0.88 + 0.24 * fuzz) * (0.92 + 0.16 * fbm3(lp * 0.3, 3));
+    let e = 0.3;
+    let wq = vec2f(lp.x + e + lp.z, lp.x + e - lp.z) / 1.7; let wr = vec2f(lp.x + lp.z + e, lp.x - lp.z - e) / 1.7;
+    let dwx = (abs(fract(wq.x) - 0.5) + abs(fract(wq.y) - 0.5) - w) / e;
+    let dwz = (abs(fract(wr.x) - 0.5) + abs(fract(wr.y) - 0.5) - w) / e;
+    N = normalize(N + wrinkleNormal(lp, 0.16, 0.7) + vec3f(dwx, 0.0, dwz) * 0.12);
+    rough = 0.96; sheen = 0.55;
   } else if (kind > 2.5) {
     // incise film: thin glossy plastic with fine creases
     N = normalize(N + wrinkleNormal(lp, 0.33, 0.45));

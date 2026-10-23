@@ -122,26 +122,36 @@ fn baseMaterial(ty: u32, flags: u32, aux: u32, p: vec3f, N: vec3f) -> Mat {
   switch (ty) {
     case T_EPI: {
       let tone = skinTone(frame.params0.x);
-      // pores and fine lines along Langer's lines
       let ang = frame.params0.z;
       let dir = vec2f(cos(ang), sin(ang));
       let along = dot(p.xz, dir); let across = dot(p.xz, vec2f(-dir.y, dir.x));
-      // Langer's lines: fine, irregular creases, not a regular grating
-      let crease = fbm3(vec3f(along * 0.35, across * 2.2, 1.7), 3);
-      let lines = smoothstep(0.55, 0.75, crease);
-      let pores = smoothstep(0.84, 0.93, fbm3(p * 4.0, 2));
-      var alb = tone * (0.9 + 0.2 * med) * (1.0 - 0.12 * pores) * (1.0 - 0.08 * lines) * (0.9 + 0.2 * coarse);
-      // mottling (vascular)
-      alb = mix(alb, alb * vec3f(1.05, 0.9, 0.9), smoothstep(0.45, 0.7, coarse));
-      // skin prep: thin translucent film
+      // the skin's polygonal line network: primary furrows (~1.3 mm cells, stretched along Langer's lines) and a
+      // finer secondary net, as cell borders of two Worley fields; pores sit at the cell corners
+      let q1 = vec3f(along * 0.9, across * 1.5, 0.3);
+      let w1 = worley3(q1);
+      let furrow = (1.0 - smoothstep(0.0, 0.06, w1.y - w1.x)) * (0.5 + 0.5 * fbm3(p * 0.5, 2));
+      let w2 = worley3(vec3f(along * 2.4, across * 3.6, 2.1));
+      let furrow2 = (1.0 - smoothstep(0.0, 0.04, w2.y - w2.x)) * 0.8;
+      let pores = smoothstep(0.88, 0.96, fbm3(p * 4.0, 2)) + (1.0 - smoothstep(0.0, 0.08, w1.x)) * 0.6;
+      // vascular mottling (blotchy pink / pale) at ~8 mm and a broader tone drift
+      let mott = fbm3(p * 0.13, 3);
+      let blotch = smoothstep(0.4, 0.75, mott);
+      var alb = tone * (0.92 + 0.16 * med) * (1.0 - 0.1 * clamp(pores, 0.0, 1.0)) * (1.0 - 0.05 * furrow - 0.03 * furrow2) * (0.92 + 0.16 * coarse);
+      alb = mix(alb, alb * vec3f(1.08, 0.86, 0.84), blotch * 0.6);
+      alb = mix(alb, alb * vec3f(0.96, 1.02, 1.04), smoothstep(0.3, 0.1, mott) * 0.4);
+      // skin prep painted on with a sponge: tinted film, thicker in the furrows and along the stroke direction
       let prep = frame.params0.y;
-      if (prep > 0.5 && prep < 1.5) { alb = alb * mix(vec3f(1.0), vec3f(1.04, 0.82, 0.62), 0.45); }   // tinted chlorhexidine-alcohol: a light orange sheen
-      else if (prep >= 1.5) { alb = alb * mix(vec3f(1.0), vec3f(0.85, 0.55, 0.28), 0.65); }          // povidone-iodine: brown
+      let stroke = fbm3(vec3f(along * 0.06, across * 0.5, 5.0), 3);
+      let film = clamp(0.55 + 0.5 * (stroke - 0.5) + 0.25 * furrow, 0.0, 1.0);
+      if (prep > 0.5 && prep < 1.5) { alb = alb * mix(vec3f(1.0), vec3f(1.04, 0.80, 0.58), 0.3 + 0.35 * film); }   // tinted chlorhexidine-alcohol
+      else if (prep >= 1.5) { alb = alb * mix(vec3f(1.0), vec3f(0.85, 0.55, 0.28), 0.45 + 0.4 * film); }          // povidone-iodine
       m.albedo = alb;
-      m.rough = mix(0.55, 0.38, select(0.0, 1.0, prep > 0.5)) + 0.1 * lines;
+      // dry skin is matte; the prep leaves a glossy film with sponge-stroke variation and pooling in the furrows
+      let wet = select(0.0, film, prep > 0.5);
+      m.rough = mix(0.62, 0.22, wet) + 0.08 * furrow2 - 0.06 * furrow * wet;
       m.sss = 0.55;
       m.sssColor = vec3f(0.95, 0.35, 0.2);
-      m.nrmDetail = vec3f(fine - 0.5, 0.0, lines - 0.5) * 0.18;
+      m.nrmDetail = vec3f(fine - 0.5, 0.0, 0.0) * 0.08 + vec3f(w1.y - w1.x - 0.3, 0.0, 0.0) * furrow * 0.3 + vec3f(0.0, 0.0, w2.y - w2.x - 0.2) * furrow2 * 0.2;
     }
     case T_DERMIS: {
       // collagenous, pink-white, with dermal plexus speckle

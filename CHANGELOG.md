@@ -10,6 +10,12 @@ after updating (the editor offers it automatically).
   skin, an absorbent reinforcement zone, then the loose blue nonwoven drape with swells, pleats radiating from
   the fenestration and fine wrinkles (same geometry in both clients). Surgical-blue fabric with bonding dots
   and a cloth sheen in the browser build; three HDRP materials (film, pad, drape) in Unity.
+- **Squared field.** Four folded cotton towels square the window on top of the drape, overlapping windmill-fashion
+  at the corners with a little misalignment, held by Backhaus towel clips; the incise film is a narrow clear band
+  over the skin edge. Drape folds are seeded per scenario and irregular: domain-warped swells, broad waves across
+  the sheet, local bunching, radiating pleats and package creases. Skin shows its polygonal line network, pores at
+  the cell corners, vascular mottling and the prep painted on in sponge strokes with a glossy film pooling in the
+  furrows (both clients).
 - **Overhead surgical light.** Two light heads modelled as 50 cm domes: shadows are sharp where the instrument
   touches tissue and widen with distance (PCSS in Unity from the lights' shape radius with High shadow filtering,
   percentage-closer soft shadows with two shadow maps in the browser build), the specular highlight on wet

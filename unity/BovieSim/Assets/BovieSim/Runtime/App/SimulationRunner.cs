@@ -227,8 +227,22 @@ namespace BovieSim
 
         void BuildInstruments()
         {
-            drapes = MakePart("Drapes", MeshFactory.Drapes(volume.SizeX / 2, volume.SizeZ / 2), new[] { assets.drapeFilm, assets.drapePad, assets.drape }, field);
+            int drapeSeed = scenario.vessels != null ? scenario.vessels.seed : 0;
+            drapes = MakePart("Drapes", MeshFactory.Drapes(volume.SizeX / 2, volume.SizeZ / 2, drapeSeed), new[] { assets.drapeFilm, assets.drapePad, assets.drape }, field);
             drapes.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            // four towels square the window on top of the drape, held by Backhaus clips at the corners
+            var towelMat = assets.towel != null ? assets.towel : assets.drapePad;
+            for (int k = 0; k < 4; k++)
+                MakePart("Towel " + k, MeshFactory.Towel(k, volume.SizeX / 2, volume.SizeZ / 2, drapeSeed), towelMat, field).GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            var clipMesh = MeshFactory.TowelClip();
+            for (int i = 0; i < 4; i++)
+            {
+                Vector3 cpos, cdir; MeshFactory.TowelClipPose(i, volume.SizeX / 2, volume.SizeZ / 2, drapeSeed, out cpos, out cdir);
+                var clip = MakePart("Towel clip " + i, clipMesh, assets.packSteel != null ? assets.packSteel : assets.steel, field);
+                clip.transform.localPosition = cpos;
+                clip.transform.localRotation = Quaternion.LookRotation(Vector3.up, cdir); // local +Z (the clip's up) to +Y, local +Y along the diagonal
+                clip.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            }
             BuildLampDomes();
             BuildDressing();
             // modelled instruments (Assets/BovieSim/Models, fitted by ProjectSetup.ImportToolModels) replace the procedural parts they cover
@@ -276,7 +290,7 @@ namespace BovieSim
             {
                 if (d == null || d.mesh == null) continue;
                 var go = MakePart(d.name, d.mesh, d.material != null ? d.material : assets.packSteel != null ? assets.packSteel : assets.steel, field);
-                float y = MeshFactory.DrapeHeight(d.positionMm.x, d.positionMm.z, ax, az, 6f);
+                float y = MeshFactory.DrapeHeight(d.positionMm.x, d.positionMm.z, ax, az, 6f, scenario.vessels != null ? scenario.vessels.seed : 0);
                 go.transform.localPosition = new Vector3(d.positionMm.x, y + 0.3f, d.positionMm.z);
                 go.transform.localRotation = Quaternion.Euler(0, d.yawDeg, 0);
                 go.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;

@@ -317,9 +317,11 @@ namespace BovieSim
         // ---- fenestrated drape (port of src/render/meshes.ts: same noise, same folds) ----------------------
 
         /// <summary>incise film margin adhered to the skin (mm from the aperture edge)</summary>
-        public const float DrapeFilmMm = 5f;
-        /// <summary>absorbent reinforcement zone around the fenestration (mm from the aperture edge)</summary>
-        public const float DrapePadMm = 20f;
+        public const float DrapeFilmMm = 2.5f;
+        /// <summary>flat reinforced zone around the fenestration (mm from the aperture edge), under the towels</summary>
+        public const float DrapePadMm = 36f;
+        /// <summary>towels: folded edge this far outside the skin edge, folded width (outward), extra length past each corner, folded thickness</summary>
+        public const float TowelGapMm = 2.5f, TowelWMm = 55f, TowelLExtraMm = 45f, TowelTMm = 2.4f;
 
         static float Smooth01(float a, float b, float x) { float t = Mathf.Clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); }
 
@@ -339,34 +341,45 @@ namespace BovieSim
         /// radiating from the fenestration where it was pulled taut, the sharp creases left by its fan-folded
         /// packaging, and fine wrinkles; past the table edge it hangs down.
         /// </summary>
-        public static float DrapeHeight(float x, float z, float ax, float az, float rc)
+        public static float DrapeHeight(float x, float z, float ax, float az, float rc) { return DrapeHeight(x, z, ax, az, rc, 0); }
+
+        /// <summary>As above with the scenario seed: the folds, waves, bunching and creases differ per attempt (same noise and layout as the browser build).</summary>
+        public static float DrapeHeight(float x, float z, float ax, float az, float rc, int seed)
         {
             float d = ApertureDist(x, z, ax, az, rc);
+            int sd = seed * 17;
             float y = 0.12f + 0.35f * Smooth01(0, DrapeFilmMm, d) + 0.55f * Smooth01(DrapeFilmMm, DrapePadMm, d);
             y += 1.1f * Mathf.Exp(-((d - 1.2f) / 0.9f) * ((d - 1.2f) / 0.9f));   // rolled hem at the aperture edge
-            float loose = Smooth01(DrapePadMm - 4, 60, d);
-            float far = Smooth01(60, 220, d);
-            float swell = ((float)Noise.Fbm2(x / 70.0, z / 70.0, 3, 5) - 0.5f) * 2;
+            float loose = Smooth01(DrapePadMm - 6, 70, d);
+            float far = Smooth01(70, 240, d);
+            // domain warp so swells and waves are irregular rather than a stationary noise pattern
+            float wx = x + 30 * ((float)Noise.Fbm2(x / 95.0, z / 95.0, 2, sd + 3) - 0.5f), wz = z + 30 * ((float)Noise.Fbm2(x / 95.0 + 7, z / 95.0, 2, sd + 4) - 0.5f);
+            float swell = ((float)Noise.Fbm2(wx / 70.0, wz / 70.0, 3, sd + 5) - 0.5f) * 2;
+            // waves: the sheet lies over the body's contour, so broad parallel waves run across it, bending with the warp
+            float wa = 0.5f + 0.8f * ((float)Noise.Fbm2(x / 300.0, z / 300.0, 1, sd + 6) - 0.5f);
+            float wave = Mathf.Sin((wx * Mathf.Cos(wa) + wz * Mathf.Sin(wa)) / 26 + 2.5f * (float)Noise.Fbm2(x / 60.0, z / 60.0, 2, sd + 7));
             float ang = Mathf.Atan2(z, x);
-            float pleat = Mathf.Sin(ang * 9 + ((float)Noise.Fbm2(x / 40.0, z / 40.0, 2, 11) - 0.5f) * 6) * 0.5f + 0.5f;
-            float wrinkle = ((float)Noise.Fbm2(x / 14.0, z / 14.0, 2, 17) - 0.5f) * 2;
-            y += loose * (swell * (2.5f + 6 * far) + pleat * pleat * (1.2f + 3 * far) + wrinkle * 0.5f);
+            float pleat = Mathf.Sin(ang * 9 + ((float)Noise.Fbm2(x / 40.0, z / 40.0, 2, sd + 11) - 0.5f) * 6) * 0.5f + 0.5f;
+            float wrinkle = ((float)Noise.Fbm2(wx / 14.0, wz / 14.0, 2, sd + 17) - 0.5f) * 2;
+            // local heaps where the fabric bunched when it was laid
+            float bunch = Mathf.Max(0, (float)Noise.Fbm2(x / 48.0, z / 48.0, 2, sd + 29) - 0.56f) * 22;
+            y += loose * (swell * (2.5f + 6 * far) + wave * (0.8f + 2.6f * far) + pleat * pleat * (1.0f + 2.5f * far) + wrinkle * 0.5f + bunch * (0.3f + far));
             // package creases: a slightly skewed grid of sharp ridges (120 x 170 mm fan folds) plus a few random creases
-            const float ca = 0.14f;
+            float ca = 0.14f + (seed % 7) * 0.05f;
             float u1 = x * Mathf.Cos(ca) + z * Mathf.Sin(ca), v1 = -x * Mathf.Sin(ca) + z * Mathf.Cos(ca);
-            float creaseGrid = Ridge(u1 + 37, 120) + Ridge(v1 + 61, 170);
-            float cr = Mathf.Abs((float)Noise.Fbm2(x / 55.0, z / 55.0, 2, 23) - 0.5f) / 0.012f;
+            float creaseGrid = Ridge(u1 + 37 + seed * 13, 120) + Ridge(v1 + 61 + seed * 7, 170);
+            float cr = Mathf.Abs((float)Noise.Fbm2(wx / 55.0, wz / 55.0, 2, sd + 23) - 0.5f) / 0.012f;
             float creaseRand = Mathf.Exp(-cr * cr);
             y += loose * (creaseGrid * 1.8f + creaseRand * 1.2f);
             y -= Mathf.Max(0, d - 260) * 0.5f;
             return y;
         }
 
-        static Vector3 DrapeNormal(float x, float z, float ax, float az, float rc)
+        static Vector3 DrapeNormal(float x, float z, float ax, float az, float rc, int seed)
         {
             const float e = 0.5f;
-            float dx = (DrapeHeight(x + e, z, ax, az, rc) - DrapeHeight(x - e, z, ax, az, rc)) / (2 * e);
-            float dz = (DrapeHeight(x, z + e, ax, az, rc) - DrapeHeight(x, z - e, ax, az, rc)) / (2 * e);
+            float dx = (DrapeHeight(x + e, z, ax, az, rc, seed) - DrapeHeight(x - e, z, ax, az, rc, seed)) / (2 * e);
+            float dz = (DrapeHeight(x, z + e, ax, az, rc, seed) - DrapeHeight(x, z - e, ax, az, rc, seed)) / (2 * e);
             return new Vector3(-dx, 1, -dz).normalized;
         }
 
@@ -397,14 +410,14 @@ namespace BovieSim
         /// Fenestrated drape around the bed aperture, three submeshes for three materials: 0 incise film,
         /// 1 absorbent reinforcement pad, 2 the loose blue drape with folds.
         /// </summary>
-        public static Mesh Drapes(float halfX, float halfZ, float margin = 2.5f)
+        public static Mesh Drapes(float halfX, float halfZ, int seed = 0, float margin = 2.5f)
         {
             float ax = halfX - margin, az = halfZ - margin, rc = 6f;
-            float[] rings = { 0, 0.6f, 1.2f, 1.8f, 2.5f, 3.5f, DrapeFilmMm, 7, 10, 14, 17, DrapePadMm, 23, 26, 29, 32, 35, 38, 41, 44, 48, 52, 56, 60, 65, 70, 76, 82, 88, 95, 102, 110, 118, 127, 137, 148, 160, 175, 190, 210, 235, 260, 290, 330, 400 };
+            float[] rings = { 0, 0.5f, 1.0f, 1.5f, 2.0f, DrapeFilmMm, 3.5f, 5, 7, 10, 14, 18, 22, 26, 30, DrapePadMm, 40, 44, 48, 52, 56, 60, 65, 70, 76, 82, 88, 95, 102, 110, 118, 127, 137, 148, 160, 175, 190, 210, 235, 260, 290, 330, 400 };
             const int n = 256;
             var f = new MeshFactory();
-            System.Func<int, float, Vector3> P = (k, d) => { var q = RingPoint(k % n, n, d, ax, az, rc); return new Vector3(q.x, DrapeHeight(q.x, q.y, ax, az, rc), q.y); };
-            System.Func<int, float, Vector3> N = (k, d) => { var q = RingPoint(k % n, n, d, ax, az, rc); return DrapeNormal(q.x, q.y, ax, az, rc); };
+            System.Func<int, float, Vector3> P = (k, d) => { var q = RingPoint(k % n, n, d, ax, az, rc); return new Vector3(q.x, DrapeHeight(q.x, q.y, ax, az, rc, seed), q.y); };
+            System.Func<int, float, Vector3> N = (k, d) => { var q = RingPoint(k % n, n, d, ax, az, rc); return DrapeNormal(q.x, q.y, ax, az, rc, seed); };
             int part = -1;
             for (int r = 0; r < rings.Length - 1; r++)
             {
@@ -420,6 +433,123 @@ namespace BovieSim
                 }
             }
             return f.Build("Drapes");
+        }
+
+        // ---- towels and towel clips (port of src/render/meshes.ts) --------------------------------------------------
+
+        struct TowelFrame { public float ox, oz, ux, uz, vx, vz, half, len; public bool onTop; }
+
+        /// <summary>Towel k runs along side k of the window (0: +z, 1: +x, 2: -z, 3: -x); u along the side, v outward from its folded edge; slightly misaligned per towel and seed.</summary>
+        static TowelFrame Towel(int k, float ax, float az, int seed)
+        {
+            float wx = ax + TowelGapMm, wz = az + TowelGapMm;
+            System.Func<int, float> r = n => (float)Noise.Fbm2(k * 3.7 + n, seed * 1.3 + n * 0.37, 1, 211 + n) - 0.5f;
+            float rot = r(1) * 0.09f;
+            float bx, bz, bux, buz, half;
+            switch (k)
+            {
+                case 0: bx = 0; bz = wz; bux = 1; buz = 0; half = wx; break;
+                case 1: bx = wx; bz = 0; bux = 0; buz = -1; half = wz; break;
+                case 2: bx = 0; bz = -wz; bux = -1; buz = 0; half = wx; break;
+                default: bx = -wx; bz = 0; bux = 0; buz = 1; half = wz; break;
+            }
+            float c = Mathf.Cos(rot), sn = Mathf.Sin(rot);
+            var f = new TowelFrame();
+            f.ux = bux * c - buz * sn; f.uz = bux * sn + buz * c;
+            f.vx = -f.uz; f.vz = f.ux;
+            float shift = r(2) * 24;
+            f.ox = bx + f.ux * shift + r(3) * 3 * f.vx; f.oz = bz + f.uz * shift + r(3) * 3 * f.vz;
+            f.half = half; f.len = half + TowelLExtraMm; f.onTop = k % 2 == 0;
+            return f;
+        }
+
+        static bool InTowel(int k, float ax, float az, int seed, float x, float z)
+        {
+            var f = Towel(k, ax, az, seed);
+            float dx = x - f.ox, dz = z - f.oz, u = dx * f.ux + dz * f.uz, v = dx * f.vx + dz * f.vz;
+            return u > -f.len && u < f.len && v > 0 && v < TowelWMm;
+        }
+
+        /// <summary>Top-surface height of towel k above the skin plane at local (u, v): its base (the drape, or the towel it overlaps), the folded hem and ripples.</summary>
+        static float TowelHeight(int k, float ax, float az, int seed, float u, float v)
+        {
+            var f = Towel(k, ax, az, seed);
+            float x = f.ox + f.ux * u + f.vx * v, z = f.oz + f.uz * u + f.vz * v;
+            float b = DrapeHeight(x, z, ax, az, 6f, seed) + 0.15f;
+            if (f.onTop && (InTowel(1, ax, az, seed, x, z) || InTowel(3, ax, az, seed, x, z))) b += TowelTMm;
+            float hem = v < TowelTMm ? Mathf.Sqrt(Mathf.Max(0, 1 - ((TowelTMm - v) / TowelTMm) * ((TowelTMm - v) / TowelTMm))) : 1;
+            int sd = seed * 17 + k * 101;
+            float loose = Smooth01(8, 45, v);
+            float ripple = Mathf.Sin(u / 17 + 2.2f * (float)Noise.Fbm2(u / 40.0, v / 40.0, 2, sd + 1)) * (0.35f + 0.5f * loose) * Smooth01(3, 20, v)
+                + ((float)Noise.Fbm2(u / 22.0, v / 22.0, 3, sd + 2) - 0.5f) * 2 * (0.3f + 0.9f * loose)
+                + ((float)Noise.Fbm2(u / 7.0, v / 7.0, 2, sd + 3) - 0.5f) * 0.35f;
+            return b + TowelTMm * hem + Mathf.Max(ripple, -TowelTMm * 0.6f * hem);
+        }
+
+        /// <summary>One of the four folded towels squaring the window on top of the drape (field mm; the two along z lie over the two along x at the corners).</summary>
+        public static Mesh Towel(int k, float halfX, float halfZ, int seed, float margin = 2.5f)
+        {
+            float ax = halfX - margin, az = halfZ - margin;
+            var f = Towel(k, ax, az, seed);
+            float[] vs = { 0, 0.5f, 1.0f, 1.6f, 2.4f, 3.5f, 5, 7, 10, 13, 16, 20, 24, 28, 33, 38, 44, 50, 55 };
+            const int nu = 56;
+            var mf = new MeshFactory();
+            System.Func<int, int, Vector3> P = (iu, iv) => { float u = -f.len + 2 * f.len * iu / nu, v = vs[iv]; return new Vector3(f.ox + f.ux * u + f.vx * v, TowelHeight(k, ax, az, seed, u, v), f.oz + f.uz * u + f.vz * v); };
+            System.Func<int, int, Vector3> N = (iu, iv) =>
+            {
+                float u = -f.len + 2 * f.len * iu / nu, v = vs[iv], e = 0.4f;
+                float du = (TowelHeight(k, ax, az, seed, u + e, v) - TowelHeight(k, ax, az, seed, u - e, v)) / (2 * e);
+                float dv = (TowelHeight(k, ax, az, seed, u, v + e) - TowelHeight(k, ax, az, seed, u, Mathf.Max(0, v - e))) / (2 * e);
+                return new Vector3(-du * f.ux - dv * f.vx, 1, -du * f.uz - dv * f.vz).normalized;
+            };
+            for (int iu = 0; iu < nu; iu++)
+                for (int iv = 0; iv < vs.Length - 1; iv++)
+                {
+                    Vector3 a = P(iu, iv), b = P(iu + 1, iv), c = P(iu + 1, iv + 1), d = P(iu, iv + 1);
+                    mf.TriSmooth(a, c, b, N(iu, iv), N(iu + 1, iv + 1), N(iu + 1, iv), Vector3.up);
+                    mf.TriSmooth(a, d, c, N(iu, iv), N(iu, iv + 1), N(iu + 1, iv + 1), Vector3.up);
+                }
+            // skirts at the two ends and the back edge, down to the base
+            System.Action<Vector3, Vector3, Vector3> skirt = (p0, p1, outward) =>
+            {
+                var q0 = new Vector3(p0.x, p0.y - TowelTMm - 1.2f, p0.z); var q1 = new Vector3(p1.x, p1.y - TowelTMm - 1.2f, p1.z);
+                mf.TriSmooth(p0, p1, q1, outward, outward, outward, outward); mf.TriSmooth(p0, q1, q0, outward, outward, outward, outward);
+            };
+            for (int iv = 0; iv < vs.Length - 1; iv++) { skirt(P(0, iv), P(0, iv + 1), new Vector3(-f.ux, 0, -f.uz)); skirt(P(nu, iv + 1), P(nu, iv), new Vector3(f.ux, 0, f.uz)); }
+            for (int iu = 0; iu < nu; iu++) skirt(P(iu + 1, vs.Length - 1), P(iu, vs.Length - 1), new Vector3(f.vx, 0, f.vz));
+            return mf.Build("Towel" + k);
+        }
+
+        /// <summary>Backhaus towel clip in its own frame: jaw tips at the origin, +Y toward the ring handles, lying in the X-Y plane with +Z up (mm).</summary>
+        public static Mesh TowelClip()
+        {
+            var f = new MeshFactory();
+            foreach (float side in new[] { -1f, 1f })
+            {
+                float zo = side * 0.9f;
+                var path = new List<Vector3>();
+                for (int i = 0; i <= 8; i++) { float t = i / 8f, a = t * Mathf.PI * 0.55f; path.Add(new Vector3(side * (1 - Mathf.Cos(a)) * 9, Mathf.Sin(a) * 9 * 1.6f, zo * t)); }
+                path.Add(new Vector3(side * 9, 24, zo)); path.Add(new Vector3(-side * 7, 62, zo)); path.Add(new Vector3(-side * 9, 70, zo));
+                f.Tube(path, 1.5f, 12);
+                var ring = new List<Vector3>();
+                for (int i = 0; i <= 28; i++) { float a = i / 28f * Mathf.PI * 2; ring.Add(new Vector3(-side * (9 + 1.5f) + Mathf.Cos(a) * 10.5f, 80.5f + Mathf.Sin(a) * 10.5f, zo)); }
+                f.Tube(ring, 1.6f, 10);
+            }
+            f.Box(new Vector3(0, 34, 0), new Vector3(4.2f, 5, 1.6f));
+            return f.Build("TowelClip");
+        }
+
+        /// <summary>Pose of towel clip i (0-3) at the window corners: jaw tips on the corner, handles out along the diagonal; `dir` is the clip's +Y in field space (horizontal).</summary>
+        public static void TowelClipPose(int i, float halfX, float halfZ, int seed, out Vector3 pos, out Vector3 dir, float margin = 2.5f)
+        {
+            float ax = halfX - margin, az = halfZ - margin, wx = ax + TowelGapMm, wz = az + TowelGapMm;
+            float sx = i == 0 || i == 1 ? 1 : -1, sz = i == 0 || i == 3 ? 1 : -1;
+            float jitter = (float)Noise.Fbm2(i * 2.3, seed * 0.7, 1, 307 + i) - 0.5f;
+            float ang = Mathf.Atan2(sz, sx) + jitter * 0.5f;
+            float tipX = sx * wx + Mathf.Cos(ang) * 4, tipZ = sz * wz + Mathf.Sin(ang) * 4;
+            float h = TowelHeight(0, ax, az, seed, 0, 20) - DrapeHeight(0, 0, ax, az, 6f, seed);
+            pos = new Vector3(tipX, DrapeHeight(tipX, tipZ, ax, az, 6f, seed) + 2 * TowelTMm + h * 0.3f + 1.2f, tipZ);
+            dir = new Vector3(Mathf.Cos(ang), 0, Mathf.Sin(ang));
         }
 
         /// <summary>Operating-light head: a flat dome (metres, +Y toward the field) whose face is emissive, so instruments and wet tissue reflect it.</summary>

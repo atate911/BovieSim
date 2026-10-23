@@ -108,8 +108,12 @@ namespace BovieSim.EditorTools
                 // absorbent reinforcement around the fenestration: a little lighter, matte; its own set if provided, else the drape's
                 assets.drapePad = LitMaterial("DrapePad", new Color(0.30f, 0.45f, 0.63f), 0, 0.08f, 0);
                 ApplyTextureSet(assets.drapePad, TextureSet("Pad", new string[0], new string[0]) ?? drapeSet, new Color(0.30f, 0.45f, 0.63f), 1000f / 30f, 0.6f, 0f);
-                // incise film adhered to the skin at the aperture edge: thin glossy plastic
-                assets.drapeFilm = LitMaterial("DrapeFilm", new Color(0.58f, 0.66f, 0.74f), 0, 0.74f, 0.4f);
+                // incise film adhered to the skin at the aperture edge: clear and glossy, the prepped skin showing through
+                assets.drapeFilm = LitMaterial("DrapeFilm", new Color(0.72f, 0.58f, 0.52f), 0, 0.78f, 0.4f);
+                // cotton huck towels squaring the window: a slightly different blue from the drape, matte, fibrous
+                assets.towel = LitMaterial("Towel", new Color(0.27f, 0.44f, 0.59f), 0, 0.06f, 0);
+                var towelSet = TextureSet("Towel", new string[0], new string[0]);
+                ApplyTextureSet(assets.towel, towelSet ?? drapeSet, new Color(0.27f, 0.44f, 0.59f), 1000f / 30f, 0.9f, 0f);
                 // operating-light heads: the emissive face is what steel and wet tissue reflect (~150 000 nits at EV 15)
                 assets.lampDome = LitMaterial("LampDome", new Color(0.82f, 0.82f, 0.82f), 0, 0.35f, 0);
                 assets.lampDome.SetColor("_EmissiveColor", new Color(1f, 0.93f, 0.86f) * 150000f);

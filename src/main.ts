@@ -96,10 +96,13 @@ async function main() {
   };
 
   // fenestrated surgical drape: incise film on the skin, absorbent pad, then the loose blue drape (albedos in linear sRGB)
-  const drape = buildDrapeSet(sx / 2, sz / 2);
-  renderer.addMesh(drape.film, 'drapeFilm', [0.17, 0.24, 0.36], { rough: 0.22, kind: 3 });   // clear adhesive film at the drape edge
+  const drape = buildDrapeSet(sx / 2, sz / 2, scenario.vessels?.seed ?? 0);
+  renderer.addMesh(drape.film, 'drapeFilm', [0.46, 0.31, 0.25], { rough: 0.18, kind: 3 });   // clear incise film: the skin shows through, glossy
   const drapePad = renderer.addMesh(drape.pad, 'drapePad', [0.075, 0.18, 0.37], { rough: 0.95, kind: 2 });
   const drapeDraw = renderer.addMesh(drape.drape, 'drape', [0.06, 0.16, 0.34], { rough: 0.9, kind: 1 });
+  // four cotton towels square the window on top of the drape, held by Backhaus clips at the corners
+  const towelDraws = drape.towels.map((t, i) => renderer.addMesh(t, 'towel' + i, [0.065, 0.17, 0.30], { rough: 0.95, kind: 4 }));
+  const clipDraws = drape.clips.map((c, i) => renderer.addMesh(c.mesh, 'towelClip' + i, [0.62, 0.62, 0.63], { rough: 0.5, metallic: 1, model: c.model }));
   // satin-finished stainless (f0 of steel) and off-white moulded plastic
   const STEEL: [number, number, number] = [0.62, 0.62, 0.63];
   const pencilBody = renderer.addMesh(buildPencilBody(), 'pencilBody', [0.92, 0.86, 0.72], { rough: 0.45 });
@@ -117,7 +120,8 @@ async function main() {
   void renderer.loadTextures([
     { slot: 'drape', draws: [drapeDraw], tileMm: 30, tintIfGrey: [0.06, 0.16, 0.34], normalStrength: 1.8 },
     { slot: 'pad', draws: [drapePad], tileMm: 30, tintIfGrey: [0.075, 0.18, 0.37], fallbackSlot: 'drape', normalStrength: 1.8 },
-    { slot: 'steel', draws: [blade, forcepsA, forcepsB, frazier, hookMesh], tileMm: 12, normalStrength: 0.6 },
+    { slot: 'towel', draws: towelDraws, tileMm: 30, tintIfGrey: [0.065, 0.17, 0.30], fallbackSlot: 'pad', normalStrength: 1.8 },
+    { slot: 'steel', draws: [blade, forcepsA, forcepsB, frazier, hookMesh, ...clipDraws], tileMm: 12, normalStrength: 0.6 },
     { slot: 'plastic', draws: [pencilBody], tileMm: 20, tintIfGrey: [0.92, 0.86, 0.72] },
   ]);
   const hookModel = mat4.create();

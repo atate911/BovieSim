@@ -11,7 +11,8 @@ committed; keep the licence notes with them.
 |---|---|---|---|
 | `drape` | the loose blue nonwoven drape | 30 mm | albedo, normal, roughness |
 | `pad` | absorbent reinforcement around the fenestration (falls back to `drape`) | 30 mm | albedo, normal, roughness |
-| `steel` | forceps, Frazier suction, skin hook, blade electrode (satin stainless) | 12 mm | albedo, normal, roughness |
+| `towel` | the four cotton towels squaring the window (falls back to `pad`) | 30 mm | albedo, normal, roughness |
+| `steel` | forceps, Frazier suction, skin hook, blade electrode, towel clips (satin stainless) | 12 mm | albedo, normal, roughness |
 | `plastic` | Bovie pencil body (off-white moulded plastic) | 20 mm | albedo, normal, roughness |
 
 Only the **albedo** (colour) map is required. A missing normal map is derived from the albedo's luminance;
@@ -33,7 +34,7 @@ them in `public/textures/manifest.json` if so). Restart `npm run dev` or reload;
 ## Unity client
 
 Put the files in `Assets/BovieSim/Generated/Downloads/` named `<Slot>_Color.jpg`, `<Slot>_NormalGL.jpg`,
-`<Slot>_Roughness.jpg` with `Slot` one of `Drape`, `Pad`, `Steel`, `Plastic` (PNG works too), then run
+`<Slot>_Roughness.jpg` with `Slot` one of `Drape`, `Pad`, `Towel`, `Steel`, `Plastic` (PNG works too), then run
 *Bovie Sim > Set Up Project*. Your files win over the CC0 downloads the setup would otherwise fetch (fabric from
 ambientCG for the drape, brushed metal for the instruments); a missing normal map is derived from the colour.
 

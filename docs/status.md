@@ -90,6 +90,9 @@
 - Ray tracing (Unity, DXR): shadows + AO / + reflections / + GI and subsurface by tier, Auto from the detail level;
   HDRP asset and DirectX 12 configured by Set Up Project; tissue bricks as dynamic ray-tracing geometry.
 - Colour: PBR Neutral tone mapping and sRGB output in the browser build; sRGB-correct scenario skin tint in Unity.
+- Squared field: four towels with Backhaus clips over a seeded, irregular drape (warped swells, waves, bunching,
+  creases); skin line network, mottling and sponge-stroke prep film. Generated instrument models (pencil with
+  switches, electrodes, Frazier, hook) and a purchased forceps pack import through Set Up Project.
 - Texture maps: optional albedo / normal / roughness sets per slot (drape, pad, steel, plastic) in both clients,
   CC0 downloads (`npm run fetch:textures`, Set Up Project) or user-made (docs/textures.md); normal maps derived
   from colour when absent. Procedural fallbacks: satin brushed steel reflecting the lit field and lamp domes,
