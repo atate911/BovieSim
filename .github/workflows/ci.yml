@@ -7,10 +7,10 @@ on:
 jobs:
   web:
     name: Browser build (type-check, physics tests, scenario sync)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -24,9 +24,10 @@ jobs:
 
   unity-check:
     name: Unity client (shaders, C# compile, EditMode tests under Mono)
-    runs-on: ubuntu-latest
+    # pinned: Mono 6.14 (newer images) rejects the Unity 2021.3 module reference assemblies; 24.04 ships Mono 6.8
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Mono and glslang
         run: |
           sudo apt-get update
