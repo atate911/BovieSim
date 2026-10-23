@@ -90,7 +90,13 @@ fn fs_main(in: VSOut) -> @location(0) vec4f {
       N = normalize(N + (mat.model * vec4f(pert * mat.tex.y, 0.0)).xyz);
     }
     f0 = mix(vec3f(0.04), albedo, metallic);
-    if (kind > 0.5 && kind < 2.5) { sheen = 0.35; }
+    if (kind > 0.5 && kind < 2.5) {
+      // cloth tiles are often painted flat: keep a little procedural fibre mottling and the sheen on top of them
+      let fib = fbm3(vec3f(lp.x * 1.6, lp.z * 0.35, 3.0), 3);
+      let fib2 = fbm3(lp * 0.5, 3);
+      albedo = albedo * (0.9 + 0.2 * fib) * (0.94 + 0.12 * fib2);
+      sheen = 0.35;
+    }
   } else if (kind > 0.5 && kind < 1.5) {
     // SMS nonwoven drape: fibre streaks at three scales, small embossed bonding dots on a 1.6 mm grid, soft wrinkles, velvet sheen
     let fib = fbm3(vec3f(lp.x * 1.6, lp.z * 0.35, 3.0), 3);

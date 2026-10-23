@@ -625,18 +625,202 @@ namespace BovieSim.EditorTools
                 downloadLog.AppendLine("| Field dressing | " + pl.key + " (instrument pack) | " + ModelsDir + " | pack licence | pack author | fitted flat, laid on the drape |");
             }
             assets.dressing = dressing.ToArray();
+            ImportToolModels(assets);
             Debug.Log("[Bovie Sim] Instrument pack: " + string.Join(", ", new System.Collections.Generic.List<string>(meshes.Keys).ToArray()) + (tweezers != null ? "; forceps from the pack" : "; no tweezers mesh, procedural forceps") + "; " + dressing.Count + " items on the drape.");
         }
 
-        static Texture2D FindPackTexture(string name)
+        // ---- modelled instruments: pencil.fbx, frazier.fbx, skin_hook.fbx, blade/needle/ball.fbx ------------------
+
+        /// <summary>Projected +Y length (mm) of each modelled instrument, from the asset pack's README; fixes the scale whatever units the file uses.</summary>
+        static readonly System.Collections.Generic.Dictionary<string, float> ToolLengthMm = new System.Collections.Generic.Dictionary<string, float>
+        {
+            { "pencil", 224.5f }, { "frazier", 115f }, { "skin_hook", 160f }, { "blade", 60f }, { "needle", 45f }, { "ball", 43f },
+        };
+
+        sealed class NodeMesh { public Mesh mesh; public Matrix4x4 toRoot; public string[] materialNames; public string path; }
+
+        /// <summary>Model file named `name` (any extension Unity imports) anywhere under Models.</summary>
+        static string FindModelFile(string name)
+        {
+            foreach (var guid in AssetDatabase.FindAssets(name + " t:Model", new[] { ModelsDir }))
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (string.Equals(Path.GetFileNameWithoutExtension(path), name, StringComparison.OrdinalIgnoreCase)) return path;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// A node of an imported model with its mesh, its transform relative to the model root (this carries Unity's
+        /// axis and unit conversion, so the mesh ends up in the Y-up frame the file was authored in) and its material
+        /// names in submesh order. `nodeName` null takes the first mesh.
+        /// </summary>
+        static NodeMesh LoadNode(string modelPath, string nodeName)
+        {
+            var root = AssetDatabase.LoadAssetAtPath<GameObject>(modelPath);
+            if (root == null) return null;
+            foreach (var mf in root.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (mf.sharedMesh == null) continue;
+                if (nodeName != null && !string.Equals(mf.name, nodeName, StringComparison.OrdinalIgnoreCase) && !string.Equals(mf.sharedMesh.name, nodeName, StringComparison.OrdinalIgnoreCase)) continue;
+                var mr = mf.GetComponent<MeshRenderer>();
+                var names = mr != null ? Array.ConvertAll(mr.sharedMaterials, m => m != null ? m.name : "") : new string[0];
+                return new NodeMesh { mesh = mf.sharedMesh, toRoot = root.transform.worldToLocalMatrix * mf.transform.localToWorldMatrix, materialNames = names, path = modelPath };
+            }
+            return null;
+        }
+
+        static readonly System.Collections.Generic.Dictionary<string, Material> packMaterials = new System.Collections.Generic.Dictionary<string, Material>();
+
+        /// <summary>
+        /// HDRP Lit material for a pack material name from `models/textures/&lt;name&gt;_albedo/_normal/_roughness/_metallic.png`
+        /// in the model's own UVs; without those files, the sim's own material for that part.
+        /// </summary>
+        static Material PackMaterial(string name, SimAssets assets)
+        {
+            string key = (name ?? "").ToLowerInvariant();
+            Material cached; if (packMaterials.TryGetValue(key, out cached) && cached != null) return cached;
+            Material fallback = key == "plastic" ? assets.pencilBody : key == "yellow" ? assets.pencilCutButton : key == "blue" ? assets.pencilCoagButton : key == "cable" ? LitMaterial("PackCable", new Color(0.92f, 0.92f, 0.90f), 0, 0.4f, 0) : assets.packSteel != null ? assets.packSteel : assets.steel;
+            Texture2D albedo = FindPackTexture(key + "_albedo", true), normal = FindPackTexture(key + "_normal", false, true), rough = FindPackTexture(key + "_roughness", false), metal = FindPackTexture(key + "_metallic", false);
+            if (albedo == null) { packMaterials[key] = fallback; return fallback; }
+            bool metallic = key == "steel";
+            var m = LitMaterial("PackModel_" + key, Color.white, metallic ? 1 : 0, 0.5f, 0);
+            m.SetTexture("_BaseColorMap", albedo);
+            if (normal != null) { m.SetTexture("_NormalMap", normal); m.SetFloat("_NormalScale", 1f); }
+            if (rough != null)
+            {
+                var rp = rough.GetPixels(); var mp = metal != null && metal.width == rough.width && metal.height == rough.height ? metal.GetPixels() : null;
+                var mask = new Color[rp.Length];
+                for (int i = 0; i < rp.Length; i++) mask[i] = new Color(mp != null ? mp[i].r : (metallic ? 1 : 0), 1, 1, 1 - rp[i].r);
+                m.SetTexture("_MaskMap", SaveTexture("PackModel_" + key + "_Mask", mask, rough.width, rough.height, true, false));
+                m.SetFloat("_SmoothnessRemapMin", 0); m.SetFloat("_SmoothnessRemapMax", 1); m.SetFloat("_AORemapMin", 0); m.SetFloat("_AORemapMax", 1);
+            }
+            m.SetFloat("_UVBase", 0); // the model's own UVs
+            HDMaterial.ValidateMaterial(m);
+            EditorUtility.SetDirty(m);
+            packMaterials[key] = m;
+            return m;
+        }
+
+        /// <summary>
+        /// A modelled part in the sim's frame: the node transform baked in (Unity's axis/unit conversion included), scaled
+        /// so the +Y extent equals the known length (or by `fixedScale` for parts that must match another, such as the
+        /// pencil buttons), optionally mirrored in X, with submeshes dropped or cropped below a height (the pencil's own
+        /// electrode makes way for the swappable blade / needle / ball). If the file's long axis is not Y after baking,
+        /// the longest axis is turned onto +Y with its tip at the origin and a warning says so.
+        /// </summary>
+        static ToolModel ToolPart(NodeMesh nm, SimAssets assets, string label, float expectedLengthMm, float fixedScale, bool mirrorX, string dropMaterial, string cropMaterial, float cropBelowMm)
+        {
+            float unused; return ToolPart(nm, assets, label, expectedLengthMm, fixedScale, mirrorX, dropMaterial, cropMaterial, cropBelowMm, out unused);
+        }
+
+        static ToolModel ToolPart(NodeMesh nm, SimAssets assets, string label, float expectedLengthMm, float fixedScale, bool mirrorX, string dropMaterial, string cropMaterial, float cropBelowMm, out float scaleUsed)
+        {
+            var src = nm.mesh;
+            var v = src.vertices; var n = src.normals; var uv = src.uv;
+            bool hasN = n != null && n.Length == v.Length;
+            var pv = new Vector3[v.Length]; var pn = new Vector3[v.Length];
+            for (int i = 0; i < v.Length; i++) { pv[i] = nm.toRoot.MultiplyPoint3x4(v[i]); pn[i] = hasN ? nm.toRoot.MultiplyVector(n[i]).normalized : Vector3.up; }
+            // bounds and the long axis
+            Vector3 mn = pv[0], mx = pv[0]; foreach (var p in pv) { mn = Vector3.Min(mn, p); mx = Vector3.Max(mx, p); }
+            var size = mx - mn;
+            if (size.y < Mathf.Max(size.x, size.z) * 0.999f)
+            {
+                int L = size.x >= size.z ? 0 : 2;
+                Debug.LogWarning("[Bovie Sim] " + label + ": long axis came in as " + (L == 0 ? "X" : "Z") + ", turning it onto +Y (tip assumed at the low end).");
+                for (int i = 0; i < v.Length; i++)
+                {
+                    var p = pv[i]; var q = pn[i];
+                    pv[i] = L == 0 ? new Vector3(p.y, p.x, p.z) : new Vector3(p.x, p.z, -p.y);
+                    pn[i] = L == 0 ? new Vector3(q.y, q.x, q.z) : new Vector3(q.x, q.z, -q.y);
+                }
+                mn = pv[0]; mx = pv[0]; foreach (var p in pv) { mn = Vector3.Min(mn, p); mx = Vector3.Max(mx, p); }
+                size = mx - mn;
+            }
+            float scale = fixedScale > 0 ? fixedScale : expectedLengthMm / Mathf.Max(size.y, 1e-6f);
+            scaleUsed = scale;
+            bool flip = mirrorX;
+            for (int i = 0; i < v.Length; i++)
+            {
+                var p = pv[i] * scale; if (fixedScale <= 0) p.y -= mn.y * scale;
+                if (mirrorX) { p.x = -p.x; pn[i].x = -pn[i].x; }
+                pv[i] = p;
+            }
+            // submeshes: keep / crop / drop by material name
+            var mats = new System.Collections.Generic.List<Material>();
+            var subs = new System.Collections.Generic.List<int[]>();
+            for (int k = 0; k < src.subMeshCount; k++)
+            {
+                string mname = k < nm.materialNames.Length ? nm.materialNames[k] : "";
+                if (dropMaterial != null && string.Equals(mname, dropMaterial, StringComparison.OrdinalIgnoreCase)) continue;
+                var tris = src.GetTriangles(k);
+                bool crop = cropMaterial != null && string.Equals(mname, cropMaterial, StringComparison.OrdinalIgnoreCase);
+                var kept = new System.Collections.Generic.List<int>(tris.Length);
+                for (int t = 0; t + 2 < tris.Length; t += 3)
+                {
+                    int a = tris[t], b = tris[t + 1], c = tris[t + 2];
+                    if (crop && pv[a].y < cropBelowMm && pv[b].y < cropBelowMm && pv[c].y < cropBelowMm) continue;
+                    if (flip) { kept.Add(a); kept.Add(c); kept.Add(b); } else { kept.Add(a); kept.Add(b); kept.Add(c); }
+                }
+                if (kept.Count == 0) continue;
+                subs.Add(kept.ToArray()); mats.Add(PackMaterial(mname, assets));
+            }
+            var m = new Mesh { name = label };
+            if (v.Length > 65000) m.indexFormat = IndexFormat.UInt32;
+            m.vertices = pv; m.normals = pn; if (uv != null && uv.Length == v.Length) m.uv = uv;
+            m.subMeshCount = subs.Count;
+            for (int k = 0; k < subs.Count; k++) m.SetTriangles(subs[k], k);
+            if (!hasN) m.RecalculateNormals();
+            m.RecalculateTangents(); m.RecalculateBounds();
+            return new ToolModel { mesh = SaveMesh(m, label), materials = mats.ToArray() };
+        }
+
+        /// <summary>The six modelled instruments of docs/textures.md: each replaces its procedural part when its file exists.</summary>
+        static void ImportToolModels(SimAssets assets)
+        {
+            packMaterials.Clear();
+            assets.pencilModel = new ToolModel(); assets.pencilCutModel = new ToolModel(); assets.pencilCoagModel = new ToolModel();
+            assets.bladeModel = new ToolModel(); assets.needleModel = new ToolModel(); assets.ballModel = new ToolModel(); assets.frazierModel = new ToolModel(); assets.skinHookModel = new ToolModel();
+            var found = new System.Collections.Generic.List<string>();
+            string p = FindModelFile("pencil");
+            if (p != null)
+            {
+                var body = LoadNode(p, "pencil");
+                if (body != null)
+                {
+                    // the pencil's own electrode (steel submesh below the nose at 26 mm) makes way for the swappable blade / needle / ball
+                    float bodyScale;
+                    assets.pencilModel = ToolPart(body, assets, "Model_PencilBody", ToolLengthMm["pencil"], 0, false, null, "steel", 26f, out bodyScale);
+                    var cut = LoadNode(p, "pencil_cut_button"); var coag = LoadNode(p, "pencil_coag_button");
+                    if (cut != null) assets.pencilCutModel = ToolPart(cut, assets, "Model_PencilCut", 0, bodyScale, false, null, null, 0);
+                    if (coag != null) assets.pencilCoagModel = ToolPart(coag, assets, "Model_PencilCoag", 0, bodyScale, false, null, null, 0);
+                    found.Add("pencil" + (cut != null && coag != null ? " with switches" : " (switch meshes missing: procedural switches)"));
+                }
+            }
+            // the Frazier is mirrored so its handle bends to the same side as the procedural one
+            var simple = new[] { new { file = "frazier", mirror = true }, new { file = "skin_hook", mirror = false }, new { file = "blade", mirror = false }, new { file = "needle", mirror = false }, new { file = "ball", mirror = false } };
+            foreach (var t in simple)
+            {
+                string path = FindModelFile(t.file); if (path == null) continue;
+                var node = LoadNode(path, null); if (node == null) continue;
+                var part = ToolPart(node, assets, "Model_" + t.file, ToolLengthMm[t.file], 0, t.mirror, null, null, 0);
+                switch (t.file) { case "frazier": assets.frazierModel = part; break; case "skin_hook": assets.skinHookModel = part; break; case "blade": assets.bladeModel = part; break; case "needle": assets.needleModel = part; break; default: assets.ballModel = part; break; }
+                found.Add(t.file);
+            }
+            if (found.Count > 0) { Debug.Log("[Bovie Sim] Modelled instruments: " + string.Join(", ", found.ToArray())); downloadLog.AppendLine("| Modelled instruments | " + string.Join(", ", found.ToArray()) + " | " + ModelsDir + " | generated for this project | you | fitted to the sim frame by Set Up Project |"); }
+        }
+
+        static Texture2D FindPackTexture(string name, bool srgb, bool normal = false)
         {
             foreach (var guid in AssetDatabase.FindAssets(name + " t:Texture2D", new[] { ModelsDir }))
             {
                 string path = AssetDatabase.GUIDToAssetPath(guid);
-                if (Path.GetFileNameWithoutExtension(path).ToLowerInvariant() == name) return ImportTexture(path, false, false);
+                if (string.Equals(Path.GetFileNameWithoutExtension(path), name, StringComparison.OrdinalIgnoreCase)) return ImportTexture(path, normal, srgb);
             }
             return null;
         }
+
+        static Texture2D FindPackTexture(string name) { return FindPackTexture(name, false); }
 
         /// <summary>Satin stainless for the pack meshes: the pack's scratch map (in its own UVs) gives scratched smoothness and a derived normal map.</summary>
         static Material PackSteelMaterial(Texture2D scratches)

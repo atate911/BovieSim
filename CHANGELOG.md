@@ -31,7 +31,9 @@ after updating (the editor offers it automatically).
   Adson forceps (the pack's one-piece tweezers are split into two arms, straightened and fitted to the sim's
   frame so they still open and close) and lays its scissors, haemostat and scalpel on the drape beside the
   field; the pack's scratch map drives scratched smoothness and a normal map on its steel. Procedural teeth now
-  face each other.
+  face each other. Generated models of the pencil (with its two switches), blade, needle and ball electrodes,
+  Frazier suction and skin hook (`pencil.fbx`, `blade.fbx`, …) replace the procedural ones, fitted by real length
+  with their own PBR maps.
 - **Colour rendering.** Browser build: Khronos PBR Neutral tone mapping (blood stays red, fat stays yellow) with a
   proper sRGB transfer curve and a lighter vignette; near-white 4300 K light with the room's cool ambient and
   blue drape bounce. Unity: ambient occlusion at wound scale (1.5 cm, not 25 cm); the scenario skin-tone and

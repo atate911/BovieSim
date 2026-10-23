@@ -59,7 +59,7 @@ namespace BovieSim
         // ---- scene objects
         Transform field;
         GameObject pencil, forcepsA, forcepsB, frazier, hookGo, drapes;
-        MeshFilter electrodeFilter; Mesh bladeMesh, needleMesh, ballMesh;
+        MeshFilter electrodeFilter; MeshRenderer electrodeRenderer; Mesh bladeMesh, needleMesh, ballMesh; Material[] bladeMats, needleMats, ballMats;
         MeshRenderer cutButton, coagButton; MaterialPropertyBlock buttonMpb;
         Light arcLight; DepthOfField dof;
         // render-side effects driven by detail level and the ray-tracing tier (runtime copies of the volume profile)
@@ -231,20 +231,26 @@ namespace BovieSim
             drapes.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
             BuildLampDomes();
             BuildDressing();
+            // modelled instruments (Assets/BovieSim/Models, fitted by ProjectSetup.ImportToolModels) replace the procedural parts they cover
             pencil = new GameObject("Bovie pencil"); pencil.transform.SetParent(field, false);
-            MakePart("Body", MeshFactory.PencilBody(), assets.pencilBody, pencil.transform);
-            cutButton = MakePart("Cut button", MeshFactory.PencilButton(44, 58), assets.pencilCutButton, pencil.transform).GetComponent<MeshRenderer>();
-            coagButton = MakePart("Coag button", MeshFactory.PencilButton(62, 76), assets.pencilCoagButton, pencil.transform).GetComponent<MeshRenderer>();
-            bladeMesh = MeshFactory.Blade(); needleMesh = MeshFactory.Needle(); ballMesh = MeshFactory.Ball();
-            electrodeFilter = MakePart("Electrode", bladeMesh, assets.steel, pencil.transform).GetComponent<MeshFilter>();
+            ToolModel pb = assets.pencilModel, pc = assets.pencilCutModel, pg = assets.pencilCoagModel;
+            if (pb != null && pb.IsSet) MakePart("Body", pb.mesh, pb.materials, pencil.transform); else MakePart("Body", MeshFactory.PencilBody(), assets.pencilBody, pencil.transform);
+            cutButton = (pc != null && pc.IsSet ? MakePart("Cut button", pc.mesh, pc.materials, pencil.transform) : MakePart("Cut button", MeshFactory.PencilButton(44, 58), assets.pencilCutButton, pencil.transform)).GetComponent<MeshRenderer>();
+            coagButton = (pg != null && pg.IsSet ? MakePart("Coag button", pg.mesh, pg.materials, pencil.transform) : MakePart("Coag button", MeshFactory.PencilButton(62, 76), assets.pencilCoagButton, pencil.transform)).GetComponent<MeshRenderer>();
+            var steelOnly = new[] { assets.steel };
+            bladeMesh = assets.bladeModel != null && assets.bladeModel.IsSet ? assets.bladeModel.mesh : MeshFactory.Blade(); bladeMats = assets.bladeModel != null && assets.bladeModel.IsSet ? assets.bladeModel.materials : steelOnly;
+            needleMesh = assets.needleModel != null && assets.needleModel.IsSet ? assets.needleModel.mesh : MeshFactory.Needle(); needleMats = assets.needleModel != null && assets.needleModel.IsSet ? assets.needleModel.materials : steelOnly;
+            ballMesh = assets.ballModel != null && assets.ballModel.IsSet ? assets.ballModel.mesh : MeshFactory.Ball(); ballMats = assets.ballModel != null && assets.ballModel.IsSet ? assets.ballModel.materials : steelOnly;
+            var electrodeGo = MakePart("Electrode", bladeMesh, bladeMats, pencil.transform);
+            electrodeFilter = electrodeGo.GetComponent<MeshFilter>(); electrodeRenderer = electrodeGo.GetComponent<MeshRenderer>();
             // arm A sits on the -Z side of the jaw centre and arm B on +Z. Each arm's local +Z (HandPose: cross(x, arm axis))
             // points away from the jaw centre, so arm A's teeth go to local -Z and arm B's to local +Z to face each other.
             // An instrument pack in Assets/BovieSim/Models replaces the procedural arms (ProjectSetup.ImportInstrumentPack).
             bool packForceps = assets.forcepsArmA != null && assets.forcepsArmB != null && assets.packSteel != null;
             forcepsA = MakePart("Adson forceps A", packForceps ? assets.forcepsArmA : MeshFactory.ForcepsArm(forceps.armLength, false, 1), packForceps ? assets.packSteel : assets.steel, field);
             forcepsB = MakePart("Adson forceps B", packForceps ? assets.forcepsArmB : MeshFactory.ForcepsArm(forceps.armLength, true, 2), packForceps ? assets.packSteel : assets.steel, field);
-            frazier = MakePart("Frazier suction", MeshFactory.Frazier(), assets.steel, field);
-            hookGo = MakePart("Skin hook", MeshFactory.SkinHook(), assets.steel, field);
+            frazier = assets.frazierModel != null && assets.frazierModel.IsSet ? MakePart("Frazier suction", assets.frazierModel.mesh, assets.frazierModel.materials, field) : MakePart("Frazier suction", MeshFactory.Frazier(), assets.steel, field);
+            hookGo = assets.skinHookModel != null && assets.skinHookModel.IsSet ? MakePart("Skin hook", assets.skinHookModel.mesh, assets.skinHookModel.materials, field) : MakePart("Skin hook", MeshFactory.SkinHook(), assets.steel, field);
             foreach (var go in new[] { pencil, forcepsA, forcepsB, frazier, hookGo })
                 foreach (var r in go.GetComponentsInChildren<MeshRenderer>()) r.shadowCastingMode = ShadowCastingMode.On;
             buttonMpb = new MaterialPropertyBlock();
@@ -520,7 +526,8 @@ namespace BovieSim
                 pencil.SetActive(tool.visible);
                 if (tool.visible)
                 {
-                    electrodeFilter.sharedMesh = pencilElectrode == ElectrodeType.Needle ? needleMesh : pencilElectrode == ElectrodeType.Ball ? ballMesh : bladeMesh;
+                    var wantMesh = pencilElectrode == ElectrodeType.Needle ? needleMesh : pencilElectrode == ElectrodeType.Ball ? ballMesh : bladeMesh;
+                    if (electrodeFilter.sharedMesh != wantMesh) { electrodeFilter.sharedMesh = wantMesh; electrodeRenderer.sharedMaterials = pencilElectrode == ElectrodeType.Needle ? needleMats : pencilElectrode == ElectrodeType.Ball ? ballMats : bladeMats; }
                     // mesh frame: +Y along the handle axis, +Z the blade face normal (includes roll)
                     HandPose.Apply(pencil.transform, tool.tip + DisplayOffset(tool.tip), tool.axis, tool.ndir);
                 }

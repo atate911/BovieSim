@@ -81,6 +81,23 @@ may not be redistributed) and run *Bovie Sim > Set Up Project*. The setup matche
 | anything ending in `_low` | skipped (LOD meshes) | |
 
 Scale is taken from each item's real length, so it does not matter whether the file is in metres,
-centimetres or Blender units. The Bovie pencil, Frazier suction and skin hook stay procedural until a model
-of each exists; a mesh named `frazier`, `skin_hook` or `pencil` is the hook for adding them. The browser
-build does not load models.
+centimetres or Blender units.
+
+### The modelled instruments (generated asset pack)
+
+One file per instrument, tip at the origin, handle along +Y, buttons or vent on +Z, with maps in
+`models/textures/<material>_albedo|normal|roughness|metallic.png` for the materials `steel`, `plastic`,
+`cable`, `yellow`, `blue`. Put the whole `models/` folder (FBX files and the `textures` sub-folder) under
+`Assets/BovieSim/Models/` and run Set Up Project. Only the FBX files are read; Unity does not import GLB.
+
+| File | Used as | Fit |
+|---|---|---|
+| `pencil.fbx` (nodes `pencil`, `pencil_cut_button`, `pencil_coag_button`) | Bovie pencil body and switches | scaled to 224.5 mm; its built-in electrode (`steel` submesh below 26 mm) is cropped off so the blade, needle and ball swap in; the switches glow yellow and blue when pressed |
+| `blade.fbx`, `needle.fbx`, `ball.fbx` | electrodes (B, N, O) | scaled to 60 / 45 / 43 mm, shaft into the pencil nose |
+| `frazier.fbx` | Frazier suction | scaled to 115 mm, mirrored in X so the handle bends to the same side as the procedural one |
+| `skin_hook.fbx` | skin hook | scaled to 160 mm, hook's lowest point at the origin |
+
+Each material becomes an HDRP Lit material from the pack's maps in the model's own UVs (roughness and
+metallic packed into the mask map). The `textures/` tiles and `unity-downloads/` copies install as described
+above; the `coated_blade`, `cable` and `tubing` tiles are not used by a slot yet. The browser build does not
+load models.
