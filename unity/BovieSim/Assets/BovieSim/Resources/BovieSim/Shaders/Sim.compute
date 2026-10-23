@@ -1,0 +1,704 @@
+// Bovie Sim electrothermal, bleeding and mechanics-probe kernels. Port of src/physics/wgsl/sim.wgsl.
+#pragma kernel SeedPotential
+#pragma kernel RelaxRed
+#pragma kernel RelaxBlack
+#pragma kernel Heating
+#pragma kernel Generator
+#pragma kernel Bioheat
+#pragma kernel SurfaceHeight
+#pragma kernel BloodSource
+#pragma kernel BloodDrops
+#pragma kernel BloodFlow
+#pragma kernel BloodCommit
+#pragma kernel CoaptMark
+#pragma kernel ConstraintProbe
+#pragma kernel Pick
+#pragma kernel Slice
+
+#include "SimCommon.hlsl"
+
+// ---- parameters (set from PhysicsPipeline.cs; same meaning as SimParams in the WGSL) ----------
+int4 _Box0;        // field subdomain origin i,j,k and size S
+int4 _TBox0;       // thermal box origin
+int4 _TBox1;       // thermal box size
+float4 _Tip;       // electrode tip (mm), w = arc reach (mm)
+float4 _Axis;      // unit axis tip->handle, w = electrode length (mm)
+float4 _WDir;      // blade width direction, w = half width (mm)
+float4 _NDir;      // blade normal direction, w = half thickness (mm)
+float4 _Gen;       // setting W, zLo, zHi, vMaxRms
+float4 _Gen2;      // vapFactor, active, electrode type (0 blade 1 needle 2 ball 3 forceps), sigmaScale
+float4 _NF;        // x near-field fraction
+float4 _DT;        // dt (s), time (s), heat limit (K/substep), contact tolerance (mm)
+float4 _Ray;       // pick ray origin (mm)
+float4 _RayDir;    // pick ray direction, w = max distance (mm)
+float4 _SliceO;    // slice origin (mm), w = width (mm)
+float4 _SliceU;    // slice horizontal axis, w = pixel width
+float4 _SliceV;    // slice vertical axis, w = pixel height
+float4 _SliceParams; // depth (mm), mode
+int4 _WBox0;       // wound box origin, w = substeps this frame
+int4 _WBox1;       // wound box size
+float4 _Tool2;     // secondary tool point A (mm), w = radius (mm)
+float4 _Tool2B;    // secondary tool point B (mm), w = mode (0 none, 1 grasp, 2 suction)
+int _DropCount;
+int _SegCount;
+
+// ---- buffers ------------------------------------------------------------------------------------
+StructuredBuffer<float4> _Props;        // 2 per tissue: (sigma, k, rho, c), (wb, water, Ea/R, lnA)
+RWStructuredBuffer<uint> _State;        // layout: see SimState.cs
+RWStructuredBuffer<uint> _Cells;
+RWStructuredBuffer<float> _Occ;
+RWStructuredBuffer<float> _Water;
+RWStructuredBuffer<float> _Omega;
+RWStructuredBuffer<float> _Heat;
+StructuredBuffer<float> _Src;           // potential (heating, slice modes 4-5) or temperature (bioheat, slice)
+RWStructuredBuffer<float> _Dst;         // potential (seed/relax) or next temperature (bioheat)
+RWStructuredBuffer<float4> _Blood;      // per column: h (mm), age (s), surface Y (mm), hNext
+StructuredBuffer<float4> _Drops;        // droplet landings: xyz (mm), w = microlitres
+StructuredBuffer<float4> _Segs;         // 2 per lattice constraint: a.xyz + throughTissue, b.xyz
+RWStructuredBuffer<uint2> _Probes;      // per constraint: flags (1 severed, 2 no tissue), asuint(omegaMax)
+RWTexture2D<float4> _SliceTex;
+
+// state slots (uint indices into _State)
+#define ST_PSUM 0
+#define ST_CONTACT 1
+#define ST_VAP 2
+#define ST_WETSUM 3
+#define ST_Z 4
+#define ST_P 5
+#define ST_V2 6
+#define ST_IRMS 7
+#define ST_HIT 8
+#define ST_HITCELL 12
+#define ST_HITIDX 13
+#define ST_MAXTEMP 16
+#define ST_CARBON 17
+#define ST_COAG 18
+#define ST_MUSCLE 19
+#define ST_BLOODLOST 20
+#define ST_EXPART 21
+#define ST_EXPVEN 22
+#define ST_SEALED 23
+#define ST_CHARPLUG 24
+#define ST_REBLEED 25
+#define ST_POOL 26
+#define ST_POOLTIP 27
+#define ST_BLEEDN 28
+#define ST_BLEEDPTS 32
+
+static const float SIGMA_BLOOD = 0.7;
+static const float BLOOD_RHO_C = 1050.0 * 3617.0;
+static const float L_VAP = 2.26e6;
+static const float T_BOIL = 100.0;
+static const float T_CARBON = 220.0;
+static const float SEED_A = 0.35;
+static const float SOR_OMEGA = 1.5;
+static const float BLOOD_FILM = 0.05;
+static const float BLOOD_VISC = 0.35;
+static const float CLOT_AGE = 60.0;
+
+struct TProp { float sigma, k, rho, c, wb, water, eaR, lnA; };
+TProp Prop(uint t)
+{
+    float4 a = _Props[t * 2], b = _Props[t * 2 + 1];
+    TProp p; p.sigma = a.x; p.k = a.y; p.rho = a.z; p.c = a.w; p.wb = b.x; p.water = b.y; p.eaR = b.z; p.lnA = b.w;
+    return p;
+}
+
+float VesselFlowMlS(float r) { return 0.25 * r * r * r; }
+
+void StoreF(uint slot, float v) { _State[slot] = asuint(v); }
+float LoadF(uint slot) { return asfloat(_State[slot]); }
+
+/** Signed distance (mm) from a point to the electrode surface. */
+float ElectrodeDistance(float3 p)
+{
+    float3 rel = p - _Tip.xyz;
+    float t = dot(rel, _Axis.xyz);
+    float etype = _Gen2.z;
+    if (etype > 2.5)
+    {
+        float tc = clamp(dot(rel, _WDir.xyz), 0.0, _Axis.w);
+        return length(rel - _WDir.xyz * tc) - _NDir.w;
+    }
+    else if (etype > 1.5) return length(rel - _Axis.xyz * _NDir.w) - _NDir.w;
+    else if (etype > 0.5)
+    {
+        float tc = clamp(t, 0.0, _Axis.w);
+        return length(rel - _Axis.xyz * tc) - _WDir.w;
+    }
+    float u = dot(rel, _WDir.xyz), v = dot(rel, _NDir.xyz);
+    float3 q = float3(abs(t - _Axis.w * 0.5) - _Axis.w * 0.5, abs(u) - _WDir.w, abs(v) - _NDir.w);
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+float SigmaOfPot(uint idx)
+{
+    uint c = _Cells[idx];
+    uint ty = CellType(c);
+    if (ty == T_AIR || _Occ[idx] < 0.5) return 0.0;
+    if ((c & FLAG_BLOODCOVER) != 0u) return SIGMA_BLOOD * _Gen2.w;
+    if (CellState(c) == S_CARBON) return 0.002;
+    TProp pr = Prop(ty);
+    float g = saturate(_Water[idx] / max(pr.water, 1e-3));
+    return pr.sigma * (0.01 + 0.99 * g * g) * _Gen2.w;
+}
+
+float Harmonic(float a, float b) { return a + b > 0.0 ? 2.0 * a * b / (a + b) : 0.0; }
+
+bool HasAirNeighbour(int i, int j, int k)
+{
+    for (int n = 0; n < 6; n++)
+    {
+        int3 o = NB6[n];
+        int ii = i + o.x, jj = j + o.y, kk = k + o.z;
+        if (!InVolume(ii, jj, kk)) continue;
+        uint nidx = Idx3(ii, jj, kk);
+        if (_Occ[nidx] < 0.5 || CellType(_Cells[nidx]) == T_AIR) return true;
+    }
+    return false;
+}
+
+bool IsContact(int i, int j, int k)
+{
+    float d = ElectrodeDistance(WorldOf(i, j, k));
+    if (d <= max(_DT.w, 0.3 * HMM)) return true;
+    if (d <= _Tip.w) return HasAirNeighbour(i, j, k);
+    if (d <= 3.0 && (_Cells[Idx3(i, j, k)] & FLAG_BLOODCOVER) != 0u) return true;
+    return false;
+}
+
+// ------------------------------------------------------------------ field solve
+[numthreads(4, 4, 4)]
+void SeedPotential(uint3 gid : SV_DispatchThreadID)
+{
+    int S = _Box0.w;
+    if ((int)gid.x >= S || (int)gid.y >= S || (int)gid.z >= S) return;
+    int i = _Box0.x + (int)gid.x, j = _Box0.y + (int)gid.y, k = _Box0.z + (int)gid.z;
+    if (!InVolume(i, j, k)) return;
+    uint idx = Idx3(i, j, k);
+    if (SigmaOfPot(idx) <= 0.0) { _Dst[idx] = 0.0; return; }
+    float d = max(ElectrodeDistance(WorldOf(i, j, k)), 0.0);
+    float halfW = S * 0.5 * HMM;
+    _Dst[idx] = saturate(SEED_A / (d + SEED_A) - SEED_A / (halfW + SEED_A));
+}
+
+void Relax(uint3 gid, uint color)
+{
+    int S = _Box0.w;
+    if ((int)gid.x >= S || (int)gid.y >= S || (int)gid.z >= S) return;
+    if (((gid.x + gid.y + gid.z) & 1u) != color) return;
+    int i = _Box0.x + (int)gid.x, j = _Box0.y + (int)gid.y, k = _Box0.z + (int)gid.z;
+    if (!InVolume(i, j, k)) return;
+    uint idx = Idx3(i, j, k);
+    if (gid.x == 0u || gid.y == 0u || gid.z == 0u || (int)gid.x == S - 1 || (int)gid.y == S - 1 || (int)gid.z == S - 1) { _Dst[idx] = 0.0; return; }
+    float s0 = SigmaOfPot(idx);
+    if (s0 <= 0.0) { _Dst[idx] = 0.0; return; }
+    if (IsContact(i, j, k)) { _Dst[idx] = 1.0; return; }
+    float num = 0.0, den = 0.0;
+    for (int n = 0; n < 6; n++)
+    {
+        int3 o = NB6[n];
+        int ii = i + o.x, jj = j + o.y, kk = k + o.z;
+        if (!InVolume(ii, jj, kk)) continue;
+        uint nidx = Idx3(ii, jj, kk);
+        float g = Harmonic(s0, SigmaOfPot(nidx));
+        num += g * _Dst[nidx]; den += g;
+    }
+    if (den <= 0.0) { _Dst[idx] = 0.0; return; }
+    _Dst[idx] = lerp(_Dst[idx], num / den, SOR_OMEGA);
+}
+
+[numthreads(4, 4, 4)] void RelaxRed(uint3 gid : SV_DispatchThreadID) { Relax(gid, 0u); }
+[numthreads(4, 4, 4)] void RelaxBlack(uint3 gid : SV_DispatchThreadID) { Relax(gid, 1u); }
+
+// ------------------------------------------------------------------ heating
+groupshared float gsSum[64];
+groupshared uint gsContact[64];
+groupshared float gsWet[64];
+
+float WetFraction(uint idx)
+{
+    TProp pr = Prop(CellType(_Cells[idx]));
+    return saturate(_Water[idx] / max(pr.water, 1e-3));
+}
+float NearFieldWeight(int i, int j, int k, uint idx)
+{
+    float d = max(ElectrodeDistance(WorldOf(i, j, k)), 0.0);
+    return WetFraction(idx) * exp(-d / 0.05);
+}
+
+[numthreads(4, 4, 4)]
+void Heating(uint3 gid : SV_DispatchThreadID, uint li : SV_GroupIndex)
+{
+    int S = _Box0.w;
+    float q = 0.0; uint contact = 0u; float wet = 0.0;
+    int i = _Box0.x + (int)gid.x, j = _Box0.y + (int)gid.y, k = _Box0.z + (int)gid.z;
+    bool inside = (int)gid.x < S && (int)gid.y < S && (int)gid.z < S && InVolume(i, j, k);
+    if (inside)
+    {
+        uint idx = Idx3(i, j, k);
+        float s0 = SigmaOfPot(idx);
+        if (s0 > 0.0)
+        {
+            float phi0 = _Src[idx];
+            for (int n = 0; n < 6; n++)
+            {
+                int3 o = NB6[n];
+                int ii = i + o.x, jj = j + o.y, kk = k + o.z;
+                if (!InVolume(ii, jj, kk)) continue;
+                uint nidx = Idx3(ii, jj, kk);
+                float g = Harmonic(s0, SigmaOfPot(nidx));
+                float dphi = _Src[nidx] - phi0;
+                q += 0.5 * g * dphi * dphi / (HM * HM);
+            }
+            if (IsContact(i, j, k)) { contact = 1u; wet = NearFieldWeight(i, j, k, idx); }
+        }
+        _Heat[idx] = q;
+    }
+    gsSum[li] = q * HM * HM * HM;
+    gsContact[li] = contact;
+    gsWet[li] = wet;
+    GroupMemoryBarrierWithGroupSync();
+    for (uint s = 32u; s > 0u; s >>= 1)
+    {
+        if (li < s) { gsSum[li] += gsSum[li + s]; gsContact[li] += gsContact[li + s]; gsWet[li] += gsWet[li + s]; }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (li == 0u)
+    {
+        uint dummy;
+        InterlockedAdd(_State[ST_PSUM], (uint)clamp(gsSum[0] * 1e8, 0.0, 4.0e9), dummy);
+        InterlockedAdd(_State[ST_CONTACT], gsContact[0], dummy);
+        InterlockedAdd(_State[ST_WETSUM], (uint)(gsWet[0] * 1000.0), dummy);
+    }
+}
+
+// ------------------------------------------------------------------ generator
+[numthreads(1, 1, 1)]
+void Generator(uint3 gid : SV_DispatchThreadID)
+{
+    float pUnit = (float)_State[ST_PSUM] * 1e-8;
+    uint contacts = _State[ST_CONTACT];
+    float setting = _Gen.x, zLo = _Gen.y, zHi = _Gen.z, vMax = _Gen.w;
+    if (pUnit <= 1e-12 || contacts == 0u || _Gen2.y < 0.5)
+    {
+        StoreF(ST_Z, 1e9); StoreF(ST_P, 0.0); StoreF(ST_V2, _Gen2.y > 0.5 ? vMax * vMax : 0.0); StoreF(ST_IRMS, 0.0);
+        return;
+    }
+    float z = 1.0 / pUnit;
+    float p = setting;
+    if (z < zLo) p = setting * z / zLo; else if (z > zHi) p = setting * zHi / z;
+    float v2 = p * z;
+    if (v2 > vMax * vMax) { v2 = vMax * vMax; p = v2 / z; }
+    StoreF(ST_Z, z); StoreF(ST_P, p); StoreF(ST_V2, v2); StoreF(ST_IRMS, sqrt(v2) / z);
+}
+
+// ------------------------------------------------------------------ bioheat
+bool InSubdomain(int i, int j, int k)
+{
+    int S = _Box0.w;
+    return i >= _Box0.x && j >= _Box0.y && k >= _Box0.z && i < _Box0.x + S && j < _Box0.y + S && k < _Box0.z + S;
+}
+
+[numthreads(4, 4, 4)]
+void Bioheat(uint3 gid : SV_DispatchThreadID)
+{
+    if ((int)gid.x >= _TBox1.x || (int)gid.y >= _TBox1.y || (int)gid.z >= _TBox1.z) return;
+    int i = _TBox0.x + (int)gid.x, j = _TBox0.y + (int)gid.y, k = _TBox0.z + (int)gid.z;
+    if (!InVolume(i, j, k)) return;
+    uint idx = Idx3(i, j, k);
+    uint c = _Cells[idx];
+    uint ty = CellType(c);
+    uint st = CellState(c);
+    float T0 = _Src[idx];
+    if (ty == T_AIR || _Occ[idx] < 0.5) { _Dst[idx] = 37.0; return; }
+    TProp pr = Prop(ty);
+    float dt = _DT.x;
+    float rhoc = pr.rho * pr.c;
+    float lap = 0.0;
+    for (int n = 0; n < 6; n++)
+    {
+        int3 o = NB6[n];
+        int ii = i + o.x, jj = j + o.y, kk = k + o.z;
+        if (!InVolume(ii, jj, kk)) continue;
+        uint nidx = Idx3(ii, jj, kk);
+        uint nty = CellType(_Cells[nidx]);
+        if (nty == T_AIR || _Occ[nidx] < 0.5) continue;
+        lap += Harmonic(pr.k, Prop(nty).k) * (_Src[nidx] - T0);
+    }
+    lap /= HM * HM;
+    float om0 = _Omega[idx];
+    float w = _Water[idx];
+    float perf = pr.wb * BLOOD_RHO_C * (T0 - 37.0) * (om0 > 1.0 ? 0.0 : 1.0);
+    float q = 0.0;
+    if (_Gen2.y > 0.5 && InSubdomain(i, j, k))
+    {
+        float fnf = _NF.x;
+        q = _Heat[idx] * LoadF(ST_V2) * (1.0 - fnf);
+        if (fnf > 0.0 && IsContact(i, j, k))
+        {
+            float wetSum = (float)_State[ST_WETSUM] * 1e-3;
+            if (wetSum > 1e-3) q += LoadF(ST_P) * fnf * (NearFieldWeight(i, j, k, idx) / wetSum) / (HM * HM * HM);
+        }
+    }
+    float dTq = min(q * dt / rhoc, _DT.z);
+    float T1 = T0 + (lap - perf) * dt / rhoc + dTq;
+    float o = _Occ[idx];
+    uint dummy;
+    if (T1 > T_BOIL && w > 0.0)
+    {
+        float excess = (T1 - T_BOIL) * rhoc;
+        float eBoilAll = w * pr.rho * L_VAP;
+        float used = min(excess, eBoilAll);
+        float dw = w * (used / max(eBoilAll, 1e-6));
+        float vap = _Gen2.x * (q > 0.0 ? 1.0 : 0.0);
+        float eVapVoxel = pr.rho * (pr.c * (T_BOIL - 37.0) + pr.water * L_VAP);
+        float dOcc = vap * used / max(eVapVoxel, 1.0);
+        o -= dOcc;
+        w -= dw * (1.0 - vap * 0.5);
+        T1 = T_BOIL + (excess - used) / rhoc;
+        if (dOcc > 0.0) InterlockedAdd(_State[ST_VAP], (uint)(dOcc * 1000.0), dummy);
+    }
+    if ((ty == T_FAT || ty == T_LIPOMA) && T1 > 60.0 && q > 0.0)
+        o -= _Gen2.x * 0.2 * dt * saturate((T1 - 60.0) / 40.0) * 10.0;
+    float om = min(om0 + dt * exp(pr.lnA - pr.eaR / (T1 + 273.15)), 1e4);
+    if (o < 0.5)
+    {
+        c = 0u; st = S_VAPOR; o = max(o, 0.0); w = 0.0; T1 = 37.0;
+    }
+    else
+    {
+        if (w <= 0.03 * pr.water && T1 > T_CARBON) st = S_CARBON;
+        else if (w <= 0.03 * pr.water) st = max(st, S_DESIC);
+        else if (om > 0.53 && st == S_NORMAL) st = S_COAG;
+        c = PackCellState(c, st);
+        if ((ty == T_ARTERY || ty == T_VEIN) && om > 1.0 && (c & (FLAG_SEALED | FLAG_CHARPLUG)) == 0u)
+        {
+            float r = CellAux(c) * 0.05;
+            if ((c & FLAG_COAPTED) != 0u || r <= 0.5 || !HasAirNeighbour(i, j, k)) { c |= FLAG_SEALED; InterlockedAdd(_State[ST_SEALED], 1u, dummy); }
+            else { c |= FLAG_CHARPLUG; InterlockedAdd(_State[ST_CHARPLUG], 1u, dummy); }
+        }
+        if (ty == T_MUSCLE && T1 > 45.0) InterlockedAdd(_State[ST_MUSCLE], 1u, dummy);
+    }
+    _Cells[idx] = c; _Occ[idx] = o; _Water[idx] = max(w, 0.0); _Omega[idx] = om;
+    _Dst[idx] = T1;
+    InterlockedMax(_State[ST_MAXTEMP], (uint)(max(T1, 0.0) * 100.0), dummy);
+    if (st == S_CARBON) InterlockedAdd(_State[ST_CARBON], 1u, dummy);
+    if (om > 0.53 && om0 <= 0.53) InterlockedAdd(_State[ST_COAG], 1u, dummy);
+}
+
+// ------------------------------------------------------------------ blood layer
+uint ColIdx(int i, int j) { return (uint)i + (uint)NX * (uint)j; }
+
+[numthreads(8, 8, 1)]
+void SurfaceHeight(uint3 gid : SV_DispatchThreadID)
+{
+    int i = _WBox0.x + (int)gid.x, j = _WBox0.y + (int)gid.y;
+    if ((int)gid.x >= _WBox1.x || (int)gid.y >= _WBox1.y || i < 0 || j < 0 || i >= NX || j >= NY) return;
+    uint ci = ColIdx(i, j);
+    int top = -1;
+    for (int k = NZ - 1; k >= 0; k--)
+    {
+        uint idx = Idx3(i, j, k);
+        if (_Occ[idx] >= 0.5 && CellType(_Cells[idx]) != T_AIR) { top = k; break; }
+    }
+    float4 b = _Blood[ci];
+    if (top < 0) { b.z = -1e3; _Blood[ci] = b; return; }
+    uint tidx = Idx3(i, j, top);
+    b.z = WorldOf(i, j, top).y + 0.5 * HMM * (_Occ[tidx] - 0.5) * 2.0;
+    _Blood[ci] = b;
+    uint c = _Cells[tidx];
+    if (b.x > 0.3) c |= FLAG_BLOODCOVER; else c &= ~FLAG_BLOODCOVER;
+    _Cells[tidx] = c;
+}
+
+[numthreads(4, 4, 4)]
+void BloodSource(uint3 gid : SV_DispatchThreadID)
+{
+    if ((int)gid.x >= _WBox1.x || (int)gid.y >= _WBox1.y || (int)gid.z >= _WBox1.z) return;
+    int i = _WBox0.x + (int)gid.x, j = _WBox0.y + (int)gid.y, k = _WBox0.z + (int)gid.z;
+    if (!InVolume(i, j, k)) return;
+    uint idx = Idx3(i, j, k);
+    uint c = _Cells[idx];
+    uint ty = CellType(c);
+    if ((ty != T_ARTERY && ty != T_VEIN) || _Occ[idx] < 0.5) return;
+    if (!HasAirNeighbour(i, j, k)) return;
+    float dt = _DT.x * _WBox0.w;
+    float t = _DT.y;
+    float r = max(CellAux(c) * 0.05, 0.1);
+    uint dummy;
+    if ((c & FLAG_CHARPLUG) != 0u)
+    {
+        float p = clamp((r - 0.5) / 1.5, 0.0, 0.9) * 0.15 * dt;
+        float hsh = Hash13(float3(idx & 0xffffu, idx >> 16, floor(t * 30.0)));
+        if (hsh < p) { c &= ~FLAG_CHARPLUG; c |= FLAG_REBLED; _Cells[idx] = c; InterlockedAdd(_State[ST_REBLEED], 1u, dummy); }
+        return;
+    }
+    if ((c & (FLAG_SEALED | FLAG_COAPTED)) != 0u) return;
+    float endVoxels = max(1.0, 3.14159 * r * r / (HMM * HMM));
+    float q = VesselFlowMlS(r) / endVoxels;
+    bool arterial = false;
+    if (ty == T_ARTERY)
+    {
+        float ph = frac(t * 1.2);
+        q *= 0.35 + 1.3 * pow(max(sin(ph * 3.14159), 0.0), 3.0);
+        InterlockedAdd(_State[ST_EXPART], 1u, dummy);
+        arterial = true;
+    }
+    else { q *= 0.3; InterlockedAdd(_State[ST_EXPVEN], 1u, dummy); }
+    uint slot;
+    InterlockedAdd(_State[ST_BLEEDN], 1u, slot);
+    if (slot < 8u)
+    {
+        float3 wp = WorldOf(i, j, k);
+        uint b = ST_BLEEDPTS + slot * 4u;
+        _State[b] = asuint(wp.x); _State[b + 1] = asuint(wp.y); _State[b + 2] = asuint(wp.z); _State[b + 3] = asuint(arterial ? q : -q);
+    }
+    float volUl = q * dt * 1000.0;
+    uint ci = ColIdx(i, j);
+    float4 bc = _Blood[ci];
+    bc.x += volUl / (HMM * HMM);
+    _Blood[ci] = bc;
+    uint whole = (uint)floor(volUl);
+    uint extra = Hash13(float3(idx, t, 1.0)) < frac(volUl) ? 1u : 0u;
+    InterlockedAdd(_State[ST_BLOODLOST], whole + extra, dummy);
+}
+
+[numthreads(16, 1, 1)]
+void BloodDrops(uint3 gid : SV_DispatchThreadID)
+{
+    if ((int)gid.x >= _DropCount) return;
+    float4 d = _Drops[gid.x];
+    int r = max((int)ceil(0.8 / HMM), 1);
+    int vi = (int)round(d.x / HMM + NX * 0.5 - 0.5);
+    int vj = (int)round(d.z / HMM + NY * 0.5 - 0.5);
+    float cnt = 0.0;
+    for (int a = -r; a <= r; a++) for (int b = -r; b <= r; b++) if (a * a + b * b <= r * r) cnt += 1.0;
+    float dh = d.w / (HMM * HMM) / max(cnt, 1.0);
+    for (int a2 = -r; a2 <= r; a2++)
+        for (int b2 = -r; b2 <= r; b2++)
+        {
+            if (a2 * a2 + b2 * b2 > r * r) continue;
+            int i = vi + a2, j = vj + b2;
+            if (i < 0 || j < 0 || i >= NX || j >= NY) continue;
+            uint ci = ColIdx(i, j);
+            float4 bc = _Blood[ci]; bc.x += dh; _Blood[ci] = bc;
+        }
+}
+
+[numthreads(8, 8, 1)]
+void BloodFlow(uint3 gid : SV_DispatchThreadID)
+{
+    int i = _WBox0.x + (int)gid.x - 4, j = _WBox0.y + (int)gid.y - 4;
+    if ((int)gid.x >= _WBox1.x + 8 || (int)gid.y >= _WBox1.y + 8 || i < 0 || j < 0 || i >= NX || j >= NY) return;
+    uint ci = ColIdx(i, j);
+    float4 b0 = _Blood[ci];
+    float h0 = b0.x, s0 = b0.z;
+    float h = h0;
+    if (s0 < -500.0) { b0.w = 0.0; _Blood[ci] = b0; return; }
+    float H0 = s0 + h0;
+    static const int2 NB4[4] = { int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1) };
+    for (int n = 0; n < 4; n++)
+    {
+        int ii = i + NB4[n].x, jj = j + NB4[n].y;
+        if (ii < 0 || jj < 0 || ii >= NX || jj >= NY) continue;
+        float4 bj = _Blood[ColIdx(ii, jj)];
+        if (bj.z < -500.0) continue;
+        float Hj = bj.z + bj.x;
+        if (H0 > Hj)
+        {
+            float mobile = max(h0 - BLOOD_FILM, 0.0);
+            float clotF = b0.y > CLOT_AGE ? 0.0 : 1.0;
+            h -= min(BLOOD_VISC * 0.25 * (H0 - Hj), mobile * 0.25) * clotF;
+        }
+        else if (Hj > H0)
+        {
+            float mobileJ = max(bj.x - BLOOD_FILM, 0.0);
+            float clotJ = bj.y > CLOT_AGE ? 0.0 : 1.0;
+            h += min(BLOOD_VISC * 0.25 * (Hj - H0), mobileJ * 0.25) * clotJ;
+        }
+    }
+    if (_Tool2B.w > 1.5)
+    {
+        float3 w = VoxelToWorld(float3(i, j, 0));
+        float dxz = length(w.xz - _Tool2.xz);
+        if (dxz <= _Tool2.w && abs(s0 - _Tool2.y) < 4.0)
+        {
+            float area = 3.14159 * _Tool2.w * _Tool2.w;
+            h = max(h - 2000.0 * _DT.x * _WBox0.w / area, 0.0);
+        }
+    }
+    b0.w = max(h, 0.0);
+    _Blood[ci] = b0;
+}
+
+[numthreads(8, 8, 1)]
+void BloodCommit(uint3 gid : SV_DispatchThreadID)
+{
+    int i = _WBox0.x + (int)gid.x - 4, j = _WBox0.y + (int)gid.y - 4;
+    if ((int)gid.x >= _WBox1.x + 8 || (int)gid.y >= _WBox1.y + 8 || i < 0 || j < 0 || i >= NX || j >= NY) return;
+    uint ci = ColIdx(i, j);
+    float dtf = _DT.x * _WBox0.w;
+    float4 b = _Blood[ci];
+    float hNew = b.w;
+    bool moved = abs(hNew - b.x) > 1e-4;
+    b.x = hNew;
+    b.y = (moved || hNew < BLOOD_FILM) ? 0.0 : b.y + dtf;
+    _Blood[ci] = b;
+    if (hNew > 0.0)
+    {
+        uint dummy;
+        InterlockedAdd(_State[ST_POOL], (uint)(hNew * HMM * HMM * 1000.0), dummy);
+        float3 w = VoxelToWorld(float3(i, j, 0));
+        if (length(w.xz - _Tip.xz) < 1.5) InterlockedMax(_State[ST_POOLTIP], (uint)(hNew * 1000.0), dummy);
+    }
+}
+
+// ------------------------------------------------------------------ forceps coaptation
+[numthreads(4, 4, 4)]
+void CoaptMark(uint3 gid : SV_DispatchThreadID)
+{
+    const int S = 12;
+    int3 c0 = WorldToVoxelRound(_Tool2.xyz) - S / 2;
+    int i = c0.x + (int)gid.x, j = c0.y + (int)gid.y, k = c0.z + (int)gid.z;
+    if ((int)gid.x >= S || (int)gid.y >= S || (int)gid.z >= S || !InVolume(i, j, k)) return;
+    uint idx = Idx3(i, j, k);
+    uint c = _Cells[idx];
+    if (CellType(c) == T_AIR) return;
+    float3 p = WorldOf(i, j, k);
+    float3 a = _Tool2.xyz, b = _Tool2B.xyz, ab = b - a;
+    float t = saturate(dot(p - a, ab) / max(dot(ab, ab), 1e-6));
+    float d = length(p - (a + ab * t));
+    float rad = _Tool2.w;
+    uint ty = CellType(c);
+    if (ty == T_ARTERY || ty == T_VEIN) rad = max(rad, 2.2 * CellAux(c) * 0.05 + 0.3);
+    bool inside = d <= rad && _Tool2B.w > 0.5 && _Tool2B.w < 1.5;
+    if (inside) c |= FLAG_COAPTED; else c &= ~FLAG_COAPTED;
+    _Cells[idx] = c;
+}
+
+// ------------------------------------------------------------------ mechanics constraint probe
+[numthreads(64, 1, 1)]
+void ConstraintProbe(uint3 gid : SV_DispatchThreadID)
+{
+    uint n = gid.x;
+    if ((int)n >= _SegCount) return;
+    float4 a = _Segs[n * 2], b = _Segs[n * 2 + 1];
+    uint severed = 0u, tissueSamples = 0u; float om = 0.0;
+    for (int t = 0; t < 5; t++)
+    {
+        float3 p = lerp(a.xyz, b.xyz, (t + 0.5) / 5.0);
+        int3 v = WorldToVoxelRound(p);
+        if (!InVolume(v.x, v.y, v.z)) continue;
+        uint idx = Idx3(v.x, v.y, v.z);
+        if (_Occ[idx] >= 0.5 && CellType(_Cells[idx]) != T_AIR) { tissueSamples++; om = max(om, _Omega[idx]); }
+        else if (a.w > 0.5) severed = 1u;
+    }
+    _Probes[n] = uint2(severed | (tissueSamples == 0u ? 2u : 0u), asuint(om));
+}
+
+// ------------------------------------------------------------------ pick
+[numthreads(1, 1, 1)]
+void Pick(uint3 gid : SV_DispatchThreadID)
+{
+    float3 o = _Ray.xyz, d = normalize(_RayDir.xyz);
+    float stepLen = HMM * 0.5, t = 0.0;
+    float4 hit = float4(0, 0, 0, 0); uint hc = 0u, hi = 0u;
+    for (int n = 0; n < 4000; n++)
+    {
+        float3 p = o + d * t;
+        int3 v = WorldToVoxelRound(p);
+        if (InVolume(v.x, v.y, v.z))
+        {
+            uint idx = Idx3(v.x, v.y, v.z);
+            if (_Occ[idx] >= 0.5 && CellType(_Cells[idx]) != T_AIR) { hit = float4(p, 1.0); hc = _Cells[idx]; hi = idx; break; }
+        }
+        t += stepLen;
+        if (t > _RayDir.w) break;
+    }
+    StoreF(ST_HIT, hit.x); StoreF(ST_HIT + 1, hit.y); StoreF(ST_HIT + 2, hit.z); StoreF(ST_HIT + 3, hit.w);
+    _State[ST_HITCELL] = hc; _State[ST_HITIDX] = hi;
+}
+
+// ------------------------------------------------------------------ cross-section inspector
+float3 TissueColor(uint ty)
+{
+    switch (ty)
+    {
+        case 1u: return float3(0.80, 0.55, 0.45);
+        case 2u: return float3(0.85, 0.60, 0.55);
+        case 3u: return float3(0.95, 0.80, 0.35);
+        case 4u: return float3(0.92, 0.88, 0.80);
+        case 5u: return float3(0.95, 0.88, 0.65);
+        case 6u: return float3(0.93, 0.92, 0.86);
+        case 7u: return float3(0.55, 0.12, 0.12);
+        case 8u: return float3(0.80, 0.10, 0.08);
+        case 9u: return float3(0.30, 0.18, 0.40);
+        case 10u: return float3(0.92, 0.88, 0.72);
+        case 11u: return float3(0.98, 0.88, 0.48);
+        case 12u: return float3(0.90, 0.85, 0.70);
+        case 13u: return float3(0.35, 0.02, 0.02);
+        default: return float3(0.08, 0.09, 0.11);
+    }
+}
+float3 TempRamp(float t)
+{
+    float x = saturate((t - 37.0) / 263.0);
+    float3 c1 = lerp(float3(0.1, 0.1, 0.5), float3(0.0, 0.8, 0.9), smoothstep(0.0, 0.25, x));
+    float3 c2 = lerp(c1, float3(0.2, 0.9, 0.2), smoothstep(0.2, 0.45, x));
+    float3 c3 = lerp(c2, float3(1.0, 0.9, 0.1), smoothstep(0.4, 0.65, x));
+    float3 c4 = lerp(c3, float3(1.0, 0.2, 0.05), smoothstep(0.6, 0.85, x));
+    return lerp(c4, float3(1, 1, 1), smoothstep(0.85, 1.0, x));
+}
+
+[numthreads(8, 8, 1)]
+void Slice(uint3 gid : SV_DispatchThreadID)
+{
+    uint W = (uint)_SliceU.w, H = (uint)_SliceV.w;
+    if (gid.x >= W || gid.y >= H) return;
+    float fu = (gid.x + 0.5) / W - 0.5, fv = (gid.y + 0.5) / H;
+    float3 p = _SliceO.xyz + _SliceU.xyz * (fu * _SliceO.w) + _SliceV.xyz * (fv * _SliceParams.x);
+    int3 v = WorldToVoxelRound(p);
+    float3 col = float3(0.06, 0.07, 0.09);
+    if (InVolume(v.x, v.y, v.z))
+    {
+        uint idx = Idx3(v.x, v.y, v.z);
+        uint c = _Cells[idx];
+        uint ty = CellType(c), st = CellState(c);
+        if (_Occ[idx] >= 0.5 && ty != T_AIR)
+        {
+            uint mode = (uint)_SliceParams.y;
+            if (mode == 4u) col = TempRamp(37.0 + 263.0 * saturate(_Src[idx]));
+            else if (mode == 5u)
+            {
+                float s0 = SigmaOfPot(idx), q = 0.0;
+                for (int n = 0; n < 6; n++)
+                {
+                    int3 o = NB6[n];
+                    int ii = v.x + o.x, jj = v.y + o.y, kk = v.z + o.z;
+                    if (!InVolume(ii, jj, kk)) continue;
+                    uint nidx = Idx3(ii, jj, kk);
+                    float dphi = _Src[nidx] - _Src[idx];
+                    q += 0.5 * Harmonic(s0, SigmaOfPot(nidx)) * dphi * dphi / (HM * HM);
+                }
+                col = TempRamp(37.0 + 263.0 * saturate((log10(max(q, 1.0)) - 3.0) / 6.0));
+            }
+            else if (mode == 1u) col = TempRamp(_Src[idx]);
+            else if (mode == 2u) { col = lerp(float3(0.1, 0.2, 0.6), float3(1.0, 0.95, 0.9), saturate(_Omega[idx])); if (st == S_CARBON) col = float3(0, 0, 0); }
+            else if (mode == 3u) col = lerp(float3(0.5, 0.3, 0.15), float3(0.2, 0.5, 1.0), saturate(_Water[idx] / max(Prop(ty).water, 1e-3)));
+            else
+            {
+                col = TissueColor(ty);
+                col = lerp(col, float3(0.88, 0.85, 0.82), smoothstep(0.25, 1.0, _Omega[idx]) * 0.85);
+                if (st == S_DESIC) col = lerp(col, float3(0.45, 0.33, 0.22), 0.7);
+                if (st == S_CARBON) col = float3(0.03, 0.025, 0.02);
+                if ((c & FLAG_SEALED) != 0u) col = lerp(col, float3(0.2, 0.9, 0.3), 0.5);
+                if ((c & FLAG_CHARPLUG) != 0u) col = lerp(col, float3(0.1, 0.05, 0.0), 0.7);
+                if ((c & FLAG_COAPTED) != 0u) col = lerp(col, float3(0.3, 0.6, 1.0), 0.4);
+            }
+        }
+    }
+    if (ElectrodeDistance(p) <= 0.0 && _Gen2.w > 0.0) col = float3(0.75, 0.75, 0.78);
+    // texture row 0 is the bottom in Unity; flip so depth increases downward on screen
+    _SliceTex[uint2(gid.x, H - 1u - gid.y)] = float4(col, 1.0);
+}

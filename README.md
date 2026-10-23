@@ -7,6 +7,9 @@ and Arrhenius thermal damage on the GPU, with a Valleylab FT10 generator model a
 renderer. Phase 1 (this repository) is the accurate physics + visuals core; procedure scenarios
 follow.
 
+A native **Unity HDRP client** with engine-grade rendering lives in `unity/` and shares the
+scenarios, physics and teaching text; see [unity/README.md](unity/README.md).
+
 ## Run
 
 ```
@@ -52,6 +55,7 @@ scenarios/      scenario JSON (anatomy + goal / success / failure points / decis
 docs/           physics provenance, visual spec, calibration table, instrument model
 scripts/        headless render + activation checks (Chromium + SwiftShader WebGPU)
 tests/          analytic tests of the physics kernels
+unity/          Unity 6 HDRP client (same model, HLSL compute port, HDRP Lit SSS materials)
 ```
 
 ## Verification
@@ -62,4 +66,5 @@ tests/          analytic tests of the physics kernels
 - `node scripts/activate.mjs name "auto=cut,30,2.5,-0.3,-0.1,0.3,-0.1"` runs a scripted activation
   (mode, watts, seconds, optional start/end cursor positions) and saves normal, temperature and
   damage views plus the impedance / power trace.
+- `npm run sync:unity` copies `scenarios/*.json` (and `teaching.json`) into the Unity project.
 - `docs/calibration.md` records simulated vs published thermal spread per mode and setting.

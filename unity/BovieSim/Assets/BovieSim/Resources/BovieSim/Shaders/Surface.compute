@@ -1,0 +1,196 @@
+// Surface extraction (marching tetrahedra over the occupancy field, iso 0.5), port of surface.wgsl.
+// Triangles are sorted into material buckets (tissue class x thermal state) so every bucket draws
+// with a stock HDRP Lit material via Graphics.RenderMeshIndirect. Three passes:
+//   CountTris   : triangles per bucket
+//   ScanBuckets : prefix sum -> per-bucket vertex ranges and indexed indirect draw args
+//   EmitTris    : write vertices (position deformed by the mechanics lattice, normal, tangent)
+// BloodMesh builds the blood-pool surface (one vertex per surface column).
+#pragma kernel CountTris
+#pragma kernel ScanBuckets
+#pragma kernel EmitTris
+#pragma kernel BloodMesh
+
+#include "SimCommon.hlsl"
+
+#define NUM_BUCKETS 18
+#define VERTEX_STRIDE 48
+
+StructuredBuffer<float> _Occ;
+StructuredBuffer<uint> _Cells;
+StructuredBuffer<float4> _BloodCols;     // per column: h, age, surfY, hNext
+RWStructuredBuffer<uint> _BucketCount;   // NUM_BUCKETS
+RWStructuredBuffer<uint> _BucketCursor;  // NUM_BUCKETS
+RWStructuredBuffer<uint> _BucketOffset;  // NUM_BUCKETS
+struct DrawArgs { uint indexCount; uint instanceCount; uint startIndex; uint baseVertex; uint startInstance; };
+RWStructuredBuffer<DrawArgs> _Args;      // NUM_BUCKETS indexed indirect draws
+RWByteAddressBuffer _Verts;              // mesh vertex buffer: float3 pos, float3 normal, float4 tangent, float2 uv0
+int _Capacity;                           // vertex capacity of the mesh
+float _BloodShowMm;                      // blood thinner than this is not drawn
+
+static const float ISO = 0.5;
+
+/** Tissue class 0..7 x state -> bucket. Must match SurfaceRenderer.BucketMaterial order. */
+uint BucketOf(uint c)
+{
+    uint ty = CellType(c), st = CellState(c);
+    if (st == S_CARBON) return 17u;
+    if (st == S_DESIC) return 16u;
+    uint cls;
+    if (ty == T_EPI) cls = 0u;
+    else if (ty == T_DERMIS) cls = 1u;
+    else if (ty == T_FAT) cls = 2u;
+    else if (ty == T_LIPOMA) cls = 3u;
+    else if (ty == T_MUSCLE) cls = 5u;
+    else if (ty == T_ARTERY || ty == T_BLOOD) cls = 6u;
+    else if (ty == T_VEIN) cls = 7u;
+    else cls = 4u; // septum, fasciae, capsule, nerve: fibrous
+    return st == S_COAG ? 8u + cls : cls;
+}
+
+float OccAt(int i, int j, int k)
+{
+    return _Occ[Idx3(clamp(i, 0, NX - 1), clamp(j, 0, NY - 1), clamp(k, 0, NZ - 1))];
+}
+float OccSmooth(int i, int j, int k)
+{
+    return (OccAt(i, j, k) * 2.0 + OccAt(i + 1, j, k) + OccAt(i - 1, j, k) + OccAt(i, j + 1, k) + OccAt(i, j - 1, k) + OccAt(i, j, k + 1) + OccAt(i, j, k - 1)) / 8.0;
+}
+float3 GradAt(int i, int j, int k)
+{
+    return float3(OccSmooth(i + 1, j, k) - OccSmooth(i - 1, j, k), OccSmooth(i, j + 1, k) - OccSmooth(i, j - 1, k), OccSmooth(i, j, k + 1) - OccSmooth(i, j, k - 1)) * 0.5;
+}
+
+static float cF[8];
+static float3 cP[8];
+static float3 cG[8];
+static uint cIdx[8];
+static const int3 OFFS[8] = { int3(0,0,0), int3(1,0,0), int3(1,1,0), int3(0,1,0), int3(0,0,1), int3(1,0,1), int3(1,1,1), int3(0,1,1) };
+
+struct V { float3 p; float3 n; uint cell; };
+
+V EdgeVertex(uint a, uint b)
+{
+    float t = saturate((ISO - cF[a]) / (cF[b] - cF[a]));
+    float3 p = lerp(cP[a], cP[b], t);
+    float3 g = lerp(cG[a], cG[b], t);
+    V v;
+    v.p = VoxelToWorld(p);
+    // index-space gradient -> world axes (i->x, j->z, k->y); normal points toward air
+    v.n = normalize(-float3(g.x, g.z, g.y) + float3(1e-6, 0, 0));
+    v.cell = _Cells[cF[a] >= ISO ? cIdx[a] : cIdx[b]];
+    return v;
+}
+
+void WriteVertex(uint vid, V v)
+{
+    float3 pos = v.p + LatticeDisp(v.p);
+    float3 n = v.n;
+    float3 up = abs(n.y) < 0.95 ? float3(0, 1, 0) : float3(1, 0, 0);
+    float3 tg = normalize(cross(up, n));
+    uint addr = vid * VERTEX_STRIDE;
+    _Verts.Store3(addr, asuint(pos));
+    _Verts.Store3(addr + 12, asuint(n));
+    _Verts.Store4(addr + 24, asuint(float4(tg, 1.0)));
+    _Verts.Store2(addr + 40, asuint(pos.xz * 0.05));
+}
+
+// mode 0 = count, 1 = emit
+void EmitTri(V a, V b, V c, uint mode)
+{
+    // consistent winding: geometric normal agrees with the field normal
+    float3 gn = cross(b.p - a.p, c.p - a.p);
+    if (dot(gn, a.n + b.n + c.n) < 0.0) { V t = b; b = c; c = t; }
+    uint bucket = BucketOf(a.cell);
+    if (mode == 0u) { uint d; InterlockedAdd(_BucketCount[bucket], 3u, d); return; }
+    uint local; InterlockedAdd(_BucketCursor[bucket], 3u, local);
+    if (local + 3u > _BucketCount[bucket]) return; // clamped by ScanBuckets
+    uint base = _BucketOffset[bucket] + local;
+    WriteVertex(base, a); WriteVertex(base + 1u, b); WriteVertex(base + 2u, c);
+}
+
+void DoTet(uint a, uint b, uint c, uint d, uint mode)
+{
+    bool ia = cF[a] >= ISO, ib = cF[b] >= ISO, ic = cF[c] >= ISO, id = cF[d] >= ISO;
+    uint n = (uint)ia + (uint)ib + (uint)ic + (uint)id;
+    if (n == 0u || n == 4u) return;
+    uint ins[4] = { 0u, 0u, 0u, 0u }; uint outs[4] = { 0u, 0u, 0u, 0u };
+    uint ni = 0u, no = 0u;
+    if (ia) { ins[ni] = a; ni++; } else { outs[no] = a; no++; }
+    if (ib) { ins[ni] = b; ni++; } else { outs[no] = b; no++; }
+    if (ic) { ins[ni] = c; ni++; } else { outs[no] = c; no++; }
+    if (id) { ins[ni] = d; ni++; } else { outs[no] = d; no++; }
+    if (n == 1u) EmitTri(EdgeVertex(ins[0], outs[0]), EdgeVertex(ins[0], outs[1]), EdgeVertex(ins[0], outs[2]), mode);
+    else if (n == 3u) EmitTri(EdgeVertex(outs[0], ins[0]), EdgeVertex(outs[0], ins[1]), EdgeVertex(outs[0], ins[2]), mode);
+    else
+    {
+        V v00 = EdgeVertex(ins[0], outs[0]), v01 = EdgeVertex(ins[0], outs[1]);
+        V v11 = EdgeVertex(ins[1], outs[1]), v10 = EdgeVertex(ins[1], outs[0]);
+        EmitTri(v00, v01, v11, mode);
+        EmitTri(v00, v11, v10, mode);
+    }
+}
+
+void March(uint3 gid, uint mode)
+{
+    if ((int)gid.x + 1 >= NX || (int)gid.y + 1 >= NY || (int)gid.z + 1 >= NZ) return;
+    int i = (int)gid.x, j = (int)gid.y, k = (int)gid.z;
+    bool allIn = true, allOut = true;
+    for (uint c = 0u; c < 8u; c++)
+    {
+        int3 o = OFFS[c];
+        uint idx = Idx3(i + o.x, j + o.y, k + o.z);
+        float f = _Occ[idx];
+        cF[c] = f; cIdx[c] = idx; cP[c] = float3(i + o.x, j + o.y, k + o.z);
+        allIn = allIn && (f >= ISO); allOut = allOut && (f < ISO);
+    }
+    if (allIn || allOut) return;
+    for (uint c2 = 0u; c2 < 8u; c2++) { int3 o = OFFS[c2]; cG[c2] = GradAt(i + o.x, j + o.y, k + o.z); }
+    DoTet(0u, 5u, 1u, 6u, mode);
+    DoTet(0u, 1u, 2u, 6u, mode);
+    DoTet(0u, 2u, 3u, 6u, mode);
+    DoTet(0u, 3u, 7u, 6u, mode);
+    DoTet(0u, 7u, 4u, 6u, mode);
+    DoTet(0u, 4u, 5u, 6u, mode);
+}
+
+[numthreads(4, 4, 4)] void CountTris(uint3 gid : SV_DispatchThreadID) { March(gid, 0u); }
+[numthreads(4, 4, 4)] void EmitTris(uint3 gid : SV_DispatchThreadID) { March(gid, 1u); }
+
+[numthreads(1, 1, 1)]
+void ScanBuckets(uint3 gid : SV_DispatchThreadID)
+{
+    uint offset = 0u;
+    for (uint b = 0u; b < NUM_BUCKETS; b++)
+    {
+        uint n = _BucketCount[b];
+        uint room = (uint)_Capacity > offset ? (uint)_Capacity - offset : 0u;
+        n = min(n, room - room % 3u);
+        _BucketCount[b] = n;
+        _BucketOffset[b] = offset;
+        _BucketCursor[b] = 0u;
+        DrawArgs a; a.indexCount = n; a.instanceCount = 1u; a.startIndex = offset; a.baseVertex = 0u; a.startInstance = 0u;
+        _Args[b] = a;
+        offset += n;
+    }
+}
+
+// ------------------------------------------------------------------ blood pool surface
+float BloodTop(int i, int j)
+{
+    float4 b = _BloodCols[(uint)clamp(i, 0, NX - 1) + (uint)NX * (uint)clamp(j, 0, NY - 1)];
+    // hidden below the tissue surface where there is no visible blood
+    return b.x > _BloodShowMm ? b.z + b.x : b.z - 0.6;
+}
+
+[numthreads(8, 8, 1)]
+void BloodMesh(uint3 gid : SV_DispatchThreadID)
+{
+    int i = (int)gid.x, j = (int)gid.y;
+    if (i >= NX || j >= NY) return;
+    float y = BloodTop(i, j);
+    float3 p = float3((i + 0.5 - NX * 0.5) * HMM, y, (j + 0.5 - NY * 0.5) * HMM);
+    float dx = BloodTop(i + 1, j) - BloodTop(i - 1, j), dz = BloodTop(i, j + 1) - BloodTop(i, j - 1);
+    float3 n = normalize(float3(-dx, 2.0 * HMM, -dz));
+    V v; v.p = p; v.n = n; v.cell = 0u;
+    WriteVertex((uint)(i + NX * j), v);
+}

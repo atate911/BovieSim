@@ -1,0 +1,158 @@
+{
+  "id": "lipoma",
+  "name": "Lipoma excision (mechanics)",
+  "description": "A 14 x 12 mm subcutaneous lipoma 3 mm under the skin. Incise over it, find the capsule plane, free it circumferentially and deliver it with forceps.",
+  "bed": {
+    "sizeMm": [
+      50,
+      50,
+      30
+    ],
+    "voxelMm": 0.25
+  },
+  "layers": {
+    "epidermisMm": 0.15,
+    "dermisMm": 2.0,
+    "fatMm": 18,
+    "superficialFasciaMm": 0.4,
+    "superficialFasciaAt": 0.55,
+    "deepFasciaMm": 0.8,
+    "variation": 0.15
+  },
+  "septa": {
+    "lobuleMm": 6,
+    "thicknessMm": 0.35
+  },
+  "vessels": {
+    "seed": 21,
+    "perforatorsPerCm2": 0.6,
+    "arterialFraction": 0.4,
+    "radiusMm": [
+      0.3,
+      1.2
+    ],
+    "dermalPlexus": true
+  },
+  "nerves": [],
+  "lesion": {
+    "type": "lipoma",
+    "centerMm": [
+      0,
+      0
+    ],
+    "topDepthMm": 3,
+    "sizeMm": [
+      7,
+      6,
+      5
+    ],
+    "capsuleMm": 0.3,
+    "plane": "subcutaneous"
+  },
+  "skin": {
+    "prep": "chlorhexidine",
+    "tone": 0.3,
+    "langerDeg": 0
+  },
+  "generator": {
+    "cutMode": "pure",
+    "coagMode": "fulgurate",
+    "cutWatts": 30,
+    "coagWatts": 30,
+    "policy": "suggested"
+  },
+  "faults": [],
+  "education": {
+    "goal": "Excise the lipoma intact: skin incision along Langer's lines, dissect on the capsule, free it circumferentially, deliver it, control bleeding.",
+    "success": [
+      {
+        "metric": "lesionDelivered",
+        "op": "==",
+        "value": 1,
+        "label": "Lipoma delivered"
+      },
+      {
+        "metric": "lesionBreaches",
+        "op": "==",
+        "value": 0,
+        "label": "Capsule never entered with energy"
+      },
+      {
+        "metric": "dermalEdgeDamageMm",
+        "op": "<",
+        "value": 0.5,
+        "label": "Skin edge thermal rim < 0.5 mm"
+      },
+      {
+        "metric": "bloodLostMl",
+        "op": "<",
+        "value": 10,
+        "label": "Blood loss under 10 ml"
+      }
+    ],
+    "failurePoints": [
+      {
+        "id": "breach",
+        "trigger": "lesion.breached",
+        "consequence": "Fat spills, the plane is lost, fragments recur.",
+        "teaching": "Stay on the shiny capsule: blunt spread with closed scissors or hemostat, light cut on the capsule surface only."
+      },
+      {
+        "id": "edge-burn",
+        "trigger": "dermalEdgeDamage>1.0",
+        "consequence": "Wide scar, dehiscence risk.",
+        "teaching": "Cut mode, steady pace through dermis; coag only on bleeders."
+      },
+      {
+        "id": "held-coag",
+        "trigger": "carbonized",
+        "consequence": "Char: insulating, delays healing.",
+        "teaching": "Lift off; short taps."
+      }
+    ],
+    "decisionPoints": [
+      {
+        "id": "feeder",
+        "trigger": "vessel.exposed",
+        "prompt": "A feeding vessel at the base is bleeding. Grasp and buzz, or tie?",
+        "options": [
+          {
+            "label": "Grasp and buzz",
+            "outcome": "Fine for the usual < 1.5 mm feeder."
+          },
+          {
+            "label": "Tie",
+            "outcome": "Secure; slower."
+          }
+        ]
+      },
+      {
+        "id": "plane",
+        "trigger": "tissue.fasciaContact",
+        "prompt": "You are at the deep fascia under the lipoma. Stay above it?",
+        "options": [
+          {
+            "label": "Stay above",
+            "outcome": "Correct for a subcutaneous lipoma."
+          },
+          {
+            "label": "Go through",
+            "outcome": "Muscle bleeding and twitching; nothing gained."
+          }
+        ]
+      }
+    ],
+    "ambiguity": [
+      {
+        "id": "size",
+        "description": "The lipoma is larger than it feels: the capsule extends 1-2 mm beyond the palpable edge.",
+        "affects": "lesion.sizeMm"
+      },
+      {
+        "id": "feeder",
+        "description": "The feeding vessel position at the base is unknown until the lipoma is lifted.",
+        "affects": "lesion"
+      }
+    ]
+  }
+}

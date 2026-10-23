@@ -1,0 +1,80 @@
+{
+  "entries": [
+    {
+      "type": "activation.noContact",
+      "text": "Generator active with the electrode off tissue: in cut mode nothing happens; in coag mode you are spraying. Touch first, then activate."
+    },
+    {
+      "type": "tissue.carbonized",
+      "text": "Black char: the tissue is desiccated and now insulates. More energy only spreads heat sideways. Lift, lower power, use short taps."
+    },
+    {
+      "type": "tissue.desiccated",
+      "text": "Tissue has dried out under the electrode: impedance rises and the generator can no longer deliver the set power."
+    },
+    {
+      "type": "tissue.coagulated",
+      "text": "Blanching means proteins have denatured (Ω > 0.53). This is the intended effect of coag; at a skin edge it is a thermal injury."
+    },
+    {
+      "type": "tissue.fatContact",
+      "text": "Fat: high impedance, low water. Cut mode sputters and stalls; move faster, use blend, or dissect bluntly."
+    },
+    {
+      "type": "tissue.fasciaContact",
+      "text": "White glistening sheet: deep fascia. Decide whether to stay above it or go through."
+    },
+    {
+      "type": "tissue.muscleContact",
+      "text": "Muscle: low impedance, bleeds readily, twitches on coag."
+    },
+    {
+      "type": "tissue.vesselContact",
+      "text": "You are on a vessel. Direct coag chars an open lumen without sealing it; grasp and buzz the forceps instead."
+    },
+    {
+      "type": "tissue.nerveContact",
+      "text": "Nerve: heat within 2 mm causes a sensory deficit."
+    },
+    {
+      "type": "bleed.start",
+      "text": "Bright red and pulsatile is arterial: grasp it with forceps and buzz the forceps, or tie it if it is over 2 mm. Dark and welling is venous: pressure, then fulgurate the surface."
+    },
+    {
+      "type": "bleed.sealed",
+      "text": "Walls apposed and collagen denatured across the lumen: a coaptive seal that holds."
+    },
+    {
+      "type": "bleed.charPlug",
+      "text": "Direct coag on an open lumen: a char plug over the vessel, not a seal. It can rebleed when the pressure rises or the plug is disturbed."
+    },
+    {
+      "type": "vessel.rebleed",
+      "text": "The char plug gave way. Grasp the vessel and buzz the forceps this time."
+    },
+    {
+      "type": "blood.poolConducts",
+      "text": "Current is spreading through the pool: wide shallow burns and no seal. Suction and pressure first, then identify the source."
+    },
+    {
+      "type": "field.obscured",
+      "text": "The field is filling with blood. Suction, pressure, find the source: do not buzz blind."
+    },
+    {
+      "type": "forceps.buzzed",
+      "text": "Energy delivered through the jaws. Effective only if a vessel is held between them with the tips not touching other tissue."
+    },
+    {
+      "type": "muscle.stimulated",
+      "text": "Current through muscle made it jump. Shorter bursts, cut rather than coag, and check the return pad."
+    },
+    {
+      "type": "lesion.freed",
+      "text": "The capsule is free around most of its circumference: the lipoma will deliver with gentle traction."
+    },
+    {
+      "type": "lesion.breached",
+      "text": "You have entered the lipoma. Fat spills, the plane is lost and fragments left behind recur."
+    }
+  ]
+}

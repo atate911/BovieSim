@@ -38,6 +38,25 @@
   gapes 2.8 mm; a ring cut plus undermining frees the lipoma (`lesion.freed`) and forceps traction
   lifts it 4 mm out of its bed (`lesion.delivered`).
 
+## Unity HDRP client (unity/BovieSim)
+- Port of the core model to C# (tissue table, volume, anatomy, scenario schema, FT10, XPBD lattice,
+  event bus, CPU reference kernels) and of all WGSL kernels to HLSL compute (Sim.compute: field solve,
+  heating, generator, bioheat, blood, coaptation, probe, pick, slice; Surface.compute: bucketed
+  marching-tetrahedra extraction written straight into Mesh vertex buffers with lattice deformation).
+- Rendering with stock HDRP Lit: 18 surface buckets (8 tissue classes, coagulated variants,
+  desiccated, carbonized) with procedurally baked triplanar textures, diffusion profiles for skin,
+  fat and muscle, wet coat; blood pool mesh; dual-head 4300 K surgical light; CC0 HDRI; SSAO, DoF at the
+  tip, bloom, TAA, ACES. Steam, smoke, arcs and blood droplets via a custom HDRP particle shader.
+- IMGUI FT10 panel with on-screen footswitch, HUD, event feed with teaching text, scenario brief,
+  cross-section inspector. Mouse, keys and pen pressure/tilt.
+- Teaching text is extracted to `scenarios/teaching.json`, which the Unity client reads (the web build
+  still uses its in-code copy in `src/education/events.ts`; keep the two in step).
+- Verified here without a Unity editor: every compute kernel compiles (glslang, HLSL mode); all C#
+  compiles with mcs against UnityEngine/UnityEditor reference assemblies plus HDRP stubs written
+  from the HDRP 17 source; the NUnit EditMode suite (23 physics, generator, bleeding, lattice tests)
+  passes under Mono. **Not yet verified: the first real Unity import, HDRP rendering, GPU parity
+  with the WebGPU build and performance**; those need the project opened on the user's machine.
+
 ## Known gaps (next)
 - Picking and tool placement use material coordinates: with large deformation the instrument
   draws slightly off the displaced surface.
@@ -47,7 +66,6 @@
 - Absolute impedance and lateral spread not yet calibrated against published values
   (docs/calibration.md): tune `sigmaScale`, `arcMmPerKv`, `vapFactor`.
 - FT10 output curves are approximations until the user guide is digitised.
-- No bleeding, forceps or suction yet (Sprint 3); no mechanics/gaping (Sprint 4).
 - Smoke/arc visuals are first-pass; no depth of field or screen-space SSS yet.
 - Reference imagery folder is empty; visual acceptance needs the surgeon's eye.
 - Performance on real GPUs untested from this environment (SwiftShader only).
