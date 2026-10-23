@@ -1,2 +1,23 @@
+* text=auto
 # shell scripts must keep LF endings on Windows checkouts
 *.sh text eol=lf
+*.cs text diff=csharp
+*.compute text
+*.hlsl text
+*.shader text
+*.asmdef text
+*.json text
+*.md text
+# Unity YAML assets (scenes, prefabs, materials, meta files)
+*.unity text eol=lf
+*.prefab text eol=lf
+*.asset text eol=lf
+*.mat text eol=lf
+*.meta text eol=lf
+# binaries
+*.png binary
+*.jpg binary
+*.hdr binary
+*.exr binary
+*.zip binary
+*.dll binary

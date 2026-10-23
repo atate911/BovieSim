@@ -1,16 +1,40 @@
 # Bovie Sim
 
-A browser-based training simulator for monopolar electrosurgery. A voxel tissue bed (skin,
-subcutaneous fat with septa and perforators, Scarpa's fascia, deep fascia, muscle, vessels, nerve,
-lipoma) is driven by a quasi-static electrical field solve, Pennes bioheat conduction, phase change
-and Arrhenius thermal damage on the GPU, with a Valleylab FT10 generator model and a surgical-field
-renderer. Phase 1 (this repository) is the accurate physics + visuals core; procedure scenarios
-follow.
+[![CI](https://github.com/atate911/boviesim/actions/workflows/ci.yml/badge.svg)](https://github.com/atate911/boviesim/actions/workflows/ci.yml)
 
-A native **Unity HDRP client** with engine-grade rendering lives in `unity/` and shares the
-scenarios, physics and teaching text; see [unity/README.md](unity/README.md).
+A training simulator for monopolar electrosurgery with a Valleylab FT10 generator model. A voxel
+tissue bed (skin, subcutaneous fat with septa and perforators, Scarpa's fascia, deep fascia, muscle,
+vessels, nerve, lipoma) is driven on the GPU by a quasi-static electrical field solve, Pennes bioheat
+conduction, phase change and Arrhenius thermal damage, with bleeding, vessel sealing and tissue
+mechanics. Each scenario has a goal, success criteria, failure points, decisions and modelled
+uncertainty, and the event feed explains what happened in surgical terms.
 
-## Run
+> **Training aid only.** Generator and tissue behaviour are modelled approximations, not
+> manufacturer specifications. Not a medical device.
+
+## Two clients, one model
+
+| | Unity client (`unity/`) | Browser build (repo root) |
+|---|---|---|
+| Use it for | Training on Windows: HDRP rendering, pen input, standalone app | Physics reference and quick checks |
+| Needs | Unity 6.6 (6000.6), a discrete GPU | Chrome or Edge with WebGPU |
+| Start here | [**Instruction manual**](docs/manual.html) (download and open in a browser) and [unity/README.md](unity/README.md) | `npm ci && npm run dev` |
+
+Both read the same `scenarios/*.json` and teaching text; `npm run sync:unity` copies them into the
+Unity project (CI fails if the copies drift).
+
+### Quick start on Windows
+
+```
+cd E:\claude
+git clone https://github.com/atate911/boviesim bovie-sim
+```
+
+Then in Unity Hub: *Add project from disk* → `E:\claude\bovie-sim\unity\BovieSim`, open it, and follow
+the manual's *Open and set up the project* steps.
+
+## Browser build
+
 
 ```
 npm install
@@ -24,7 +48,7 @@ default 0.25 mm), `?seed=3` (re-randomise anatomy), `?cut=1|2|4|8` (pre-carved t
 around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temperature / damage / tissue-type overlay), `?mech=0`
 (disable the mechanics lattice).
 
-## Controls
+### Controls (browser build)
 
 | Action | Input |
 |---|---|
@@ -58,7 +82,15 @@ tests/          analytic tests of the physics kernels
 unity/          Unity 6 HDRP client (same model, HLSL compute port, HDRP Lit SSS materials)
 ```
 
-## Verification
+## Checks
+
+CI runs on every push (`.github/workflows/ci.yml`):
+- **web**: `tsc --noEmit`, `npm test` (vitest physics tests), scenario-copy drift check.
+- **unity-check**: compiles every compute kernel and the particle shader (`unity/tools/check/shaders.sh`),
+  compile-checks all Unity C# against Unity reference assemblies plus HDRP stubs, and runs the NUnit
+  EditMode tests under Mono (`unity/tools/check/check.sh`). The real Unity import is still the final test.
+
+Locally:
 
 - `npm test` checks conduction against the analytic Gaussian, the field solver against a spherical
   electrode, Arrhenius against its closed form, phase-change energy bookkeeping and the FT10 curve.
@@ -68,3 +100,19 @@ unity/          Unity 6 HDRP client (same model, HLSL compute port, HDRP Lit SSS
   damage views plus the impedance / power trace.
 - `npm run sync:unity` copies `scenarios/*.json` (and `teaching.json`) into the Unity project.
 - `docs/calibration.md` records simulated vs published thermal spread per mode and setting.
+
+## Docs
+
+- [docs/manual.html](docs/manual.html): installation and operation manual (Unity client)
+- [docs/physics.md](docs/physics.md): physics model and provenance
+- [docs/calibration.md](docs/calibration.md): simulated vs published values
+- [docs/tools.md](docs/tools.md): instrument model
+- [docs/visual-spec.md](docs/visual-spec.md): what the surgeon should see
+- [docs/status.md](docs/status.md): what is built, verified and still missing
+- [unity/BovieSim/Assets/BovieSim/Art/ATTRIBUTION.md](unity/BovieSim/Assets/BovieSim/Art/ATTRIBUTION.md): third-party assets
+
+Problems and realism feedback: open an issue using the templates.
+
+## Licence
+
+All rights reserved; see [LICENSE](LICENSE).

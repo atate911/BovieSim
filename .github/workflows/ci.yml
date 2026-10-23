@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  web:
+    name: Browser build (type-check, physics tests, scenario sync)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      - name: Unity scenario copies match scenarios/
+        run: |
+          npm run sync:unity
+          git diff --exit-code -- unity/BovieSim/Assets/BovieSim/Resources/BovieSim/Scenarios
+
+  unity-check:
+    name: Unity client (shaders, C# compile, EditMode tests under Mono)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Mono and glslang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mono-mcs mono-runtime glslang-tools \
+            libmono-system-io-compression4.0-cil libmono-system-io-compression-filesystem4.0-cil
+      - name: Fetch Unity reference assemblies (NuGet; not committed)
+        run: |
+          mkdir -p "$RUNNER_TEMP/refs" "$RUNNER_TEMP/sdk"
+          curl -sSfL -o "$RUNNER_TEMP/m.nupkg" https://api.nuget.org/v3-flatcontainer/unityengine.modules/2021.3.33/unityengine.modules.2021.3.33.nupkg
+          curl -sSfL -o "$RUNNER_TEMP/s.nupkg" https://api.nuget.org/v3-flatcontainer/unity3d.sdk/2021.1.14.1/unity3d.sdk.2021.1.14.1.nupkg
+          unzip -q "$RUNNER_TEMP/m.nupkg" -d "$RUNNER_TEMP/refs"
+          unzip -q "$RUNNER_TEMP/s.nupkg" -d "$RUNNER_TEMP/sdk"
+      - name: Compile compute kernels and particle shader
+        run: unity/tools/check/shaders.sh
+      - name: Compile C# and run EditMode tests
+        env:
+          UNITY_REFS: ${{ runner.temp }}/refs/lib/net45
+          UNITY_SDK: ${{ runner.temp }}/sdk/lib
+        run: unity/tools/check/check.sh

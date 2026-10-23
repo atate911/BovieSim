@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Standalone copy of the Bovie Sim manual. Published version: https://claude.ai/artifact/7i8jR2rBQdYzNS51i4QK5K -->
+<style>*{box-sizing:border-box}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Bovie Sim Manual</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: an instructions-for-use booklet. Sticky contents rail on wide screens, one reading column, IEC-style Warning/Caution/Note callouts, cut-yellow and coag-blue as the only strong colours. */
+:root {
+  --bg: #f4f6f6;
+  --paper: #ffffff;
+  --ink: #15222a;
+  --muted: #56656d;
+  --line: #d5dde0;
+  --accent: #0f5f6b;        /* drape teal */
+  --accent-soft: #e2eff0;
+  --cut: #a87f00;           /* pencil cut button */
+  --cut-soft: #fbf2cf;
+  --coag: #2a59c4;          /* pencil coag button */
+  --coag-soft: #e3ebfb;
+  --warn: #9a5a00; --warn-soft: #fdf0dc;
+  --bad: #b3261e; --bad-soft: #fbe5e3;
+  --key-bg: #eef2f3; --key-edge: #b9c5c9;
+  --screen: #1d2a30; --screen-ink: #cfe0e4;
+  --f-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --f-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", Consolas, "Cascadia Mono", monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d1518; --paper: #131e22; --ink: #dce6e9; --muted: #93a4ab; --line: #26363c;
+  --accent: #5bb7c3; --accent-soft: #14303a;
+  --cut: #e6c14a; --cut-soft: #2c2610; --coag: #7fa5f5; --coag-soft: #142140;
+  --warn: #f0a94a; --warn-soft: #2d1f0b; --bad: #f08a80; --bad-soft: #321412;
+  --key-bg: #1b282d; --key-edge: #36484f; --screen: #0a1114; --screen-ink: #b8cdd3;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0d1518; --paper: #131e22; --ink: #dce6e9; --muted: #93a4ab; --line: #26363c;
+  --accent: #5bb7c3; --accent-soft: #14303a;
+  --cut: #e6c14a; --cut-soft: #2c2610; --coag: #7fa5f5; --coag-soft: #142140;
+  --warn: #f0a94a; --warn-soft: #2d1f0b; --bad: #f08a80; --bad-soft: #321412;
+  --key-bg: #1b282d; --key-edge: #36484f; --screen: #0a1114; --screen-ink: #b8cdd3;
+  color-scheme: dark }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16.5px; line-height: 1.6; }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+.wrap { max-width: 1180px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 64px; display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 48px; }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 8px; } }
+
+header.cover { grid-column: 1 / -1; padding-block: 40px 28px; border-bottom: 2px solid var(--ink); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: end; }
+@media (max-width: 640px) { header.cover { grid-template-columns: minmax(0, 1fr); } }
+.doc-id { font-family: var(--f-mono); font-size: 12.5px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+h1 { font-family: var(--f-display); font-weight: 700; font-size: clamp(42px, 7vw, 72px); line-height: .95; letter-spacing: -.01em; margin: 6px 0 10px; text-wrap: balance; }
+.lede { max-width: 62ch; margin: 0; color: var(--muted); font-size: 18px; }
+.pencil { display: flex; gap: 6px; align-items: center; }
+.pencil span { font-family: var(--f-display); font-weight: 600; font-size: 15px; letter-spacing: .08em; padding: 6px 14px; border-radius: 4px; }
+.pencil .c { background: var(--cut-soft); color: var(--cut); border: 1.5px solid var(--cut); }
+.pencil .g { background: var(--coag-soft); color: var(--coag); border: 1.5px solid var(--coag); }
+
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 20px); align-self: start; padding-top: 28px; font-size: 14.5px; }
+nav.toc h2 { font-family: var(--f-display); font-size: 14px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+nav.toc ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 2px; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: grid; grid-template-columns: 2.2em 1fr; padding: 4px 0; color: var(--ink); text-decoration: none; border-radius: 3px; }
+nav.toc a::before { content: counter(s) "."; font-family: var(--f-mono); font-size: 12.5px; color: var(--muted); padding-top: 2px; }
+nav.toc a:hover { color: var(--accent); }
+nav.toc li.part { counter-increment: none; font-family: var(--f-display); font-weight: 600; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); margin-top: 14px; padding-bottom: 2px; border-bottom: 1px solid var(--line); }
+@media (max-width: 860px) { nav.toc li.part { grid-column: 1 / -1; } }
+.part-head { padding-block: 36px 0; font-family: var(--f-display); font-weight: 700; font-size: 15px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); border-bottom: 2px solid var(--accent); }
+.part-head span { display: block; font-size: 30px; letter-spacing: 0; text-transform: none; color: var(--ink); margin-top: 2px; padding-bottom: 6px; }
+.req { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin: 14px 0; }
+.req div { background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; min-width: 0; }
+.req dt { font-family: var(--f-display); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; font-size: 13px; color: var(--muted); }
+.req dd { margin: 2px 0 0; }
+.see { color: var(--muted); font-size: 15px; }
+@media (max-width: 860px) { nav.toc { position: static; padding-top: 20px; } nav.toc ol { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); } }
+
+main { min-width: 0; padding-top: 12px; counter-reset: sec; }
+section { padding-block: 28px 8px; border-bottom: 1px solid var(--line); counter-increment: sec; scroll-margin-top: 16px; }
+section > h2 { font-family: var(--f-display); font-weight: 700; font-size: 34px; line-height: 1.05; margin: 0 0 14px; display: flex; gap: 14px; align-items: baseline; text-wrap: balance; }
+section > h2::before { content: counter(sec); font-family: var(--f-mono); font-size: 15px; font-weight: 600; color: var(--paper); background: var(--accent); min-width: 30px; height: 26px; display: inline-grid; place-items: center; border-radius: 3px; transform: translateY(-4px); }
+h3 { font-family: var(--f-display); font-weight: 600; font-size: 22px; margin: 26px 0 6px; letter-spacing: .01em; }
+p, li { max-width: 68ch; }
+main ul, main ol { padding-left: 1.3em; }
+main li + li { margin-top: 4px; }
+
+kbd { font-family: var(--f-mono); font-size: 13px; font-weight: 600; background: var(--key-bg); border: 1px solid var(--key-edge); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; white-space: nowrap; color: var(--ink); }
+code { font-family: var(--f-mono); font-size: 13.5px; background: var(--key-bg); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+
+.steps { list-style: none; padding: 0 !important; counter-reset: st; display: grid; gap: 14px; margin: 16px 0; }
+.steps > li { counter-increment: st; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; max-width: none; }
+.steps > li::before { content: counter(st); font-family: var(--f-display); font-weight: 700; font-size: 20px; width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--accent); color: var(--accent); display: grid; place-items: center; }
+.steps > li > div { min-width: 0; padding-top: 3px; }
+.steps b { display: block; }
+
+.callout { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; padding: 14px 16px; border-radius: 6px; margin: 18px 0; max-width: 72ch; border-left: 4px solid; }
+.callout .tag { font-family: var(--f-display); font-weight: 700; letter-spacing: .1em; font-size: 14px; text-transform: uppercase; padding-top: 2px; }
+.callout p { margin: 0; }
+.callout.warning { background: var(--bad-soft); border-color: var(--bad); } .callout.warning .tag { color: var(--bad); }
+.callout.caution { background: var(--warn-soft); border-color: var(--warn); } .callout.caution .tag { color: var(--warn); }
+.callout.note { background: var(--accent-soft); border-color: var(--accent); } .callout.note .tag { color: var(--accent); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .callout.note { background: var(--paper); } }
+:root[data-theme="dark"] .callout.note { background: var(--paper); }
+
+.table-wrap { overflow-x: auto; margin: 14px 0 18px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--f-display); font-weight: 600; font-size: 14px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--f-mono); font-size: 13.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.grp td { background: var(--bg); font-family: var(--f-display); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; font-size: 13.5px; color: var(--accent); padding-block: 6px; }
+.mode-cut { color: var(--cut); font-weight: 700; } .mode-coag { color: var(--coag); font-weight: 700; }
+
+/* screen schematic */
+.screen { position: relative; aspect-ratio: 16 / 9; max-width: 100%; background: var(--screen); border-radius: 8px; margin: 18px 0 10px; overflow: hidden; border: 1px solid var(--line); }
+.screen .bed { position: absolute; left: 30%; top: 30%; width: 34%; height: 40%; border-radius: 50%; background: radial-gradient(ellipse at 45% 40%, #d9a48c, #b77b66 55%, #7c4a3d); opacity: .85; }
+.screen .z { position: absolute; border: 1.5px dashed var(--screen-ink); border-radius: 4px; display: grid; place-items: center; color: var(--screen-ink); font-family: var(--f-mono); font-weight: 600; font-size: clamp(11px, 1.6vw, 15px); }
+.screen .z span { background: var(--screen); padding: 0 6px; border-radius: 3px; }
+.legend { list-style: none; padding: 0 !important; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 20px; font-size: 15px; }
+.legend li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 8px; max-width: none; }
+.legend b.n { font-family: var(--f-mono); color: var(--accent); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 16px 0; }
+.card { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; min-width: 0; }
+.card h3 { margin-top: 0; }
+.card .id { font-family: var(--f-mono); font-size: 12.5px; color: var(--muted); }
+.card dl { margin: 10px 0 0; display: grid; gap: 8px; font-size: 15px; }
+.card dt { font-family: var(--f-display); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; font-size: 13px; color: var(--muted); }
+.card dd { margin: 0; }
+.card dd ul { margin: 2px 0 0; padding-left: 1.1em; }
+
+.sev { display: inline-block; font-family: var(--f-display); font-weight: 700; font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; padding: 1px 8px; border-radius: 10px; white-space: nowrap; }
+.sev.info { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+.sev.warn { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); }
+.sev.bad { background: var(--bad-soft); color: var(--bad); border: 1px solid var(--bad); }
+td code { white-space: nowrap; }
+
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px 28px; }
+.two > div { min-width: 0; }
+footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top: 18px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="cover">
+    <div>
+      <div class="doc-id">Instructions for use · Unity HDRP client · Windows</div>
+      <h1>Bovie Sim</h1>
+      <p class="lede">A training simulator for monopolar electrosurgery with a Valleylab FT10 generator. Practise cut and coag on skin, fat, fascia, muscle and vessels, make mistakes safely, and see exactly what each one did to the tissue.</p>
+    </div>
+    <div class="pencil" aria-hidden="true"><span class="c">CUT</span><span class="g">COAG</span></div>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#about">About this simulator</a></li>
+      <li class="part">Part 1 · Installation</li>
+      <li><a href="#get">Get the files</a></li>
+      <li><a href="#unity">Install Unity</a></li>
+      <li><a href="#setup">Open and set up the project</a></li>
+      <li><a href="#pen">Set up a Wacom pen</a></li>
+      <li><a href="#build">Build a standalone app</a></li>
+      <li class="part">Part 2 · Operation</li>
+      <li><a href="#start">Starting and stopping</a></li>
+      <li><a href="#first">Your first session</a></li>
+      <li><a href="#screen">The screen</a></li>
+      <li><a href="#controls">Controls</a></li>
+      <li><a href="#generator">Generator and modes</a></li>
+      <li><a href="#instruments">Instruments</a></li>
+      <li><a href="#technique">Technique in the sim</a></li>
+      <li><a href="#scenarios">Scenarios</a></li>
+      <li><a href="#feedback">Reading the feedback</a></li>
+      <li class="part">Part 3 · Help</li>
+      <li><a href="#trouble">Troubleshooting</a></li>
+      <li><a href="#report">Reporting a problem</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <section id="about">
+      <h2>About this simulator</h2>
+      <p>The tissue is a 3D grid of small cubes (0.25 mm by default), each one skin, dermis, fat, septum, fascia, muscle, artery, vein, nerve or lipoma. When you activate, the simulator solves the electrical field from the electrode to the return pad, turns current into heat, conducts that heat through tissue with blood cooling it, boils water off, and tracks protein damage over time. That is what decides whether tissue blanches, dries, chars or is vaporised, and whether a vessel seals or just gets a char plug.</p>
+      <p>Each scenario has a goal, a definition of success, failure points, decisions you will have to make, and things you cannot know in advance (fat thickness, where the perforators are). The event feed explains what just happened and why, in surgical terms.</p>
+      <div class="callout warning"><span class="tag">Warning</span><p>This is a training aid. Generator behaviour and tissue values are modelled approximations, not the manufacturer's specification. Always follow the Valleylab FT10 user guide, your hospital's policies and your supervising surgeon in real cases.</p></div>
+      <p class="see">Part 1 takes you from a new Windows PC to a running simulator. Part 2 explains how to operate it, starting with a guided first session.</p>
+    </section>
+
+    <div class="part-head">Part 1<span>Installation</span></div>
+
+    <section id="get">
+      <h2>Get the files</h2>
+      <p>The project lives on GitHub at <a href="https://github.com/atate911/boviesim">github.com/atate911/boviesim</a>. It is one folder containing the Unity application (<code>unity\BovieSim</code>), the shared scenarios and the browser version. Sign in to GitHub first if the repository is private.</p>
+      <ol class="steps">
+        <li><div><b>Choose a short folder</b> such as <code>E:\claude</code> or <code>C:\dev</code>. Keep it out of <code>OneDrive</code>, <code>Documents</code> and <code>Desktop</code>: Unity creates deeply nested files, Windows refuses paths over 260 characters, and OneDrive syncing them slows everything down. The rest of this manual uses <code>E:\claude</code>.</div></li>
+        <li><div><b>Either clone it with Git</b> (recommended, so updates are one command): install <a href="https://git-scm.com/download/win">Git for Windows</a>, open a terminal in <code>E:\claude</code> and run <code>git clone https://github.com/atate911/boviesim bovie-sim</code>. To update later, run <code>git pull</code> inside <code>E:\claude\bovie-sim</code> with Unity closed.</div></li>
+        <li><div><b>Or download a zip:</b> on the GitHub page choose <i>Code → Download ZIP</i>, right-click the zip → <i>Extract All…</i> into <code>E:\claude</code>, and rename the extracted <code>boviesim-main</code> folder to <code>bovie-sim</code>.</div></li>
+        <li><div><b>Check the path.</b> You should now have <code>E:\claude\bovie-sim\unity\BovieSim</code>, containing <code>Assets</code>, <code>Packages</code> and <code>ProjectSettings</code>.</div></li>
+      </ol>
+    </section>
+
+    <section id="unity">
+      <h2>Install Unity</h2>
+      <dl class="req">
+        <div><dt>Windows</dt><dd>10 or 11, 64-bit</dd></div>
+        <div><dt>Graphics</dt><dd>Discrete GPU recommended (GTX 1060 / RX 580 class or newer); DirectX 11 or 12</dd></div>
+        <div><dt>Disk</dt><dd>About 15 GB for Unity, plus 3–5 GB for the project once opened</dd></div>
+        <div><dt>Account</dt><dd>A free Unity ID and the free Personal licence</dd></div>
+      </dl>
+      <ol class="steps">
+        <li><div><b>Install Unity Hub.</b> Download it from <a href="https://unity.com/download">unity.com/download</a> and run the installer with the default options.</div></li>
+        <li><div><b>Sign in and activate a licence.</b> Open Unity Hub, sign in or create a Unity ID, then go to <i>Preferences (gear icon) → Licenses → Add → Get a free personal license</i>.</div></li>
+        <li><div><b>Install the editor.</b> In Unity Hub choose <i>Installs → Install Editor</i> and pick <b>Unity 6.6 (6000.6)</b>, the default recommended release. Unity 6.3 LTS (6000.3) also works; do not use 6.0 LTS, which reached end of support in October 2026. In the module list, <i>Windows Build Support (IL2CPP)</i> is optional; you do not need it to run the simulator or to build a normal Windows app. You can skip Visual Studio.</div></li>
+        <li><div><b>Wait for it to finish.</b> The download is several gigabytes. Unity Hub shows progress in the <i>Installs</i> tab.</div></li>
+      </ol>
+    </section>
+
+    <section id="setup">
+      <h2>Open and set up the project</h2>
+      <p>This happens once. Allow 15–30 minutes the first time. Most of it is Unity importing files and downloading its rendering packages, with progress bars and few questions. Each step below says what you should see.</p>
+      <ol class="steps">
+        <li><div><b>Add the project to Unity Hub.</b> <i>Projects → Add → Add project from disk</i> → select the folder <code>E:\claude\bovie-sim\unity\BovieSim</code> (the one that contains <code>Assets</code>, <code>Packages</code> and <code>ProjectSettings</code>).<br><span class="see">You should see: <b>BovieSim</b> appears in the Projects list with an editor version beside it. Hub asks nothing else at this point; adding only lists the project. If the version is shown with a warning, click it and choose your installed 6000.6 version.</span></div></li>
+        <li><div><b>Open it.</b> Click <b>BovieSim</b> in the list.<br><span class="see">You should see: the Unity editor starts and shows <i>Importing</i> and <i>Compiling scripts</i> progress bars for several minutes. If Windows Firewall asks about the Unity editor, allow it.</span></div></li>
+        <li><div><b>Open the Console.</b> Once the editor window is up, choose <i>Window → General → Console</i> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd>) and keep it visible. Bovie Sim reports its progress there.</div></li>
+        <li><div><b>Let the packages install.</b> Nothing to click. Bovie Sim installs HDRP (the renderer), the Input System (for the pen) and the Test Framework.<br><span class="see">You should see: <code>[Bovie Sim] Installing packages…</code> in the Console, then more progress bars while Unity downloads and compiles them, then <code>[Bovie Sim] Packages installed.</code> A <b>Bovie Sim</b> menu appears in the menu bar. The <i>HDRP Wizard</i> window may open by itself; leave it for now.</span></div></li>
+        <li><div><b>Accept the input restarts.</b> When the Input System arrives, Unity asks whether to enable the new input backends. Choose <b>Yes</b>; the editor restarts. After it reopens, Bovie Sim says <i>Active Input Handling was changed to 'Both'</i>: choose <b>Restart now</b>.</div></li>
+        <li><div><b>Run setup.</b> After the restart a Bovie Sim dialog asks <i>Set up the project now?</i>. Choose <b>Set up</b>. If no dialog appears, choose <i>Bovie Sim → Set Up Project</i> from the menu bar.<br><span class="see">You should see: a <i>Bovie Sim setup</i> progress bar going through the HDRP asset, diffusion profiles, 18 tissue textures, materials, the downloads and the scene, then <code>[Bovie Sim] Setup complete.</code> in the Console.</span></div></li>
+        <li><div><b>Fix renderer warnings if any.</b> Open <i>Window → Rendering → HDRP Wizard</i>. If it lists problems, press <i>Fix All</i>, then run <i>Bovie Sim → Set Up Project</i> again.</div></li>
+        <li><div><b>Open the scene.</b> In the Project panel go to <code>Assets/BovieSim/Generated</code> and double-click <code>Main</code>. You are ready to run it: see <a href="#start">Starting and stopping</a>.</div></li>
+      </ol>
+      <h3>If a step does not happen</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>What you see</th><th>What to do</th></tr></thead>
+        <tbody>
+          <tr><td>Unity offers to open in <b>Safe Mode</b> because of compilation errors</td><td>Choose <i>Enter Safe Mode</i>, copy the red errors from the Console and send them (see <a href="#report">Reporting a problem</a>).</td></tr>
+          <tr><td>No <b>Bovie Sim</b> menu in the menu bar</td><td>Scripts have not compiled. Check the Console for red errors and send them.</td></tr>
+          <tr><td>The menu shows only <i>Install Required Packages</i></td><td>HDRP is not installed yet. Click it and wait for <code>Packages installed.</code></td></tr>
+          <tr><td>No <i>Set up the project now?</i> dialog</td><td>Run <i>Bovie Sim → Set Up Project</i>. The dialog is offered once per editor session.</td></tr>
+          <tr><td>No input-backend question</td><td>That is fine if <i>Edit → Project Settings → Player → Active Input Handling</i> already reads <b>Both</b>. If it reads anything else, set it to Both and restart the editor.</td></tr>
+        </tbody>
+      </table></div>
+      <div class="callout caution"><span class="tag">Caution</span><p>Everything in <code>Assets/BovieSim/Generated</code> is rebuilt by Set Up Project. Do not keep your own files there.</p></div>
+      <div class="callout note"><span class="tag">Note</span><p>The setup was written without access to a Unity editor, so this is its first real run. If the Console shows red errors, stop and send the first few as described in <a href="#report">Reporting a problem</a>.</p></div>
+    </section>
+
+    <section id="pen">
+      <h2>Set up a Wacom pen</h2>
+      <p>A mouse is enough to use the simulator. A pen adds depth control and instrument angle.</p>
+      <ol class="steps">
+        <li><div><b>Install the Wacom driver</b> from wacom.com if it is not already installed.</div></li>
+        <li><div><b>Keep Windows Ink on.</b> Open <i>Wacom Tablet Properties → Mapping</i> and make sure <b>Use Windows Ink</b> is ticked. Unity only receives pen pressure and tilt through Windows Ink.</div></li>
+        <li><div><b>Check it in the simulator.</b> Hover the pen over the skin: the instrument should lean with the pen. Press lightly and then firmly: the electrode sits deeper with more pressure (0.15 to 1 mm).</div></li>
+        <li><div><b>Fix the direction if needed.</b> If leaning the pen toward you tips the instrument away from you, press <kbd>Y</kbd>.</div></li>
+      </ol>
+    </section>
+
+    <section id="build">
+      <h2>Build a standalone app</h2>
+      <p>Optional. A build runs without the Unity editor, starts faster and can be copied to another Windows PC with a suitable graphics card.</p>
+      <ol class="steps">
+        <li><div><b>Open the build window.</b> In Unity choose <i>File → Build Profiles</i>. Select <b>Windows</b> (it is the default platform on a Windows PC). The scene list should show <code>Main</code>; Set Up Project adds it.</div></li>
+        <li><div><b>Build.</b> Click <i>Build</i> and choose a new, empty folder such as <code>E:\claude\BovieSimApp</code>. The first build takes several minutes.</div></li>
+        <li><div><b>Run it.</b> Open that folder and double-click <code>BovieSim.exe</code>. If Windows SmartScreen warns about an unknown app, choose <i>More info → Run anyway</i>; the build is not code-signed.</div></li>
+        <li><div><b>Copy the whole folder</b> to move it to another PC. The <code>.exe</code> needs the <code>BovieSim_Data</code> folder and <code>UnityPlayer.dll</code> beside it.</div></li>
+      </ol>
+      <p>In the built app, <kbd>F11</kbd> switches between fullscreen and a window and <kbd>Esc</kbd> quits.</p>
+    </section>
+
+    <div class="part-head">Part 2<span>Operation</span></div>
+
+    <section id="start">
+      <h2>Starting and stopping</h2>
+      <div class="two">
+        <div>
+          <h3>In the Unity editor</h3>
+          <ul>
+            <li>Open <code>Main.unity</code>, then press the Play button at the top (or <kbd>Ctrl</kbd>+<kbd>P</kbd>).</li>
+            <li>Click once inside the Game view so it receives the keyboard.</li>
+            <li>For a full-size view, choose <i>Play Maximized</i> from the Game view's toolbar.</li>
+            <li>Press Play again (or <kbd>Ctrl</kbd>+<kbd>P</kbd>) to stop.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>As a built app</h3>
+          <ul>
+            <li>Double-click <code>BovieSim.exe</code>.</li>
+            <li><kbd>F11</kbd> toggles fullscreen.</li>
+            <li><kbd>Esc</kbd> quits.</li>
+          </ul>
+        </div>
+      </div>
+      <p>On start the screen shows <i>Building anatomy…</i> for a few seconds while the tissue bed is generated, then the field appears with the scenario brief open.</p>
+      <h3>Choosing a scenario and quality</h3>
+      <ul>
+        <li><kbd>F6</kbd> moves to the next scenario; <kbd>F5</kbd> restarts the current one.</li>
+        <li>To start in a particular scenario or change detail, stop Play, select the <code>Bovie Sim</code> object in the Hierarchy and set <i>Scenario Id</i> (<code>freeplay</code>, <code>hemostasis</code> or <code>lipoma</code>) or <i>Voxel Override</i> (0 = full 0.25 mm detail; 0.4–0.5 runs faster).</li>
+      </ul>
+      <div class="callout caution"><span class="tag">Caution</span><p>Unity discards changes made to objects while Play is running. Change <i>Scenario Id</i> and <i>Voxel Override</i> only while stopped.</p></div>
+    </section>
+
+    <section id="first">
+      <h2>Your first session</h2>
+      <p>A guided 10-minute run in the free-play bed. It shows a clean incision, what fat does to cut mode, how to stop a bleeder properly, and two common mistakes.</p>
+      <h3>Make an incision</h3>
+      <ol class="steps">
+        <li><div><b>Start free play.</b> Press Play. Read the goal in the brief, then press <kbd>F1</kbd> to hide it.</div></li>
+        <li><div><b>Find a view.</b> Right-drag to look around and use the wheel to zoom until the skin fills most of the screen.</div></li>
+        <li><div><b>Check the generator.</b> The FT10 panel (bottom right) should read <span class="mode-cut">PURE 30</span> and <span class="mode-coag">FULGURATE 30</span>.</div></li>
+        <li><div><b>Touch the skin.</b> Move the cursor onto the skin. The pencil appears with the blade on the surface, and the status readout shows <i>under tip: Epidermis</i>.</div></li>
+        <li><div><b>Cut.</b> Hold <kbd>Z</kbd> (cut pedal) and draw the cursor across the skin at a steady pace, about 3 cm in 3 seconds. Release <kbd>Z</kbd> at the end. While cutting, the readout shows impedance <b>Z</b> and delivered power <b>P</b> close to 30 W.</div></li>
+        <li><div><b>Measure the edge.</b> Press <kbd>C</kbd> twice so the section view shows <i>damage</i>. Hover over the incision: the pale band beside the cut is the thermal rim. The goal is under 0.5 mm.</div></li>
+        <li><div><b>Go deeper.</b> Cut along the same line again until the yellow fat shows. The event feed reports <code>tissue.fatContact</code>: cut mode sputters in fat, so move faster or switch to Blend (<kbd>2</kbd>).</div></li>
+      </ol>
+      <h3>Control a bleeder</h3>
+      <ol class="steps">
+        <li><div><b>Find one.</b> If you cut across a perforator, the feed reports <code>bleed.start</code> and blood starts to pool. Bright red and pulsing is arterial.</div></li>
+        <li><div><b>Clear the field.</b> Press <kbd>Tab</kbd> twice for the suction. Hold the left mouse button over the pool until you can see the vessel end.</div></li>
+        <li><div><b>Grasp.</b> Press <kbd>Tab</kbd> three times to get back round to the forceps. Hold the left mouse button with the jaws on the vessel end.</div></li>
+        <li><div><b>Buzz.</b> Keep holding and press <kbd>X</kbd> (coag pedal) for about a second. The feed reports <code>forceps.buzzed</code> and then <code>bleed.sealed</code>. Release.</div></li>
+      </ol>
+      <h3>Make the classic mistakes</h3>
+      <ul>
+        <li><b>Char.</b> Switch back to the pencil, hold it still on intact skin and hold <kbd>X</kbd> for 3 seconds. The tissue blanches, then dries, then turns black: <code>tissue.carbonized</code>. Watch <b>P</b> fall as <b>Z</b> rises.</li>
+        <li><b>Char plug.</b> On a bleeding vessel end, coagulate directly with the pencil instead of the forceps. It may look controlled (<code>bleed.charPlug</code>), then rebleed (<code>vessel.rebleed</code>).</li>
+      </ul>
+      <p>Press <kbd>F5</kbd> to start again, or <kbd>F6</kbd> to move on to the hemostasis drill.</p>
+      <h3>Delivering the lipoma</h3>
+      <p>In the lipoma scenario, incise the skin over the lump, deepen to the shiny capsule, then cut around it, staying on the capsule surface and going deeper each pass. A needle (<kbd>N</kbd>) at lower power gives more control. The status readout counts the capsule links still attached. When it shows <i>FREE</i>, change to the forceps, grasp the lipoma and hold <kbd>Space</kbd> to lift it. It is delivered once it rises 4 mm out of its bed.</p>
+    </section>
+
+    <section id="screen">
+      <h2>The screen</h2>
+      <div class="screen" role="img" aria-label="Screen layout: status readout top left, scenario brief top right, section view right, FT10 panel bottom right, event feed bottom left, tissue bed in the centre">
+        <div class="bed"></div>
+        <div class="z" style="left:1.5%;top:3%;width:52%;height:24%"><span>1</span></div>
+        <div class="z" style="left:43%;top:3%;width:33%;height:44%"><span>2</span></div>
+        <div class="z" style="left:76.5%;top:34%;width:22%;height:31%"><span>3</span></div>
+        <div class="z" style="left:76.5%;top:68%;width:22%;height:29%"><span>4</span></div>
+        <div class="z" style="left:1.5%;top:62%;width:31%;height:35%"><span>5</span></div>
+        <div class="z" style="left:44%;top:72%;width:16%;height:12%;border-style:dotted"><span>6</span></div>
+      </div>
+      <ol class="legend">
+        <li><b class="n">1</b><span><b>Status readout.</b> Scenario, generator settings, the active instrument, live impedance, power and voltage, temperatures, blood loss and what is under the tip. Details in <a href="#feedback">Reading the feedback</a>.</span></li>
+        <li><b class="n">2</b><span><b>Scenario brief.</b> Goal, success criteria, failure points, decisions and uncertainties. <kbd>F1</kbd> shows or hides it.</span></li>
+        <li><b class="n">3</b><span><b>Section view.</b> A live 16 × 10 mm cross-section through the tip. <kbd>C</kbd> changes what it shows, <kbd>J</kbd> turns it across the blade, <kbd>H</kbd> hides it.</span></li>
+        <li><b class="n">4</b><span><b>FT10 panel.</b> Cut and coag blocks with mode and watts, activation lamps, REM status, impedance, and on-screen CUT and COAG pedals.</span></li>
+        <li><b class="n">5</b><span><b>Event feed.</b> What just happened, with the teaching point. Colour shows severity.</span></li>
+        <li><b class="n">6</b><span><b>The field.</b> Tissue under a two-head surgical light, with the instrument in your hand.</span></li>
+      </ol>
+    </section>
+
+    <section id="controls">
+      <h2>Controls</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Input</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="2">Generator</td></tr>
+          <tr><td><kbd>Z</kbd> / <kbd>X</kbd></td><td>Footswitch: <span class="mode-cut">cut</span> / <span class="mode-coag">coag</span> while held. The on-screen pedals do the same.</td></tr>
+          <tr><td>Left mouse on the pencil</td><td>Hand switch <span class="mode-cut">cut</span> (yellow button). <kbd>Ctrl</kbd> + left mouse: hand switch <span class="mode-coag">coag</span> (blue button).</td></tr>
+          <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>Cut mode: Pure, Blend, Low, Valleylab</td></tr>
+          <tr><td><kbd>5</kbd> <kbd>6</kbd></td><td>Coag mode: Fulgurate, Spray</td></tr>
+          <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>Cut watts −5 / +5 (hold <kbd>Shift</kbd> for 1 W)</td></tr>
+          <tr><td><kbd>;</kbd> <kbd>'</kbd></td><td>Coag watts −5 / +5 (hold <kbd>Shift</kbd> for 1 W)</td></tr>
+          <tr class="grp"><td colspan="2">Instruments</td></tr>
+          <tr><td><kbd>Tab</kbd> or <kbd>Q</kbd></td><td>Next instrument: Bovie pencil → Adson forceps → Frazier suction → skin hook</td></tr>
+          <tr><td><kbd>B</kbd> <kbd>N</kbd> <kbd>O</kbd></td><td>Pencil electrode: blade, needle, ball</td></tr>
+          <tr><td><kbd>R</kbd></td><td>Roll the blade 45°</td></tr>
+          <tr><td><kbd>T</kbd></td><td>Toothed / smooth forceps</td></tr>
+          <tr><td><kbd>Space</kbd></td><td>With the forceps closed: lift (traction on a grasped edge, delivering a freed lipoma). Opening the jaws lowers them again.</td></tr>
+          <tr><td>Left mouse</td><td>Forceps: close jaws (grasp). Suction: on. Hook: catch the skin and drag to retract.</td></tr>
+          <tr><td>Pen</td><td>Pressure sets depth; tilt sets angle; <kbd>Y</kbd> flips the tilt direction</td></tr>
+          <tr class="grp"><td colspan="2">View</td></tr>
+          <tr><td>Right mouse drag, or <kbd>Alt</kbd> + left drag</td><td>Orbit around the field</td></tr>
+          <tr><td>Middle mouse drag, or <kbd>Shift</kbd> + left drag</td><td>Pan</td></tr>
+          <tr><td>Mouse wheel</td><td>Zoom</td></tr>
+          <tr><td><kbd>C</kbd> / <kbd>J</kbd> / <kbd>H</kbd></td><td>Section view: next display / across the view or across the blade / hide</td></tr>
+          <tr class="grp"><td colspan="2">Session</td></tr>
+          <tr><td><kbd>F1</kbd> / <kbd>F2</kbd></td><td>Scenario brief / list of controls on screen</td></tr>
+          <tr><td><kbd>F5</kbd></td><td>Restart the scenario from the beginning</td></tr>
+          <tr><td><kbd>F6</kbd></td><td>Next scenario: Free play → Hemostasis drill → Lipoma excision</td></tr>
+          <tr><td><kbd>F11</kbd> / <kbd>Esc</kbd></td><td>Fullscreen on or off / quit (built app only)</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="generator">
+      <h2>Generator and modes</h2>
+      <p>The FT10 holds the set power steady across a band of tissue impedance. Below the band (wet tissue, blood) it is current-limited and delivers less. Above it (dry tissue, fat, char) it runs out of voltage and delivered power falls. Watch the <b>Z</b> and <b>P</b> readouts: when Z climbs past the band and P drops well below your setting, the tissue under the electrode has dried out.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Mode</th><th>Max</th><th>Constant-power band</th><th>Peak voltage</th><th>Duty</th><th>Arc reach</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td class="mode-cut">Pure</td><td class="num">300 W</td><td class="num">100–2000 Ω</td><td class="num">1.6 kV</td><td class="num">100 %</td><td class="num">0.13 mm</td><td>Continuous wave. Vaporises cells ahead of the blade with the narrowest thermal rim. Little hemostasis.</td></tr>
+          <tr><td class="mode-cut">Blend</td><td class="num">200 W</td><td class="num">100–1500 Ω</td><td class="num">2.2 kV</td><td class="num">50 %</td><td class="num">0.33 mm</td><td>Interrupted cut. Some coagulation along the edge; a wider rim than Pure.</td></tr>
+          <tr><td class="mode-cut">Low</td><td class="num">200 W</td><td class="num">100–600 Ω</td><td class="num">1.2 kV</td><td class="num">100 %</td><td class="num">0.06 mm</td><td>Low-voltage cut for fine work. Stalls in high-impedance tissue.</td></tr>
+          <tr><td class="mode-cut">Valleylab</td><td class="num">300 W</td><td class="num">100–2000 Ω</td><td class="num">2.0 kV</td><td class="num">60 %</td><td class="num">0.30 mm</td><td>Cut with hemostasis, between Pure and Blend.</td></tr>
+          <tr><td class="mode-coag">Fulgurate</td><td class="num">120 W</td><td class="num">200–3000 Ω</td><td class="num">4.5 kV</td><td class="num">6 %</td><td class="num">2.0 mm</td><td>High-voltage bursts. Sparks to the surface and coagulates oozing; chars if held.</td></tr>
+          <tr><td class="mode-coag">Spray</td><td class="num">120 W</td><td class="num">300–4000 Ω</td><td class="num">6.0 kV</td><td class="num">4 %</td><td class="num">3.6 mm</td><td>Highest voltage, widest spark spread. Superficial coagulation over an area.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Arc reach is how far a spark can jump from the electrode to tissue in that mode. In coag modes the electrode does not need to touch. In cut modes it does: activating in the air does nothing useful.</p>
+      <div class="callout note"><span class="tag">Note</span><p>These values are the simulator's model of the FT10, chosen to reproduce its behaviour. They are not taken from the Valleylab specification sheet.</p></div>
+      <p><b>REM.</b> The panel's REM lamp shows the return-pad monitor. A REM fault stops the generator from activating, as on the real unit.</p>
+    </section>
+
+    <section id="instruments">
+      <h2>Instruments</h2>
+      <div class="two">
+        <div>
+          <h3>Bovie pencil</h3>
+          <p>Blade (<kbd>B</kbd>), needle (<kbd>N</kbd>) or ball (<kbd>O</kbd>) electrode. The tip follows the tissue surface under the cursor; pen pressure pushes it deeper (0.15 to 1 mm). The hand-switch buttons glow when active.</p>
+          <ul><li><b>Blade</b>: incisions. Roll it with <kbd>R</kbd> to cut with the edge or coagulate with the flat.</li><li><b>Needle</b>: fine dissection, concentrated current.</li><li><b>Ball</b>: broad surface coagulation.</li></ul>
+        </div>
+        <div>
+          <h3>Adson forceps</h3>
+          <p>Hold the left mouse button to close the jaws. Closed jaws can:</p>
+          <ul><li><b>Grasp</b> a vessel and press its walls together.</li><li><b>Buzz</b>: press a pedal while grasping and the jaws become the electrode. This is how you seal a vessel.</li><li><b>Lift</b> tissue: hold <kbd>Space</kbd> while the jaws are closed. A freed lipoma comes up with them.</li></ul>
+          <p>Open jaws cannot be activated. <kbd>T</kbd> switches toothed and smooth.</p>
+        </div>
+        <div>
+          <h3>Frazier suction</h3>
+          <p>Hold the left mouse button to suck. It drains blood within about 2.5 mm of the tip and pulls in smoke. Clear the pool before you look for the bleeder.</p>
+        </div>
+        <div>
+          <h3>Skin hook</h3>
+          <p>Press on the skin edge to catch it, drag to retract, release to let go. The tissue stretches and the wound opens.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="technique">
+      <h2>Technique in the sim</h2>
+      <h3>Cutting skin</h3>
+      <p>Touch first, then activate. In Pure cut at about 30 W, keep the blade moving at a steady pace. Pausing, moving slowly, or using coag on the skin edge widens the thermal rim. The scenarios ask for a rim under 0.5 mm: check it in the section view in the damage display.</p>
+      <h3>Fat</h3>
+      <p>Fat has high impedance and little water. Cut mode sputters and stalls in it. Move faster, use Blend, or dissect bluntly.</p>
+      <h3>Controlling a bleeder</h3>
+      <ol class="steps">
+        <li><div><b>Clear the field.</b> Suction the pool. Energy into a pool spreads through the blood and seals nothing.</div></li>
+        <li><div><b>Find the source.</b> Bright red and pulsatile is arterial; dark and welling is venous.</div></li>
+        <li><div><b>Grasp the vessel</b> with the forceps, tips on the vessel only.</div></li>
+        <li><div><b>Buzz the forceps</b>: press the coag pedal (<kbd>X</kbd>) while holding the jaws closed. The walls are pressed together as they coagulate, which gives a seal that holds.</div></li>
+        <li><div><b>Decide on a tie</b> for vessels over about 2 mm. Ties are a decision point in the scenarios; they are not yet a hands-on action.</div></li>
+      </ol>
+      <div class="callout caution"><span class="tag">Caution</span><p>Coagulating an open vessel end directly with the pencil leaves a char plug, not a seal. It can look controlled and rebleed seconds later. The simulator models this on purpose.</p></div>
+      <h3>Char</h3>
+      <p>Black char is dry tissue that no longer conducts. More energy only spreads heat sideways. Lift off, lower the power, and use short taps.</p>
+    </section>
+
+    <section id="scenarios">
+      <h2>Scenarios</h2>
+      <p>Press <kbd>F6</kbd> to move between scenarios, or set <i>Scenario Id</i> on the <code>Bovie Sim</code> object in the scene. Each starts with Pure cut and Fulgurate coag; the watts are suggestions you can change.</p>
+      <div class="cards">
+        <article class="card">
+          <div class="id">freeplay · 30 W cut / 30 W coag</div>
+          <h3>Free-play tissue bed</h3>
+          <p>Full-thickness bed with skin, fat with septa and perforators, Scarpa's fascia, deep fascia and muscle. A small lipoma sits off-centre.</p>
+          <dl>
+            <div><dt>Goal</dt><dd>Explore each mode on each layer. Make a clean 3 cm incision through dermis with a thermal rim under 0.5 mm, then control any bleeder you expose.</dd></div>
+            <div><dt>Success</dt><dd><ul><li>Skin edge thermal rim &lt; 0.5 mm</li><li>Less than 5 mm³ of char</li><li>Blood loss under 5 ml</li></ul></dd></div>
+            <div><dt>Decision</dt><dd>At the deep fascia: stay above it, or go through into muscle?</dd></div>
+            <div><dt>Uncertain</dt><dd>Fat thickness varies ±15 %, so the fascia depth is not known. Perforator positions change every attempt.</dd></div>
+          </dl>
+        </article>
+        <article class="card">
+          <div class="id">hemostasis · 30 W cut / 35 W coag</div>
+          <h3>Hemostasis drill</h3>
+          <p>An open trench through skin and fat crosses two perforating vessels, one of them arterial.</p>
+          <dl>
+            <div><dt>Goal</dt><dd>Stop both bleeders with less than 5 ml blood loss and no char plug left behind.</dd></div>
+            <div><dt>Success</dt><dd><ul><li>Blood loss under 5 ml</li><li>No active bleeding</li><li>No char plug relied upon</li></ul></dd></div>
+            <div><dt>Decision</dt><dd>The bleeder is about 1 mm: buzz the forceps (reliable up to about 1.5–2 mm when the walls are pressed together) or tie it?</dd></div>
+            <div><dt>Uncertain</dt><dd>You cannot tell which vessel is arterial until it bleeds. Small extra perforators may sit in the trench wall.</dd></div>
+          </dl>
+        </article>
+        <article class="card">
+          <div class="id">lipoma · 30 W cut / 30 W coag</div>
+          <h3>Lipoma excision</h3>
+          <p>A 14 × 12 mm subcutaneous lipoma 3 mm under the skin.</p>
+          <dl>
+            <div><dt>Goal</dt><dd>Excise it intact: incise along Langer's lines, dissect on the capsule, free it all the way round, deliver it with forceps, control bleeding.</dd></div>
+            <div><dt>Success</dt><dd><ul><li>Lipoma delivered</li><li>Capsule never entered with energy</li><li>Skin edge thermal rim &lt; 0.5 mm</li><li>Blood loss under 10 ml</li></ul></dd></div>
+            <div><dt>Decisions</dt><dd>A feeder at the base bleeds: grasp and buzz, or tie? At the deep fascia under the lipoma: stay above it.</dd></div>
+            <div><dt>Uncertain</dt><dd>The capsule extends 1–2 mm beyond the palpable edge. The feeder's position is unknown until you lift the lipoma.</dd></div>
+          </dl>
+        </article>
+      </div>
+      <p><b>In the lipoma case</b>, the status readout shows how many capsule links are still intact. Once most of them are cut, it reads <i>FREE</i> and the event feed reports <code>lesion.freed</code>. Grasp with the forceps and hold <kbd>Space</kbd> to lift: <code>lesion.delivered</code> fires when it has risen 4 mm out of its bed.</p>
+    </section>
+
+    <section id="feedback">
+      <h2>Reading the feedback</h2>
+      <h3>Status readout</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Line</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>FT10 … tool</td><td>Cut and coag mode and watts; the instrument in hand and its state</td></tr>
+          <tr><td>CUT 30 W · Z · P · V · contact</td><td>While active: tissue impedance (Ω), power actually delivered (W), RMS voltage, and how many voxels the electrode touches. "open" means no circuit.</td></tr>
+          <tr><td>max T · char · vaporised · sim t</td><td>Hottest tissue (°C), charred voxels, total tissue removed, simulated time</td></tr>
+          <tr><td>blood lost · pooled · bleeding ends</td><td>Cumulative loss (ml), blood lying in the field, open arterial / venous ends, sealed voxels, char-plugged voxels, rebleeds</td></tr>
+          <tr><td>under tip</td><td>Tissue and its state at the cursor, with position in mm</td></tr>
+          <tr><td>capsule</td><td>Lipoma case only: intact capsule links, FREE and lift height</td></tr>
+          <tr><td>volume · tris · fps</td><td>Grid size and voxel size, surface triangle count (CAPPED means the surface hit its limit), frame rate</td></tr>
+        </tbody>
+      </table></div>
+      <h3>Section view displays</h3>
+      <p>Press <kbd>C</kbd> to cycle: <b>tissue</b> (layers and states), <b>temperature</b>, <b>damage</b> (protein denaturation; blanching starts above 0.53), <b>water</b> (drying), <b>potential</b> (the electrical field) and <b>current density</b>. Use damage to measure the thermal rim beside an incision.</p>
+      <h3>Events and what they teach</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Event</th><th>Level</th><th>Teaching point</th></tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="3">Activation and tissue</td></tr>
+          <tr><td><code>activation.noContact</code></td><td><span class="sev warn">Warn</span></td><td>Generator active with the electrode off tissue: in cut mode nothing happens; in coag mode you are spraying. Touch first, then activate.</td></tr>
+          <tr><td><code>tissue.coagulated</code></td><td><span class="sev info">Info</span></td><td>Blanching means proteins have denatured. This is the intended effect of coag; at a skin edge it is a thermal injury.</td></tr>
+          <tr><td><code>tissue.desiccated</code></td><td><span class="sev warn">Warn</span></td><td>Tissue has dried out under the electrode: impedance rises and the generator can no longer deliver the set power.</td></tr>
+          <tr><td><code>tissue.carbonized</code></td><td><span class="sev bad">Bad</span></td><td>Black char: the tissue is desiccated and now insulates. More energy only spreads heat sideways. Lift, lower power, use short taps.</td></tr>
+          <tr><td><code>tissue.fatContact</code></td><td><span class="sev info">Info</span></td><td>Fat: high impedance, low water. Cut mode sputters and stalls; move faster, use blend, or dissect bluntly.</td></tr>
+          <tr><td><code>tissue.fasciaContact</code></td><td><span class="sev info">Info</span></td><td>White glistening sheet: deep fascia. Decide whether to stay above it or go through.</td></tr>
+          <tr><td><code>tissue.muscleContact</code></td><td><span class="sev info">Info</span></td><td>Muscle: low impedance, bleeds readily, twitches on coag.</td></tr>
+          <tr><td><code>muscle.stimulated</code></td><td><span class="sev warn">Warn</span></td><td>Current through muscle made it jump. Shorter bursts, cut rather than coag, and check the return pad.</td></tr>
+          <tr><td><code>tissue.vesselContact</code></td><td><span class="sev warn">Warn</span></td><td>You are on a vessel. Direct coag chars an open lumen without sealing it; grasp and buzz the forceps instead.</td></tr>
+          <tr><td><code>tissue.nerveContact</code></td><td><span class="sev bad">Bad</span></td><td>Nerve: heat within 2 mm causes a sensory deficit.</td></tr>
+          <tr class="grp"><td colspan="3">Bleeding</td></tr>
+          <tr><td><code>bleed.start</code></td><td><span class="sev warn">Warn</span> <span class="sev info">Info</span></td><td>Bright red and pulsatile is arterial (warn): grasp and buzz, or tie if over 2 mm. Dark and welling is venous (info): pressure, then fulgurate the surface.</td></tr>
+          <tr><td><code>bleed.sealed</code></td><td><span class="sev info">Info</span></td><td>Walls apposed and collagen denatured across the lumen: a seal that holds.</td></tr>
+          <tr><td><code>bleed.charPlug</code></td><td><span class="sev warn">Warn</span></td><td>Direct coag on an open lumen: a char plug over the vessel, not a seal. It can rebleed when the pressure rises or the plug is disturbed.</td></tr>
+          <tr><td><code>vessel.rebleed</code></td><td><span class="sev bad">Bad</span></td><td>The char plug gave way. Grasp the vessel and buzz the forceps this time.</td></tr>
+          <tr><td><code>blood.poolConducts</code></td><td><span class="sev warn">Warn</span></td><td>Current is spreading through the pool: wide shallow burns and no seal. Suction and pressure first, then identify the source.</td></tr>
+          <tr><td><code>field.obscured</code></td><td><span class="sev warn">Warn</span></td><td>The field is filling with blood. Suction, pressure, find the source: do not buzz blind.</td></tr>
+          <tr><td><code>forceps.buzzed</code></td><td><span class="sev info">Info</span> <span class="sev warn">Warn</span></td><td>Energy delivered through the jaws. Effective only if a vessel is held between them with the tips not touching other tissue (warn when no vessel is held).</td></tr>
+          <tr class="grp"><td colspan="3">Lipoma</td></tr>
+          <tr><td><code>lesion.freed</code></td><td><span class="sev info">Info</span></td><td>The capsule is free around most of its circumference: the lipoma will deliver with gentle traction.</td></tr>
+          <tr><td><code>lesion.delivered</code></td><td><span class="sev info">Info</span></td><td>The lipoma has been lifted out of its bed.</td></tr>
+          <tr><td><code>lesion.breached</code></td><td><span class="sev bad">Bad</span></td><td>You have entered the lipoma. Fat spills, the plane is lost and fragments left behind recur.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="trouble">
+      <h2>Troubleshooting</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Symptom</th><th>What to do</th></tr></thead>
+        <tbody>
+          <tr><td>Red errors in the Console after opening</td><td>Copy the first few exactly and send them (see <a href="#report">Reporting a problem</a>).</td></tr>
+          <tr><td>"SimAssets not found", pink or missing tissue</td><td>Run <i>Bovie Sim → Set Up Project</i>.</td></tr>
+          <tr><td>Scene black or very dark</td><td>Check the two <i>Surgical light</i> objects exist. Exposure is fixed for an operating light; adjust <i>Exposure</i> in <code>Generated/BovieVolume.asset</code>.</td></tr>
+          <tr><td>Keys and mouse do nothing, or an <code>InvalidOperationException</code> about the Input class</td><td><i>Project Settings → Player → Active Input Handling</i> must be <b>Both</b>. Set it and restart the editor.</td></tr>
+          <tr><td>Pen moves the cursor but pressure and tilt do nothing</td><td>Tick <i>Use Windows Ink</i> in the Wacom settings. Check <code>com.unity.inputsystem</code> is installed in <i>Window → Package Manager</i>.</td></tr>
+          <tr><td>Package import errors mentioning long paths</td><td>Move the project to a short path such as <code>E:\claude\bovie-sim</code>, outside OneDrive.</td></tr>
+          <tr><td>Slow or stuttering</td><td>Select the <code>Bovie Sim</code> object and set <i>Voxel Override</i> to 0.4 or 0.5. You can also turn off depth of field and ambient occlusion in the volume.</td></tr>
+          <tr><td>No sky image or drape texture</td><td>The downloads were blocked; the sim falls back to built-in ones. Put any <code>.hdr</code> file into <code>Assets/BovieSim/Generated/Downloads</code> and run Set Up Project again.</td></tr>
+          <tr><td>Instrument tilts the wrong way with the pen</td><td>Press <kbd>Y</kbd>.</td></tr>
+          <tr><td>Keys do nothing in the editor while playing</td><td>Click inside the Game view to give it keyboard focus.</td></tr>
+          <tr><td>Unity Hub cannot open the project or wants a different version</td><td>Install Unity 6.6 (6000.6) in <i>Installs</i>, then on the project's row choose that version from the editor-version dropdown.</td></tr>
+          <tr><td>Windows warns about an unknown app when starting the build</td><td><i>More info → Run anyway</i>. The build is not code-signed.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="report">
+      <h2>Reporting a problem</h2>
+      <p>Send these and the fix can be made without guessing:</p>
+      <ul>
+        <li>The first error from the Console, copied exactly (file, line and message). Right-click the Console tab → <i>Open Editor Log</i> gives the full log if needed.</li>
+        <li>What you were doing, and the scenario.</li>
+        <li>A screenshot of the Game view for anything visual: tissue colours, lighting, smoke or blood that looks wrong to a surgeon's eye.</li>
+        <li>Your graphics card (<i>Task Manager → Performance → GPU</i>) and Unity version.</li>
+      </ul>
+      <p>Visual realism is tuned against your judgement. If something does not look the way it does in theatre, describe what you expect to see.</p>
+    </section>
+  </main>
+
+  <footer>Bovie Sim · Unity HDRP client for Windows. The scenarios and teaching text are shared with the browser build in the same repository.</footer>
+</div>
+
+</body>
+</html>

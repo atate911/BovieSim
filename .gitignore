@@ -5,3 +5,7 @@ dist
 screenshots/*.png
 docs/reference/*
 !docs/reference/README.md
+Thumbs.db
+.DS_Store
+.vs/
+.idea/

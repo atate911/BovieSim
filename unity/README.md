@@ -15,8 +15,11 @@ depth of field focused at the tip, bloom, TAA and ACES tonemapping.
   will run at a coarser voxel size.
 - Internet on first setup (Unity packages; optional CC0 HDRI and fabric downloads).
 
+The full instruction manual (installation and operation, with a guided first session) is
+[docs/manual.html](../docs/manual.html): download it and open it in a browser.
+
 ## Windows notes
-- **Clone to a short path**, e.g. `C:\dev\bovie-sim`. Unity's `Library` folder nests deeply and paths
+- **Clone to a short path**, e.g. `E:\claude\bovie-sim`. Unity's `Library` folder nests deeply and paths
   over 260 characters break package imports (`OneDrive\Documents\...` paths are the usual culprit;
   OneDrive syncing the Library folder also slows the editor badly).
 - Use Git for Windows; its default line-ending conversion is fine for Unity files.
@@ -45,6 +48,9 @@ depth of field focused at the tip, bloom, TAA and ACES tonemapping.
 5. Open `Assets/BovieSim/Generated/Main.unity` and press **Play**.
 
 Everything in `Assets/BovieSim/Generated` is rebuilt by Set Up Project and is not committed.
+
+After the first successful open, commit the `.meta` files Unity generates next to every asset and
+folder (`git add unity/BovieSim/Assets`). Unity uses them as stable IDs; they must not be written by hand.
 Scenario JSON lives in the repo `scenarios/` folder; after editing it run `npm run sync:unity`
 from the repo root to copy it into `Assets/BovieSim/Resources/BovieSim/Scenarios`.
 

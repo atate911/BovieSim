@@ -1,0 +1,14 @@
+Copyright (c) 2026 the Bovie Sim author (github.com/atate911). All rights reserved.
+
+This repository and its contents (source code, shaders, scenarios, teaching text, documentation and
+other materials) are proprietary. No licence is granted to use, copy, modify, merge, publish,
+distribute, sublicense or sell any part of it without prior written permission from the copyright
+holder. Viewing the repository on GitHub does not grant any such licence.
+
+Third-party assets that the Unity setup downloads (CC0 HDRI and fabric) and third-party packages
+(Unity HDRP, Input System, Test Framework and others) remain under their own licences; see
+unity/BovieSim/Assets/BovieSim/Art/ATTRIBUTION.md.
+
+Bovie Sim is a training aid. Its generator and tissue behaviour are modelled approximations, not
+manufacturer specifications, and it is not a medical device. It must not be relied on for clinical
+decisions. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
