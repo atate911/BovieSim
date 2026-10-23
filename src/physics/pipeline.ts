@@ -14,16 +14,21 @@ export interface SimReadout {
   sealedVoxels: number; charPlugVoxels: number; rebleeds: number; poolMl: number; poolAtTipMm: number;
   /** exposed bleeding voxels this frame: [x, y, z, mlPerS] (negative flow = venous) */
   bleedPoints: number[][];
+  /** mechanical cut and blunt dissection this frame (voxels) */
+  cutVoxels: number; bluntVoxels: number; bluntResist: number; vesselStretch: number; nerveStretch: number; vesselTorn: number;
+  /** dermal plexus voxels oozing this frame */
+  oozeVoxels: number;
 }
 
-const SIM_BYTES = 21 * 16;
+const SIM_BYTES = 27 * 16;
 /** section image size; shown at 480 x 300 CSS px, so lines and layer edges stay sharp on high-DPI screens */
 export const SLICE_W = 640, SLICE_H = 400;
-const STATE_BYTES = 256;
+const STATE_BYTES = 288;
 const DROPS_BYTES = 16 + 16 * 16;
 export const MAX_DROPS = 16;
 
 export type SecondaryToolMode = 0 | 1 | 2; // none, forceps grasp, suction
+export type MechCutMode = 0 | 1 | 2; // none, sharp (blade), blunt (spread)
 
 /**
  * Orchestrates the electrothermal kernels each frame:
@@ -35,7 +40,7 @@ export class PhysicsPipeline {
   readonly stateBuf: GPUBuffer;
   private propsBuf: GPUBuffer;
   private readback: GPUBuffer;
-  private pipes: Record<'seed' | 'red' | 'black' | 'heating' | 'generator' | 'bioheat' | 'pick' | 'slice' | 'surfaceHeight' | 'bloodSource' | 'bloodDrops' | 'bloodFlow' | 'bloodCommit' | 'coaptMark' | 'constraintProbe', GPUComputePipeline>;
+  private pipes: Record<'seed' | 'red' | 'black' | 'heating' | 'generator' | 'bioheat' | 'pick' | 'slice' | 'surfaceHeight' | 'bloodSource' | 'bloodDrops' | 'bloodFlow' | 'bloodCommit' | 'coaptMark' | 'mechCut' | 'constraintProbe', GPUComputePipeline>;
   private probe: { segs: GPUBuffer; probes: GPUBuffer; readback: GPUBuffer; bg: GPUBindGroup; n: number; severed: Uint8Array; omega: Float32Array; fresh: boolean } | null = null;
   private layoutProbe: GPUPipelineLayout;
   private l2p!: GPUBindGroupLayout;
@@ -46,6 +51,8 @@ export class PhysicsPipeline {
   private wbMin = [1e9, 1e9, 1e9]; private wbMax = [-1, -1, -1];
   /** secondary instrument (forceps jaws a->b, or suction tip a) */
   private tool2 = { a: vec3.create(), b: vec3.create(), radius: 0.6, mode: 0 as SecondaryToolMode, lastMode: 0 as SecondaryToolMode };
+  /** mechanical cut this frame: blade box (half extents along axis / w / n, rounded by r) swept from a to b */
+  private cut = { a: vec3.create(), b: vec3.create(), axis: vec3.fromValues(0, 1, 0), w: vec3.fromValues(1, 0, 0), n: vec3.fromValues(0, 0, 1), ha: 0, hw: 0, hn: 0, r: 0, mode: 0 as MechCutMode, box0: [0, 0, 0], size: 0 };
   /** droplet landings queued for this frame: [x, y, z, microlitres] */
   readonly drops: number[][] = [];
   readonly sliceBuf: GPUBuffer;
@@ -59,7 +66,8 @@ export class PhysicsPipeline {
   private gPot: [GPUBindGroup, GPUBindGroup];
   private gTemp: [GPUBindGroup, GPUBindGroup];
   readonly readout: SimReadout = { zOhm: Infinity, powerW: 0, vRms: 0, iRms: 0, hit: null, hitCell: 0, hitIdx: 0, maxTempC: 37, carbonVoxels: 0, newCoagVoxels: 0, vapVoxels: 0, contactVoxels: 0,
-    muscleHeatVoxels: 0, bloodLostMl: 0, exposedArterial: 0, exposedVenous: 0, sealedVoxels: 0, charPlugVoxels: 0, rebleeds: 0, poolMl: 0, poolAtTipMm: 0, bleedPoints: [] };
+    muscleHeatVoxels: 0, bloodLostMl: 0, exposedArterial: 0, exposedVenous: 0, sealedVoxels: 0, charPlugVoxels: 0, rebleeds: 0, poolMl: 0, poolAtTipMm: 0, bleedPoints: [],
+    cutVoxels: 0, bluntVoxels: 0, bluntResist: 0, vesselStretch: 0, nerveStretch: 0, vesselTorn: 0, oozeVoxels: 0 };
   /** thermal box in voxel coords (min inclusive, max exclusive); empty when min > max */
   private tbMin = [1e9, 1e9, 1e9]; private tbMax = [-1, -1, -1];
   private hotUntil = 0;
@@ -69,7 +77,7 @@ export class PhysicsPipeline {
   readonly dtMax: number;
   simTime = 0;
   /** accumulated stats across the session */
-  totals = { carbonVoxels: 0, vapVoxels: 0, activeSeconds: 0 };
+  totals = { carbonVoxels: 0, vapVoxels: 0, activeSeconds: 0, cutVoxels: 0, bluntVoxels: 0 };
   sigmaScale = 1.0;
   private ray = { o: vec3.create(), d: vec3.fromValues(0, -1, 0), max: 600 };
 
@@ -122,7 +130,7 @@ export class PhysicsPipeline {
     this.l2p = l1;
     const mk = (entryPoint: string, lay = layout) => device.createComputePipeline({ label: entryPoint, layout: lay, compute: { module, entryPoint } });
     this.pipes = { seed: mk('seedPotential'), red: mk('relaxRed'), black: mk('relaxBlack'), heating: mk('heating'), generator: mk('generator'), bioheat: mk('bioheat'), pick: mk('pick'), slice: mk('slice', layoutSlice),
-      surfaceHeight: mk('surfaceHeight', layoutBlood), bloodSource: mk('bloodSource', layoutBlood), bloodDrops: mk('bloodDrops', layoutBlood), bloodFlow: mk('bloodFlow', layoutBlood), bloodCommit: mk('bloodCommit', layoutBlood), coaptMark: mk('coaptMark'), constraintProbe: mk('constraintProbe', this.layoutProbe) };
+      surfaceHeight: mk('surfaceHeight', layoutBlood), bloodSource: mk('bloodSource', layoutBlood), bloodDrops: mk('bloodDrops', layoutBlood), bloodFlow: mk('bloodFlow', layoutBlood), bloodCommit: mk('bloodCommit', layoutBlood), coaptMark: mk('coaptMark'), mechCut: mk('mechCut'), constraintProbe: mk('constraintProbe', this.layoutProbe) };
     this.g2b = device.createBindGroup({ layout: l2b, entries: [{ binding: 0, resource: { buffer: this.bloodBuf } }, { binding: 1, resource: { buffer: this.dropsBuf } }] });
     this.g0s = device.createBindGroup({ layout: l0s, entries: [
       { binding: 0, resource: { buffer: gpu.info } }, { binding: 1, resource: { buffer: this.simBuf } }, { binding: 2, resource: { buffer: this.propsBuf } },
@@ -175,6 +183,27 @@ export class PhysicsPipeline {
     vec3.copy(this.tool2.a, a); vec3.copy(this.tool2.b, b); this.tool2.radius = radius; this.tool2.mode = mode;
   }
 
+  /**
+   * Mechanical cut for this frame (cleared after the step): a rounded box with half extents `ha` along `axis`,
+   * `hw` along `w` and `hn` along `n`, rounded by `r`, swept from centre `a` to centre `b`. Mode 1 is a blade
+   * (scalpel stroke, scissor snip), mode 2 a blunt spread. The region joins the wound box so bleeding is scanned.
+   */
+  setMechCut(mode: MechCutMode, a: vec3, b: vec3, axis: vec3, w: vec3, n: vec3, ha: number, hw: number, hn: number, r: number) {
+    const c = this.cut;
+    c.mode = mode; if (mode === 0) return;
+    vec3.copy(c.a, a); vec3.copy(c.b, b); vec3.copy(c.axis, axis); vec3.copy(c.w, w); vec3.copy(c.n, n);
+    c.ha = ha; c.hw = hw; c.hn = hn; c.r = r;
+    const h = this.volume.dims.h;
+    const ext = [0, 1, 2].map((i) => ha * Math.abs(axis[i]) + hw * Math.abs(w[i]) + hn * Math.abs(n[i]) + r + h);
+    const lo = [0, 1, 2].map((i) => Math.min(a[i], b[i]) - ext[i]), hi = [0, 1, 2].map((i) => Math.max(a[i], b[i]) + ext[i]);
+    const v0 = this.volume.worldToVoxel(lo[0], lo[1], lo[2]), v1 = this.volume.worldToVoxel(hi[0], hi[1], hi[2]);
+    const o = [Math.floor(Math.min(v0[0], v1[0])), Math.floor(Math.min(v0[1], v1[1])), Math.floor(Math.min(v0[2], v1[2]))];
+    const sz = Math.max(...[0, 1, 2].map((i) => Math.ceil(Math.max(v0[i], v1[i])) - o[i] + 1));
+    c.size = Math.min(96, Math.ceil(sz / 4) * 4);
+    c.box0 = o;
+    this.markWound(o, o.map((v) => v + c.size));
+  }
+
   private lastSubsteps = 2;
   private probeEvery = 0;
   private probePending = false;
@@ -218,6 +247,13 @@ export class PhysicsPipeline {
     const t2 = this.tool2;
     f32.set([t2.a[0], t2.a[1], t2.a[2], t2.radius], 76);
     f32.set([t2.b[0], t2.b[1], t2.b[2], t2.mode], 80);
+    const ct = this.cut;
+    f32.set([ct.a[0], ct.a[1], ct.a[2], ct.mode], 84);
+    f32.set([ct.b[0], ct.b[1], ct.b[2], ct.r], 88);
+    f32.set([ct.axis[0], ct.axis[1], ct.axis[2], ct.ha], 92);
+    f32.set([ct.w[0], ct.w[1], ct.w[2], ct.hw], 96);
+    f32.set([ct.n[0], ct.n[1], ct.n[2], ct.hn], 100);
+    i32.set([ct.box0[0], ct.box0[1], ct.box0[2], ct.size], 104);
     this.device.queue.writeBuffer(this.simBuf, 0, buf);
   }
 
@@ -262,6 +298,7 @@ export class PhysicsPipeline {
     this.device.queue.writeBuffer(this.stateBuf, 84, new Uint32Array([0, 0]));
     this.device.queue.writeBuffer(this.stateBuf, 104, new Uint32Array([0, 0]));
     this.device.queue.writeBuffer(this.stateBuf, 112, new Uint32Array([0, 0, 0, 0]));
+    this.device.queue.writeBuffer(this.stateBuf, 256, new Uint32Array(8));
     const wb = this.woundBox();
 
     const pass = enc.beginComputePass({ label: 'physics' });
@@ -290,6 +327,13 @@ export class PhysicsPipeline {
       pass.setPipeline(this.pipes.coaptMark); pass.setBindGroup(0, this.g0); pass.setBindGroup(1, this.gPot[0]); pass.dispatchWorkgroups(3, 3, 3);
     }
     this.tool2.lastMode = this.tool2.mode;
+    // steel: scalpel stroke, scissor snip or blunt spread (one dispatch per frame, then cleared)
+    const cutting = this.cut.mode !== 0 && this.cut.size > 0;
+    if (cutting) {
+      pass.setPipeline(this.pipes.mechCut); pass.setBindGroup(0, this.g0); pass.setBindGroup(1, this.gPot[0]);
+      const cg = Math.ceil(this.cut.size / 4); pass.dispatchWorkgroups(cg, cg, cg);
+    }
+    this.cut.mode = 0;
     // bleeding and blood flow over the wound box
     if (wb.s[0] > 0 && wb.s[1] > 0 && wb.s[2] > 0) {
       pass.setBindGroup(0, this.g0s); pass.setBindGroup(1, this.gTemp[0]); pass.setBindGroup(2, this.g2b);
@@ -317,7 +361,7 @@ export class PhysicsPipeline {
     if (this.slice.enabled) enc.copyBufferToBuffer(this.sliceBuf, 0, this.sliceReadback, 0, SLICE_W * SLICE_H * 4);
     if (this.probe && this.probePending && this.probe.readback.mapState === 'unmapped') { enc.copyBufferToBuffer(this.probe.probes, 0, this.probe.readback, 0, this.probe.n * 16); this.probePending = false; }
     this.simTime += dtFrame;
-    return hot;
+    return hot || cutting;
   }
 
   /** Async readback of the cross-section image into slicePixels. Returns true when updated. */
@@ -349,7 +393,8 @@ export class PhysicsPipeline {
       r.sealedVoxels = u[23]; r.charPlugVoxels = u[24]; r.rebleeds = u[25]; r.poolMl = u[26] / 2e6; r.poolAtTipMm = u[27] / 1000; // pool stats are accumulated by both flow commits per frame (nanolitres)
       const nb = Math.min(u[28], 8); r.bleedPoints = [];
       for (let n = 0; n < nb; n++) r.bleedPoints.push([f[32 + n * 4], f[33 + n * 4], f[34 + n * 4], f[35 + n * 4]]);
-      this.totals.vapVoxels += r.vapVoxels;
+      r.cutVoxels = u[64]; r.bluntVoxels = u[65]; r.bluntResist = u[66]; r.vesselStretch = u[67]; r.nerveStretch = u[68]; r.oozeVoxels = u[69]; r.vesselTorn = u[70];
+      this.totals.vapVoxels += r.vapVoxels; this.totals.cutVoxels += r.cutVoxels; this.totals.bluntVoxels += r.bluntVoxels;
     } catch { /* in flight */ }
     return this.readout;
   }

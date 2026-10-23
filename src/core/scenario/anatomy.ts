@@ -1,5 +1,5 @@
 import { Scenario } from './schema';
-import { Volume, VolumeDims, packCell, FLAG_DERMAL_PLEXUS, FLAG_FIBRE_X } from '../volume';
+import { Volume, VolumeDims, packCell, cellType, FLAG_DERMAL_PLEXUS, FLAG_FIBRE_X, FLAG_SEALED } from '../volume';
 import { Tissue, TISSUE } from '../tissueProperties';
 import { mulberry32, fbm2, voronoi2 } from '../noise';
 
@@ -268,5 +268,18 @@ export function carveSdf(volume: Volume, sdf: (x: number, y: number, depth: numb
       volume.occupancy[idx] = Math.min(volume.occupancy[idx], keep);
       if (volume.occupancy[idx] < 0.5) volume.cell[idx] = 0;
     }
+  }
+  sealDermalEdges(volume);
+}
+
+/** A pre-made wound is not fresh: its dermal edges have stopped oozing (only a new scalpel cut oozes). */
+export function sealDermalEdges(volume: Volume) {
+  const { nx, ny, nz } = volume.dims;
+  const air = (i: number, j: number, k: number) => i < 0 || j < 0 || k < 0 || i >= nx || j >= ny || k >= nz || volume.occupancy[volume.index(i, j, k)] < 0.5;
+  for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const idx = volume.index(i, j, k);
+    const c = volume.cell[idx];
+    if (cellType(c) !== Tissue.Dermis || !(c & FLAG_DERMAL_PLEXUS) || volume.occupancy[idx] < 0.5) continue;
+    if (air(i + 1, j, k) || air(i - 1, j, k) || air(i, j + 1, k) || air(i, j - 1, k) || air(i, j, k + 1) || air(i, j, k - 1)) volume.cell[idx] = (c | FLAG_SEALED) >>> 0;
   }
 }

@@ -11,6 +11,7 @@
 #pragma kernel BloodFlow
 #pragma kernel BloodCommit
 #pragma kernel CoaptMark
+#pragma kernel MechCut
 #pragma kernel ConstraintProbe
 #pragma kernel Pick
 #pragma kernel Slice
@@ -40,6 +41,13 @@ int4 _WBox0;       // wound box origin, w = substeps this frame
 int4 _WBox1;       // wound box size
 float4 _Tool2;     // secondary tool point A (mm), w = radius (mm)
 float4 _Tool2B;    // secondary tool point B (mm), w = mode (0 none, 1 grasp, 2 suction)
+// mechanical cut (scalpel blade, scissor snip, blunt spread): a rounded box swept from _Cut0 to _Cut1
+float4 _Cut0;      // blade box centre at the previous pose (mm), w = mode (0 none, 1 sharp, 2 blunt)
+float4 _Cut1;      // blade box centre now (mm), w = rounding radius (mm)
+float4 _CutAxis;   // unit axis tip->handle, w = half length (mm)
+float4 _CutW;      // unit width direction (along the edge / the spread), w = half width (mm)
+float4 _CutN;      // unit blade normal, w = half thickness (mm)
+int4 _CBox0;       // cut dispatch box origin (voxels), w = size
 int _DropCount;
 int _SegCount;
 
@@ -86,6 +94,14 @@ RWStructuredBuffer<uint> _RimHist;     // 16 bins: distance (voxels) from a dama
 #define ST_POOLTIP 27
 #define ST_BLEEDN 28
 #define ST_BLEEDPTS 32
+// mechanical cut and blunt dissection this frame (words 64..71)
+#define ST_CUT 64
+#define ST_BLUNT 65
+#define ST_RESIST 66
+#define ST_STRETCH 67
+#define ST_NERVE 68
+#define ST_OOZE 69
+#define ST_TORN 70
 
 static const float SIGMA_BLOOD = 0.7;
 static const float BLOOD_RHO_C = 1050.0 * 3617.0;
@@ -97,6 +113,9 @@ static const float SOR_OMEGA = 1.5;
 static const float BLOOD_FILM = 0.05;
 static const float BLOOD_VISC = 0.35;
 static const float CLOT_AGE = 60.0;
+// capillary ooze from a freshly divided dermal edge (ml/s per 0.25 mm voxel face); stops by itself within minutes or at once when coagulated
+static const float PLEXUS_OOZE_ML_S = 4.0e-6;
+static const float PLEXUS_OOZE_MEAN_S = 120.0;
 
 struct TProp { float sigma, k, rho, c, wb, water, eaR, lnA; };
 TProp Prop(uint t)
@@ -423,12 +442,25 @@ void BloodSource(uint3 gid : SV_DispatchThreadID)
     uint idx = Idx3(i, j, k);
     uint c = _Cells[idx];
     uint ty = CellType(c);
-    if ((ty != T_ARTERY && ty != T_VEIN) || _Occ[idx] < 0.5) return;
-    if (!HasAirNeighbour(i, j, k)) return;
+    if (_Occ[idx] < 0.5) return;
     float dt = _DT.x * _WBox0.w;
     float t = _DT.y;
-    float r = max(CellAux(c) * 0.05, 0.1);
     uint dummy;
+    // dermal plexus: a freshly divided skin edge oozes until it clots (one draw per 50 ms) or is coagulated
+    if (ty == T_DERMIS)
+    {
+        if ((c & FLAG_DERMAL_PLEXUS) == 0u || (c & FLAG_SEALED) != 0u || CellState(c) != S_NORMAL || !HasAirNeighbour(i, j, k)) return;
+        if (Hash13(float3(idx & 0xffffu, idx >> 16, floor(t * 20.0))) < 0.05 / PLEXUS_OOZE_MEAN_S) { _Cells[idx] = c | FLAG_SEALED; return; }
+        InterlockedAdd(_State[ST_OOZE], 1u, dummy);
+        float volUlOoze = PLEXUS_OOZE_ML_S * (HMM * HMM) / (0.25 * 0.25) * dt * 1000.0;
+        uint cio = ColIdx(i, j);
+        float4 bco = _Blood[cio]; bco.x += volUlOoze / (HMM * HMM); _Blood[cio] = bco;
+        if (Hash13(float3(idx, t, 2.0)) < volUlOoze) InterlockedAdd(_State[ST_BLOODLOST], 1u, dummy);
+        return;
+    }
+    if (ty != T_ARTERY && ty != T_VEIN) return;
+    if (!HasAirNeighbour(i, j, k)) return;
+    float r = max(CellAux(c) * 0.05, 0.1);
     if ((c & FLAG_CHARPLUG) != 0u)
     {
         float p = clamp((r - 0.5) / 1.5, 0.0, 0.9) * 0.15 * dt;
@@ -577,6 +609,73 @@ void CoaptMark(uint3 gid : SV_DispatchThreadID)
     bool inside = d <= rad && _Tool2B.w > 0.5 && _Tool2B.w < 1.5;
     if (inside) c |= FLAG_COAPTED; else c &= ~FLAG_COAPTED;
     _Cells[idx] = c;
+}
+
+// ------------------------------------------------------------------ mechanical cut and blunt dissection
+// Signed distance (mm) from a point to the blade box (half extents along _CutAxis / _CutW / _CutN) centred at c, rounded by _Cut1.w.
+// Largest radius (mm) of a vessel in the 6-neighbourhood: blunt spreading leaves such a vessel in its fat cuff.
+float VesselNeighbourRadius(int i, int j, int k)
+{
+    float r = 0.0;
+    [unroll] for (int n = 0; n < 6; n++)
+    {
+        int3 o = NB6[n]; int ii = i + o.x, jj = j + o.y, kk = k + o.z;
+        if (!InVolume(ii, jj, kk)) continue;
+        uint c = _Cells[Idx3(ii, jj, kk)]; uint ty = CellType(c);
+        if ((ty == T_ARTERY || ty == T_VEIN) && _Occ[Idx3(ii, jj, kk)] >= 0.5) r = max(r, CellAux(c) * 0.05);
+    }
+    return r;
+}
+
+float CutBoxDistance(float3 p, float3 centre)
+{
+    float3 rel = p - centre;
+    float3 q = float3(abs(dot(rel, _CutAxis.xyz)) - _CutAxis.w, abs(dot(rel, _CutW.xyz)) - _CutW.w, abs(dot(rel, _CutN.xyz)) - _CutN.w);
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - _Cut1.w;
+}
+
+// Steel against tissue, no heat. Sharp (mode 1): a scalpel blade or closing scissor blades sweep from _Cut0 to _Cut1 and
+// divide everything in their path, leaving fractional occupancy at the face. Blunt (mode 2): closed tips are spread;
+// fat parts (so the plane around a capsule opens), small vessels tear, and septa, fasciae, skin, muscle, the capsule and
+// the lipoma resist and are counted; vessels over 0.3 mm keep their fat cuff and, like nerves in the wedge, are counted as stretched.
+[numthreads(4, 4, 4)]
+void MechCut(uint3 gid : SV_DispatchThreadID)
+{
+    int S = _CBox0.w;
+    if ((int)gid.x >= S || (int)gid.y >= S || (int)gid.z >= S) return;
+    int i = _CBox0.x + (int)gid.x, j = _CBox0.y + (int)gid.y, k = _CBox0.z + (int)gid.z;
+    if (!InVolume(i, j, k)) return;
+    uint idx = Idx3(i, j, k);
+    uint c = _Cells[idx];
+    uint ty = CellType(c);
+    if (ty == T_AIR || _Occ[idx] < 0.5) return;
+    float3 p = WorldOf(i, j, k);
+    float3 a = _Cut0.xyz, b = _Cut1.xyz;
+    int n = clamp((int)ceil(length(b - a) / (0.5 * HMM)), 1, 16);
+    float d = 1e9;
+    for (int s = 0; s <= n; s++) d = min(d, CutBoxDistance(p, lerp(a, b, s / (float)n)));
+    if (d >= HMM) return;
+    uint dummy;
+    if (_Cut0.w > 1.5)
+    {
+        if (d >= 0.0) return;
+        float r = CellAux(c) * 0.05;
+        bool yields = ty == T_FAT;
+        // fat around a vessel over 0.3 mm stays as its cuff: the vessel is tented in the spread, not bared and left to bleed
+        if (yields && VesselNeighbourRadius(i, j, k) > 0.3) { yields = false; InterlockedAdd(_State[ST_STRETCH], 1u, dummy); }
+        else if (ty == T_ARTERY || ty == T_VEIN) { if (r <= 0.3) { yields = true; InterlockedAdd(_State[ST_TORN], 1u, dummy); } else InterlockedAdd(_State[ST_STRETCH], 1u, dummy); }
+        else if (ty == T_NERVE) InterlockedAdd(_State[ST_NERVE], 1u, dummy);
+        else if (!yields) InterlockedAdd(_State[ST_RESIST], 1u, dummy);
+        if (!yields) return;
+        _Occ[idx] = 0.0; _Cells[idx] = 0u; _Water[idx] = 0.0;
+        InterlockedAdd(_State[ST_BLUNT], 1u, dummy);
+        return;
+    }
+    float keep = saturate(0.5 + d / HMM);
+    float o = min(_Occ[idx], keep);
+    if (o >= _Occ[idx]) return;
+    _Occ[idx] = o;
+    if (o < 0.5) { _Cells[idx] = 0u; _Water[idx] = 0.0; InterlockedAdd(_State[ST_CUT], 1u, dummy); }
 }
 
 // ------------------------------------------------------------------ mechanics constraint probe

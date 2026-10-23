@@ -13,6 +13,8 @@ export class OrbitCamera {
   readonly viewProj = mat4.create();
   readonly position = vec3.create();
   private dragging: 'orbit' | 'pan' | null = null;
+  /** false while an instrument is holding tissue: the wheel then lifts it instead of zooming */
+  zoomEnabled = true;
   private last = [0, 0];
 
   attach(el: HTMLElement) {
@@ -42,7 +44,7 @@ export class OrbitCamera {
     const end = () => { this.dragging = null; };
     el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
     // Ctrl + wheel is the depth peel (main.ts); plain wheel zooms
-    el.addEventListener('wheel', (e) => { e.preventDefault(); if (e.ctrlKey) return; this.distance = Math.min(600, Math.max(25, this.distance * Math.exp(e.deltaY * 0.001))); }, { passive: false });
+    el.addEventListener('wheel', (e) => { e.preventDefault(); if (e.ctrlKey || !this.zoomEnabled) return; this.distance = Math.min(600, Math.max(25, this.distance * Math.exp(e.deltaY * 0.001))); }, { passive: false });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 

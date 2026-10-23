@@ -75,6 +75,38 @@
     {
       "type": "lesion.breached",
       "text": "You have entered the lipoma. Fat spills, the plane is lost and fragments left behind recur."
+    },
+    {
+      "type": "incision.made",
+      "text": "Steel divides without heat: the edges are clean and there is no thermal rim. Counter-traction with the other hand keeps the line straight and opens the incision as you go."
+    },
+    {
+      "type": "skin.oozing",
+      "text": "The dermal plexus oozes from a fresh skin edge. It stops by itself in a minute or two; a touch of coag on a persistent point is enough. Do not paint the whole edge."
+    },
+    {
+      "type": "plane.developed",
+      "text": "Fat parts along the plane of least resistance: spreading finds the capsule without cutting into it. Stay on the shiny surface."
+    },
+    {
+      "type": "plane.resists",
+      "text": "That does not spread: a septum, fascia or the capsule itself. Divide it sharply (scissors, or a light cut with the pencil) and spread again beyond it."
+    },
+    {
+      "type": "vessel.stretched",
+      "text": "A vessel is tented in the spread. Stop, see it, control it (grasp and buzz, or tie) before it tears."
+    },
+    {
+      "type": "vessel.torn",
+      "text": "A small vessel tore under blunt force. It will ooze: grasp the end and buzz it."
+    },
+    {
+      "type": "nerve.stretched",
+      "text": "A nerve is being stretched. Traction injury is as real as thermal injury: ease off and dissect around it."
+    },
+    {
+      "type": "instrument.contact",
+      "text": "The active electrode touched another instrument. Current left through it and burned the tissue under it, an alternate-site burn where you were not looking. Keep the pencil clear of other metal."
     }
   ]
 }

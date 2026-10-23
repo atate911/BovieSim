@@ -4,10 +4,13 @@ import lipoma from '../scenarios/lipoma.json';
 import { validateScenario } from '@/core/scenario/schema';
 import { ForcepsTool } from '@/tools/forceps';
 import { SuctionTool } from '@/tools/suction';
-import { ToolKind, TOOL_ORDER, TOOL_LABEL } from '@/tools/instrument';
-import { buildForcepsArm, buildFrazier, buildSkinHook } from '@/render/meshes';
+import { ScalpelTool } from '@/tools/scalpel';
+import { ScissorsTool } from '@/tools/scissors';
+import { HandController } from '@/tools/hands';
+import { ToolKind, TOOL_ORDER, TOOL_LABEL, HandBKind, HAND_B_ORDER, metalDistance } from '@/tools/instrument';
+import { buildForcepsArm, buildFrazier, buildSkinHook, buildScalpel, buildScissorsArm } from '@/render/meshes';
 import { mat4, vec4 } from 'gl-matrix';
-import { Lattice } from '@/mechanics/lattice';
+import { Lattice, Attachment } from '@/mechanics/lattice';
 import { HookTool } from '@/tools/hooks';
 import { buildAnatomy, carveSdf } from '@/core/scenario/anatomy';
 import { initWebGPU } from '@/render/gpu';
@@ -33,14 +36,21 @@ const headless = params.get('headless') === '1';
 const voxelOverride = params.has('voxel') ? parseFloat(params.get('voxel')!) : undefined;
 const seedOverride = params.has('seed') ? parseInt(params.get('seed')!, 10) : undefined;
 let debugMode = params.has('debug') ? parseInt(params.get('debug')!, 10) : 0;
-/** scripted activation for headless checks: auto=cut|coag,watts,seconds[,ndcX0,ndcY0[,ndcX1,ndcY1]] (moves linearly over the duration) */
+/** scripted activation for headless checks: auto=cut|coag|none,watts,seconds[,ndcX0,ndcY0[,ndcX1,ndcY1]] (moves linearly over the duration) */
 const auto = params.get('auto')?.split(',') ?? null;
 const SCENARIOS: Record<string, unknown> = { freeplay, hemostasis, lipoma };
 const scenarioId = params.get('scenario') ?? 'freeplay';
-/** headless: starting tool and whether forceps jaws are closed during the scripted activation */
+/** headless: starting instruments (dominant hand, and the non-dominant hand), and whether the button is held during the script */
 const toolParam = (params.get('tool') ?? 'pencil') as ToolKind;
-const graspParam = params.get('grasp') === '1';
+const handBParam = (params.get('handB') ?? 'none') as HandBKind;
+const graspParam = params.get('grasp') === '1' || params.get('press') === '1';
 const holdParam = params.get('hold') === '1';
+/** headless: Ctrl held (scissors spread) */
+const spreadParam = params.get('spread') === '1';
+/** headless: Space held (the pointer drives the non-dominant hand) for this many seconds of sim time */
+const spaceUntil = params.has('space') ? parseFloat(params.get('space')!) : -1;
+/** headless: offset of the non-dominant hand's drag target from the pointer (x, z mm): a retraction pull */
+const pullParam = params.get('pull')?.split(',').map(parseFloat) ?? null;
 /** headless: raise the held instrument at this rate (mm/s) after 0.5 s, to simulate lifting out a freed lesion */
 const liftRate = params.has('lift') ? parseFloat(params.get('lift')!) : 0;
 /** headless: aim the cursor at a bed point (x, z mm on the tissue surface) instead of NDC coordinates */
@@ -81,7 +91,6 @@ async function main() {
     renderer.attachLattice(lattice.infoData(), lattice.count);
     physics.setConstraintSegments(lattice.segmentData(volume), lattice.constraints.length);
   }
-  const hook = new HookTool();
   let lesionFreedReported = false, lesionDelivered = false, lesionBreachReported = false, clusterRiseMm = 0;
   const cam = new OrbitCamera();
   cam.attach(canvas);
@@ -98,20 +107,44 @@ async function main() {
   };
 
   renderer.addMesh(buildDrapes(sx / 2, sz / 2), 'drapes', [0.12, 0.22, 0.40], { rough: 0.9, kind: 1 });
+  const steel: [number, number, number] = [0.85, 0.85, 0.86];
   const pencilBody = renderer.addMesh(buildPencilBody(), 'pencilBody', [0.92, 0.86, 0.72], { rough: 0.45 });
   const pencilButtons = renderer.addMesh(buildPencilButtons(), 'pencilButtons', [0.85, 0.75, 0.1], { rough: 0.5 });
-  const blade = renderer.addMesh(buildBlade(), 'blade', [0.85, 0.85, 0.86], { rough: 0.25, metallic: 1 });
+  const blade = renderer.addMesh(buildBlade(), 'blade', steel, { rough: 0.25, metallic: 1 });
 
+  // ---- instruments: the dominant hand (A, the pointer) and the non-dominant hand (B, driven while Space is held, then latched)
+  const hands = new HandController();
   const tool = new ElectrodeTool();
+  const scalpel = new ScalpelTool();
+  const scissors = new ScissorsTool();
   const forceps = new ForcepsTool();
   const suction = new SuctionTool();
-  const forcepsA = renderer.addMesh(buildForcepsArm(), 'forcepsA', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
-  const forcepsB = renderer.addMesh(buildForcepsArm(), 'forcepsB', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
+  const hook = new HookTool();
+  const forcepsB = new ForcepsTool();
+  const suctionB = new SuctionTool();
+  const hookB = new HookTool();
+  const scalpelMesh = renderer.addMesh(buildScalpel(), 'scalpel', steel, { rough: 0.3, metallic: 1 });
+  const scissorsA = renderer.addMesh(buildScissorsArm(scissors.jawLength, scissors.shankLength), 'scissorsA', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
+  const scissorsB = renderer.addMesh(buildScissorsArm(scissors.jawLength, scissors.shankLength), 'scissorsB', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
+  const forcepsArmA = renderer.addMesh(buildForcepsArm(), 'forcepsA', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
+  const forcepsArmB = renderer.addMesh(buildForcepsArm(), 'forcepsB', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
   const frazier = renderer.addMesh(buildFrazier(), 'frazier', [0.8, 0.8, 0.82], { rough: 0.35, metallic: 1 });
   const hookMesh = renderer.addMesh(buildSkinHook(), 'hook', [0.8, 0.8, 0.82], { rough: 0.3, metallic: 1 });
-  const hookModel = mat4.create();
-  let activeTool: ToolKind = TOOL_ORDER.includes(toolParam) ? toolParam : 'pencil';
+  const forcepsBArmA = renderer.addMesh(buildForcepsArm(), 'forcepsBA', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
+  const forcepsBArmB = renderer.addMesh(buildForcepsArm(), 'forcepsBB', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
+  const frazierB = renderer.addMesh(buildFrazier(), 'frazierB', [0.8, 0.8, 0.82], { rough: 0.35, metallic: 1 });
+  const hookMeshB = renderer.addMesh(buildSkinHook(), 'hookB', [0.8, 0.8, 0.82], { rough: 0.3, metallic: 1 });
+  let toolA: ToolKind = TOOL_ORDER.includes(toolParam) ? toolParam : 'pencil';
+  let toolB: HandBKind = HAND_B_ORDER.includes(handBParam) ? handBParam : 'none';
   let pencilElectrode: 'blade' | 'needle' | 'ball' = 'blade';
+  /** last pick for each hand (the GPU pick follows the pointer, which serves one hand at a time) */
+  let hitA: vec3 | null = null, hitB: vec3 | null = null;
+  /** lattice node each hand is holding, and the traction target (frozen while hand B is latched) */
+  let nodeA = -1, nodeB = -1;
+  const targetB = vec3.create();
+  /** lift (mm) from the wheel while holding */
+  let liftA = 0, liftB = 0;
+  let spaceHeld = false;
   const pointer = attachPointer(canvas);
   const pedal = new Pedal();
   const gen = new FT10({ cutMode: scenario.generator.cutMode, coagMode: scenario.generator.coagMode, cutWatts: scenario.generator.cutWatts, coagWatts: scenario.generator.coagWatts });
@@ -136,9 +169,16 @@ async function main() {
   let peelMode = 0, peelMm = 3;
   if (peelParam) { peelMode = peelParam[0] === 'dissect' ? 2 : peelParam[0] === 'block' ? 1 : 0; if (peelParam[1] !== undefined && isFinite(parseFloat(peelParam[1]))) peelMm = parseFloat(peelParam[1]); }
   const stepPeel = (d: number) => { peelMm = Math.min(bedDepthMm, Math.max(0, peelMm + d)); };
-  canvas.addEventListener('wheel', (e) => { if (e.ctrlKey) stepPeel(e.deltaY * 0.0025); }, { passive: true });
+  canvas.addEventListener('wheel', (e) => {
+    if (e.ctrlKey) { stepPeel(e.deltaY * 0.0025); return; }
+    // the wheel lifts an instrument that is holding tissue (traction, delivering a freed lipoma); otherwise it zooms (camera.ts)
+    if (spaceHeld && hands.engagedB) liftB = Math.min(15, Math.max(0, liftB - e.deltaY * 0.01));
+    else if (!spaceHeld && nodeA >= 0) liftA = Math.min(15, Math.max(0, liftA - e.deltaY * 0.01));
+  }, { passive: true });
+  window.addEventListener('keyup', (e) => { if (e.code === 'Space') spaceHeld = false; });
   window.addEventListener('keydown', (e) => {
     const scrub = e.code === 'Comma' || e.code === 'Period' || e.code === 'PageDown' || e.code === 'PageUp';
+    if (e.code === 'Space') { spaceHeld = true; e.preventDefault(); return; }
     if (e.repeat && !scrub) return;
     switch (e.code) {
       case 'Digit1': gen.settings.cutMode = 'pure'; break;
@@ -154,8 +194,11 @@ async function main() {
       case 'KeyB': pencilElectrode = 'blade'; break;
       case 'KeyN': pencilElectrode = 'needle'; break;
       case 'KeyO': pencilElectrode = 'ball'; break;
-      case 'Tab': case 'KeyQ': activeTool = TOOL_ORDER[(TOOL_ORDER.indexOf(activeTool) + 1) % TOOL_ORDER.length]; e.preventDefault(); break;
-      case 'KeyT': forceps.toothed = !forceps.toothed; break;
+      case 'Tab': case 'KeyQ':
+        if (e.shiftKey) { toolB = HAND_B_ORDER[(HAND_B_ORDER.indexOf(toolB) + 1) % HAND_B_ORDER.length]; hands.releaseB(); nodeB = -1; liftB = 0; }
+        else { toolA = TOOL_ORDER[(TOOL_ORDER.indexOf(toolA) + 1) % TOOL_ORDER.length]; nodeA = -1; liftA = 0; }
+        e.preventDefault(); break;
+      case 'KeyT': forceps.toothed = !forceps.toothed; forcepsB.toothed = forceps.toothed; break;
       case 'KeyR': tool.roll += Math.PI / 4; break;
       case 'KeyV': debugMode = (debugMode + 1) % 4; scene.debugMode = debugMode; break;
       case 'KeyC': physics.slice.mode = (physics.slice.mode + 1) % 6; break;
@@ -175,7 +218,7 @@ async function main() {
     pointer.ndcY = auto[4] !== undefined ? parseFloat(auto[4]) : -0.1;
     pointer.inside = true;
     const watts = parseInt(auto[1], 10);
-    if (auto[0] === 'cut') gen.settings.cutWatts = watts; else gen.settings.coagWatts = watts;
+    if (auto[0] === 'cut') gen.settings.cutWatts = watts; else if (auto[0] === 'coag') gen.settings.coagWatts = watts;
     autoUntil = parseFloat(auto[2]);
   }
 
@@ -183,6 +226,7 @@ async function main() {
   let frames = 0, fps = 0, lastFpsT = performance.now(), lastT = performance.now(), frameIndex = 0;
   let vertexCount = 0;
   let autoDone = false;
+  const HIDE = mat4.fromTranslation(mat4.create(), [0, -1e4, 0]);
   const loop = async () => {
     const now = performance.now();
     const frameDt = headless ? headlessDt : Math.min(0.05, (now - lastT) / 1000); // headless: fixed-step sim time
@@ -202,15 +246,22 @@ async function main() {
     // generator activation: pedal, hand switch, or script
     if (auto && headless) {
       if (physics.simTime < autoUntil) {
-        gen.activation = auto[0] === 'coag' ? 'coag' : 'cut';
+        gen.activation = auto[0] === 'coag' ? 'coag' : auto[0] === 'cut' ? 'cut' : 'none';
         if (auto[5] !== undefined && !aim) {
           const f = Math.min(1, physics.simTime / autoUntil);
           pointer.ndcX = parseFloat(auto[3]) + (parseFloat(auto[5]) - parseFloat(auto[3])) * f;
           pointer.ndcY = parseFloat(auto[4]) + (parseFloat(auto[6]) - parseFloat(auto[4])) * f;
         }
       } else { gen.activation = 'none'; if (!autoDone && physics.simTime > autoUntil + 0.5) autoDone = true; }
-    } else {
-      gen.activation = pedal.cut || pointer.handCut || panel.pedalCut ? 'cut' : pedal.coag || pointer.handCoag || panel.pedalCoag ? 'coag' : 'none';
+      spaceHeld = physics.simTime < spaceUntil;
+    }
+    // the button: pointer, or the headless script; the hand controller decides which hand it belongs to
+    const rawPressed = (pointer.buttons & 1) === 1 || (auto !== null && headless && graspParam && (holdParam || physics.simTime < autoUntil + 0.5));
+    hands.update(spaceHeld, rawPressed);
+    const pressedA = hands.pressedA;
+    const ctrl = pointer.ctrl || (headless && spreadParam);
+    if (!(auto && headless)) {
+      gen.activation = pedal.cut || (pointer.handCut && pressedA) || panel.pedalCut ? 'cut' : pedal.coag || (pointer.handCoag && pressedA) || panel.pedalCoag ? 'coag' : 'none';
     }
     panel.refresh(); panel.update(physics.readout.zOhm, physics.readout.powerW);
     const mode = gen.activeMode;
@@ -220,70 +271,137 @@ async function main() {
     const r = physics.readout;
     // the GPU pick marches in material space; instruments are posed on the deformed surface for display,
     // while the physics keeps material coordinates (the ElectrodeTool is placed from the material hit)
-    const hit = pointer.inside ? r.hit : null;
-    const hitWorld = hit && mechanicsOn ? vec3.add(vec3.create(), hit, lattice.displacementAt(hit)) : hit;
-    void hitWorld;
+    const pick = pointer.inside ? r.hit : null;
+    if (hands.followB) hitB = pick; else if (!spaceHeld) hitA = pick;
     const tilt = pointer.isPen && (Math.abs(pointer.tiltX) > 2 || Math.abs(pointer.tiltY) > 2) ? { x: pointer.tiltX, y: pointer.tiltY } : null;
-    const pressed = (pointer.buttons & 1) === 1 || (auto !== null && headless && graspParam && (holdParam || physics.simTime < autoUntil + 0.5));
     tool.pressure = pointer.pressure; tool.tiltX = pointer.tiltX; tool.tiltY = pointer.tiltY;
-    const HIDE = mat4.fromTranslation(mat4.create(), [0, -1e4, 0]);
+    scalpel.pressure = pointer.pressure; scissors.pressure = pointer.pressure;
     let suctionAt: vec3 | null = null;
-    events.buzzing = false; events.suctionOn = false;
-    if (activeTool === 'pencil') {
+    events.buzzing = false; events.suctionOn = false; events.instrumentContact = false;
+    lattice.attachments.length = 0;
+    const attachments: Attachment[] = lattice.attachments;
+    let tool2: { a: vec3; b: vec3; r: number; mode: 0 | 1 | 2 } = { a: vec3.create(), b: vec3.create(), r: 0, mode: 0 };
+
+    // ---- hand B (non-dominant): forceps, hook or suction; live while Space is held, latched where it was left
+    let showB = toolB !== 'none' && hands.stateB !== 'parked';
+    if (toolB === 'none') { hands.releaseB(); nodeB = -1; }
+    if (!hands.engagedB) { nodeB = -1; liftB = 0; }
+    if (showB) {
+      const follow = hands.followB;
+      const hb = follow ? hitB : null;
+      if (toolB === 'forceps') {
+        forcepsB.closed = hands.engagedB;
+        if (follow) forcepsB.place(hb ? vec3.fromValues(hb[0], hb[1] + liftB, hb[2]) : null, cam.position, tilt, 0.3, true);
+        if (!forcepsB.visible && follow) showB = false;
+        if (forcepsB.closed && forcepsB.visible) {
+          if (hands.regrabB || nodeB < 0) nodeB = lattice.nearestNode(forcepsB.mid, 3);
+          if (follow) vec3.scaleAndAdd(targetB, forcepsB.mid, forcepsB.axis, 1.0);
+          if (nodeB >= 0) attachments.push({ node: nodeB, target: vec3.clone(targetB), strength: 0.2 });
+          tool2 = { a: forcepsB.tipA, b: forcepsB.tipB, r: forcepsB.jawRadius, mode: 1 };
+        }
+      } else if (toolB === 'hook') {
+        if (hands.engagedB && hb && (hands.regrabB || nodeB < 0)) nodeB = lattice.nearestNode(hb, 4);
+        if (hands.engagedB && nodeB >= 0 && follow) {
+          // drag target: cursor ray intersected with the horizontal plane 1.5 mm above the node's start height, plus the lift
+          const ray = cam.ray(pointer.ndcX, pointer.ndcY);
+          const planeY = lattice.mat[nodeB * 3 + 1] + 1.5;
+          const tHit = (planeY - ray.origin[1]) / ray.dir[1];
+          if (tHit > 0) {
+            vec3.scaleAndAdd(targetB, ray.origin, ray.dir, tHit);
+            if (pullParam && headless) { targetB[0] += pullParam[0]; targetB[2] += pullParam[1]; }
+            targetB[1] += liftB;
+          }
+        }
+        if (hands.engagedB && nodeB >= 0) attachments.push({ node: nodeB, target: vec3.clone(targetB), strength: 0.25 });
+        if (follow) hookB.place(hb, cam.position, tilt, hands.engagedB && nodeB >= 0 ? targetB : null, true);
+        if (!hookB.visible && follow) showB = false;
+      } else {
+        suctionB.on = hands.engagedB;
+        if (follow) suctionB.place(hb, cam.position, tilt, true);
+        if (!suctionB.visible && follow) showB = false;
+        if (suctionB.visible && suctionB.on) { suctionAt = vec3.clone(suctionB.tip); events.suctionOn = true; tool2 = { a: suctionB.tip, b: suctionB.tip, r: suctionB.drainRadius, mode: 2 }; }
+      }
+    }
+    renderer.setModel(forcepsBArmA, showB && toolB === 'forceps' ? forcepsB.modelA : HIDE); renderer.setModel(forcepsBArmB, showB && toolB === 'forceps' ? forcepsB.modelB : HIDE);
+    renderer.setModel(hookMeshB, showB && toolB === 'hook' ? hookB.model : HIDE);
+    renderer.setModel(frazierB, showB && toolB === 'suction' ? suctionB.model : HIDE);
+
+    // ---- hand A (dominant): the pointer, unless Space hands it to B (then A keeps its last pose)
+    let electrode = false;
+    if (toolA === 'pencil') {
       tool.type = pencilElectrode;
-      tool.place(hit, cam.position, tilt !== null);
+      tool.place(hitA, cam.position, tilt !== null);
+      electrode = tool.visible;
       renderer.setModel(pencilBody, tool.model); renderer.setModel(pencilButtons, tool.model); renderer.setModel(blade, tool.model);
-      renderer.setModel(forcepsA, HIDE); renderer.setModel(forcepsB, HIDE); renderer.setModel(frazier, HIDE); renderer.setModel(hookMesh, HIDE);
-      physics.setSecondaryTool(vec3.create(), vec3.create(), 0, 0);
-    } else if (activeTool === 'forceps') {
-      forceps.closed = pressed;
-      const liftedHit = hit && liftRate > 0 && pressed ? vec3.fromValues(hit[0], hit[1] + liftRate * Math.max(0, physics.simTime - 0.5), hit[2]) : hit;
-      forceps.place(liftedHit, cam.position, tilt);
-      renderer.setModel(forcepsA, forceps.modelA); renderer.setModel(forcepsB, forceps.modelB);
-      renderer.setModel(pencilBody, HIDE); renderer.setModel(pencilButtons, HIDE); renderer.setModel(blade, HIDE); renderer.setModel(frazier, HIDE); renderer.setModel(hookMesh, HIDE);
-      physics.setSecondaryTool(forceps.tipA, forceps.tipB, forceps.jawRadius, forceps.visible && forceps.closed ? 1 : 0);
-      // buzzing the forceps: closed jaws become the electrode; open jaws cannot be activated
-      if (forceps.visible && forceps.closed) { tool.asForceps(forceps.tipA, forceps.tipB, forceps.jawRadius, forceps.axis); events.buzzing = gen.activation !== 'none'; }
-      else { tool.visible = false; if (gen.activation !== 'none') gen.activation = 'none'; }
-    } else if (activeTool === 'suction') {
-      suction.on = pressed;
-      suction.place(hit, cam.position, tilt);
-      renderer.setModel(frazier, suction.model);
-      renderer.setModel(pencilBody, HIDE); renderer.setModel(pencilButtons, HIDE); renderer.setModel(blade, HIDE); renderer.setModel(forcepsA, HIDE); renderer.setModel(forcepsB, HIDE); renderer.setModel(hookMesh, HIDE);
-      physics.setSecondaryTool(suction.tip, suction.tip, suction.drainRadius, suction.visible && suction.on ? 2 : 0);
-      if (suction.visible && suction.on) { suctionAt = vec3.clone(suction.tip); events.suctionOn = true; }
-      tool.visible = false; if (gen.activation !== 'none') gen.activation = 'none';
     } else {
+      renderer.setModel(pencilBody, HIDE); renderer.setModel(pencilButtons, HIDE); renderer.setModel(blade, HIDE);
+    }
+    if (toolA === 'scalpel') {
+      scalpel.place(hitA, cam.position, tilt, pressedA);
+      renderer.setModel(scalpelMesh, scalpel.visible ? scalpel.model : HIDE);
+      if (scalpel.visible && scalpel.cutting) physics.setMechCut(1, scalpel.sweeping ? scalpel.prevCentre : scalpel.centre, scalpel.centre, scalpel.axis, scalpel.wdir, scalpel.ndir, scalpel.halfLength, scalpel.halfWidth, scalpel.halfThickness, 0);
+    } else renderer.setModel(scalpelMesh, HIDE);
+    if (toolA === 'scissors') {
+      const action = pressedA && ctrl ? 'spread' : hands.pressEdgeA ? 'snip' : 'none';
+      scissors.place(hitA, cam.position, tilt, action, frameDt);
+      renderer.setModel(scissorsA, scissors.visible ? scissors.modelA : HIDE); renderer.setModel(scissorsB, scissors.visible ? scissors.modelB : HIDE);
+      if (scissors.visible && scissors.snip) physics.setMechCut(1, scissors.centre, scissors.centre, scissors.axis, scissors.wdir, scissors.ndir, scissors.halfLength, Math.max(scissors.open, 2) / 2, 0.15, 0);
+      else if (scissors.visible && scissors.spreading) physics.setMechCut(2, scissors.centre, scissors.centre, scissors.axis, scissors.wdir, scissors.ndir, scissors.halfLength, scissors.open / 2, 0.4, scissors.spreadRadius);
+    } else { renderer.setModel(scissorsA, HIDE); renderer.setModel(scissorsB, HIDE); }
+    if (toolA === 'forceps') {
+      forceps.closed = pressedA;
+      if (!forceps.closed) { nodeA = -1; liftA = 0; }
+      const lifted = hitA ? vec3.fromValues(hitA[0], hitA[1] + liftA + (liftRate > 0 && pressedA ? liftRate * Math.max(0, physics.simTime - 0.5) : 0), hitA[2]) : null;
+      forceps.place(lifted, cam.position, tilt);
+      renderer.setModel(forcepsArmA, forceps.modelA); renderer.setModel(forcepsArmB, forceps.modelB);
+      if (forceps.visible && forceps.closed) {
+        if (tool2.mode === 0) tool2 = { a: forceps.tipA, b: forceps.tipB, r: forceps.jawRadius, mode: 1 };
+        // closed jaws carry the nearest node (and with it a freed lipoma)
+        if (nodeA < 0) nodeA = lattice.nearestNode(forceps.mid, 3);
+        if (nodeA >= 0) attachments.push({ node: nodeA, target: vec3.scaleAndAdd(vec3.create(), forceps.mid, forceps.axis, 1.0), strength: 0.2 });
+        // buzzing single-handed: the closed jaws are the electrode (a pedal activation)
+        tool.asForceps(forceps.tipA, forceps.tipB, forceps.jawRadius, forceps.axis); electrode = true;
+        events.buzzing = gen.activation !== 'none';
+      }
+    } else { renderer.setModel(forcepsArmA, HIDE); renderer.setModel(forcepsArmB, HIDE); }
+    if (toolA === 'suction') {
+      suction.on = pressedA;
+      suction.place(hitA, cam.position, tilt);
+      renderer.setModel(frazier, suction.model);
+      if (suction.visible && suction.on) { suctionAt = vec3.clone(suction.tip); events.suctionOn = true; if (tool2.mode === 0) tool2 = { a: suction.tip, b: suction.tip, r: suction.drainRadius, mode: 2 }; }
+    } else renderer.setModel(frazier, HIDE);
+    if (toolA === 'hook') {
       // skin hook: press to attach the nearest lattice node, drag to retract, release to let go
       let dragTarget: vec3 | null = null;
-      if (pressed) {
-        if (hook.node < 0 && hit) hook.node = lattice.nearestNode(hit, 4);
-        if (hook.node >= 0) {
-          // drag target: cursor ray intersected with the horizontal plane 2 mm above the node's start height, lifted a little
+      if (pressedA) {
+        if (nodeA < 0 && hitA) nodeA = lattice.nearestNode(hitA, 4);
+        if (nodeA >= 0) {
           const ray = cam.ray(pointer.ndcX, pointer.ndcY);
-          const planeY = lattice.mat[hook.node * 3 + 1] + 1.5;
+          const planeY = lattice.mat[nodeA * 3 + 1] + 1.5;
           const tHit = (planeY - ray.origin[1]) / ray.dir[1];
           dragTarget = tHit > 0 ? vec3.scaleAndAdd(vec3.create(), ray.origin, ray.dir, tHit) : null;
-          lattice.attachments.length = 0;
-          if (dragTarget) lattice.attachments.push({ node: hook.node, target: dragTarget, strength: 0.25 });
+          if (dragTarget) { dragTarget[1] += liftA; attachments.push({ node: nodeA, target: dragTarget, strength: 0.25 }); }
         }
-      } else { hook.node = -1; lattice.attachments.length = 0; }
-      hook.place(hit, cam.position, tilt, dragTarget);
-      mat4.copy(hookModel, hook.model);
-      renderer.setModel(hookMesh, hook.visible ? hookModel : HIDE);
-      renderer.setModel(pencilBody, HIDE); renderer.setModel(pencilButtons, HIDE); renderer.setModel(blade, HIDE); renderer.setModel(forcepsA, HIDE); renderer.setModel(forcepsB, HIDE); renderer.setModel(frazier, HIDE);
-      physics.setSecondaryTool(vec3.create(), vec3.create(), 0, 0);
-      tool.visible = false; if (gen.activation !== 'none') gen.activation = 'none';
+      } else { nodeA = -1; liftA = 0; }
+      hook.place(hitA, cam.position, tilt, dragTarget);
+      renderer.setModel(hookMesh, hook.visible ? hook.model : HIDE);
+    } else renderer.setModel(hookMesh, HIDE);
+    if (toolA !== 'forceps' && toolA !== 'hook') nodeA = -1;
+
+    // ---- the pencil against the other hand's instrument: buzzing the forceps, or an alternate-site burn
+    if (toolA === 'pencil' && tool.visible && showB && gen.activation !== 'none') {
+      if (toolB === 'forceps' && forcepsB.closed && metalDistance(tool.tip, forcepsB.mid, forcepsB.axis, 45, 1.6) < 1.0) {
+        tool.asForceps(forcepsB.tipA, forcepsB.tipB, forcepsB.jawRadius, forcepsB.axis); events.buzzing = true;
+      } else if (toolB === 'hook' && hookB.visible && metalDistance(tool.tip, hookB.tip, hookB.axis, 40, 1.0) < 1.0) {
+        tool.asForceps(hookB.tip, vec3.scaleAndAdd(vec3.create(), hookB.tip, hookB.axis, 1.5), 0.4, hookB.axis); events.instrumentContact = true;
+      } else if (toolB === 'suction' && suctionB.visible && metalDistance(tool.tip, suctionB.tip, suctionB.axis, 50, 1.7) < 1.0) {
+        tool.asForceps(suctionB.tip, vec3.scaleAndAdd(vec3.create(), suctionB.tip, suctionB.axis, 2.0), 1.5, suctionB.axis); events.instrumentContact = true;
+      }
     }
-    if (activeTool !== 'hook') { if (activeTool !== 'forceps') lattice.attachments.length = 0; }
-    // forceps lift: closed jaws carry the nearest node (and with it a freed lipoma)
-    if (activeTool === 'forceps') {
-      if (forceps.closed && forceps.visible) {
-        if (hook.node < 0) hook.node = lattice.nearestNode(forceps.mid, 3);
-        lattice.attachments.length = 0;
-        if (hook.node >= 0) { const lift = vec3.scaleAndAdd(vec3.create(), forceps.mid, forceps.axis, 1.0); lattice.attachments.push({ node: hook.node, target: lift, strength: 0.2 }); }
-      } else { hook.node = -1; lattice.attachments.length = 0; }
-    }
+    if (!electrode) { tool.visible = false; if (gen.activation !== 'none') gen.activation = 'none'; }
+    physics.setSecondaryTool(tool2.a, tool2.b, tool2.r, tool2.mode);
+    cam.zoomEnabled = !((spaceHeld && hands.engagedB) || (!spaceHeld && nodeA >= 0));
+
     const mode2 = gen.activeMode;
     renderer.setMaterial(pencilButtons, gen.activation === 'cut' ? [1, 0.9, 0.2] : gen.activation === 'coag' ? [0.2, 0.5, 1] : [0.85, 0.75, 0.1], { rough: 0.5, emissive: gen.activation !== 'none' ? 0.6 : 0 });
     scene.arcLight = mode2 && r.hit && tool.visible ? { x: tool.tip[0], y: tool.tip[1] + 1, z: tool.tip[2], intensity: mode2.kind === 'coag' ? 6 : 2.5 } : { x: 0, y: 0, z: 0, intensity: 0 };
@@ -324,7 +442,8 @@ async function main() {
     for (const l of renderer.particles.landings) physics.drops.push(l);
     renderer.particles.landings.length = 0;
     renderer.particles.upload(gpu.device);
-    events.update(physics.simTime, r, gen, activeTool === 'pencil' ? tool.type : activeTool, frameDt);
+    const toolName = (toolA === 'pencil' ? tool.type : toolA) + (toolB !== 'none' ? ` + ${toolB}` : '');
+    events.update(physics.simTime, r, gen, toolName, frameDt);
 
     // mechanics: apply the last probe (severed / shrunk constraints), muscle twitch, step, upload
     if (mechanicsOn) {
@@ -364,15 +483,18 @@ async function main() {
     const hv = r.hit ? `${TISSUE_NAMES[cellType(r.hitCell)]} (${STATE_NAMES[cellState(r.hitCell)]})  ${r.hit[0].toFixed(1)}, ${r.hit[1].toFixed(1)}, ${r.hit[2].toFixed(1)} mm` : '—';
     const cutM = FT10_MODES[gen.settings.cutMode], coagM = FT10_MODES[gen.settings.coagMode];
     const act = gen.activation === 'none' ? 'idle' : `<b>${gen.activation.toUpperCase()} ${gen.activeWatts} W</b>  Z ${isFinite(r.zOhm) && r.zOhm < 1e8 ? r.zOhm.toFixed(0) + ' Ω' : 'open'}  P ${r.powerW.toFixed(1)} W  V ${r.vRms.toFixed(0)} V  contact ${r.contactVoxels} vx`;
+    const handAText = `<b>${TOOL_LABEL[toolA]}</b>${toolA === 'pencil' ? ' (' + pencilElectrode + ')' : toolA === 'forceps' ? (forceps.closed ? ' closed' : ' open') + (forceps.toothed ? ', toothed' : ', smooth') + (liftA > 0 ? `, lifted ${liftA.toFixed(0)} mm` : '') : toolA === 'scalpel' ? ` (${scalpel.cutting ? 'cutting ' + scalpel.depth.toFixed(1) + ' mm deep' : 'hold the button to cut'})` : toolA === 'scissors' ? ` (${scissors.spreading ? 'spreading ' + scissors.open.toFixed(0) + ' mm' : 'click: snip · Ctrl+hold: spread'})` : ''}`;
+    const handBText = toolB === 'none' ? 'none (Shift+Tab)' : `<b>${TOOL_LABEL[toolB]}</b> ${hands.stateB === 'live' ? (hands.engagedB ? 'holding, live' : 'live') : hands.stateB === 'latched' ? 'latched, holding' + (liftB > 0 ? ` (lifted ${liftB.toFixed(0)} mm)` : '') : 'parked (hold Space)'}`;
     hud.innerHTML = `<b>Bovie Sim</b> · ${scenario.name}\n` +
-      `FT10  cut: ${cutM.label} ${gen.settings.cutWatts} W   coag: ${coagM.label} ${gen.settings.coagWatts} W   tool: <b>${TOOL_LABEL[activeTool]}</b>${activeTool === 'pencil' ? ' (' + pencilElectrode + ')' : activeTool === 'forceps' ? (forceps.closed ? ' closed' : ' open') + (forceps.toothed ? ', toothed' : ', smooth') : ''}\n` +
+      `FT10  cut: ${cutM.label} ${gen.settings.cutWatts} W   coag: ${coagM.label} ${gen.settings.coagWatts} W\n` +
+      `right hand: ${handAText}   left hand: ${handBText}\n` +
       `${act}\n` +
-      `max T ${r.maxTempC.toFixed(0)} °C · char ${r.carbonVoxels} vx · vaporised ${physics.totals.vapVoxels.toFixed(0)} vx · sim t ${physics.simTime.toFixed(1)} s\n` +
-      `blood lost ${r.bloodLostMl.toFixed(2)} ml · pooled ${r.poolMl.toFixed(2)} ml · bleeding ends: ${r.exposedArterial} art / ${r.exposedVenous} ven · sealed ${r.sealedVoxels} · char plug ${r.charPlugVoxels} · rebleeds ${r.rebleeds}\n` +
-      `under tip: ${hv}\n` +
+      `max T ${r.maxTempC.toFixed(0)} °C · char ${r.carbonVoxels} vx · vaporised ${physics.totals.vapVoxels.toFixed(0)} vx · cut ${physics.totals.cutVoxels} vx · spread ${physics.totals.bluntVoxels} vx · sim t ${physics.simTime.toFixed(1)} s\n` +
+      `blood lost ${r.bloodLostMl.toFixed(2)} ml · pooled ${r.poolMl.toFixed(2)} ml · bleeding ends: ${r.exposedArterial} art / ${r.exposedVenous} ven${r.oozeVoxels > 0 ? ` · skin edge oozing (${r.oozeVoxels})` : ''} · sealed ${r.sealedVoxels} · char plug ${r.charPlugVoxels} · rebleeds ${r.rebleeds}\n` +
+      `under tip: ${hv}${lattice.capsuleTotal > 0 ? ` · capsule links ${lattice.capsuleAlive}/${lattice.capsuleTotal}${lattice.lipomaFree ? ' FREE' : ''}` : ''}\n` +
       `peel: ${peelMode ? `<b>${peelMode === 1 ? 'block cut' : 'dissection'} ${peelMm.toFixed(1)} mm</b> below the skin (display only; K mode · , . depth · Ctrl+wheel)` : 'off (K)'}\n` +
       `volume ${volume.dims.nx}×${volume.dims.ny}×${volume.dims.nz} @ ${volume.dims.h} mm · tris ${(vertexCount / 3 | 0).toLocaleString()}${vertexCount >= surface.capacity ? ' (CAPPED)' : ''} · ${fps.toFixed(0)} fps\n` +
-      `Z/X pedal cut/coag · LMB hand-switch cut (pencil) / grasp (forceps) / suck (suction) · Tab tool · 1-4 cut mode · 5-6 coag mode · [ ] ; ' watts · B/N/O electrode · T toothed · R roll · V overlay · C section · K peel · RMB orbit`;
+      `Z/X pedal · LMB: hand switch / cut / snip / grasp / suck / catch · Tab right-hand tool · Shift+Tab left-hand tool · hold Space: left hand (release to latch) · wheel while holding: lift · 1-4 5-6 modes · [ ] ; ' watts · B/N/O electrode · T toothed · R roll · V overlay · C section · K peel · RMB orbit`;
     window.__simControl = { setDebug: (n: number) => { debugMode = n; scene.debugMode = n; }, getDebug: () => scene.debugMode, setSlice: (m: number) => { physics.slice.mode = m; },
       /** damage-zone extent in the current section (needs slice mode 2): width and depth in mm of pixels with omega >= ~0.53 */
       measureSlice: () => {
@@ -386,8 +508,12 @@ async function main() {
         return count ? { widthMm: (maxX - minX + 1) / pxPerMmX, depthMm: (maxY + 1) / pxPerMmY - 1.5, pixels: count } : { widthMm: 0, depthMm: 0, pixels: 0 };
       }, setCam: (az: number, el: number, dist: number, tx = 0, tz = 0) => { cam.azimuth = az; cam.elevation = el; cam.distance = dist; cam.target[0] = tx; cam.target[2] = tz; },
       /** depth peel of the 3D view: mode 0 off, 1 block cut, 2 dissection; depth in mm below the skin */
-      setPeel: (mode: number, mm: number) => { peelMode = Math.max(0, Math.min(2, mode | 0)); peelMm = Math.min(bedDepthMm, Math.max(0, mm)); } };
-    window.__sim = { ready: true, frame: frameIndex, events: events.recent(12), tool: activeTool, peel: { mode: peelMode, mm: peelMm }, lipomaFree: lattice.lipomaFree, capsule: [lattice.capsuleAlive, lattice.capsuleTotal], clusterRiseMm,
+      setPeel: (mode: number, mm: number) => { peelMode = Math.max(0, Math.min(2, mode | 0)); peelMm = Math.min(bedDepthMm, Math.max(0, mm)); },
+      /** gap (mm) between the lattice nodes nearest two surface points (x0, z0) and (x1, z1): incision gape and retraction checks */
+      gapAt: (x0: number, z0: number, x1: number, z1: number) => lattice.distanceBetween(vec3.fromValues(x0, 0, z0), vec3.fromValues(x1, 0, z1)),
+      /** displacement (mm) of a lattice node from its material position */
+      nodeDisp: (n: number) => [lattice.pos[n * 3] - lattice.mat[n * 3], lattice.pos[n * 3 + 1] - lattice.mat[n * 3 + 1], lattice.pos[n * 3 + 2] - lattice.mat[n * 3 + 2]] };
+    window.__sim = { ready: true, frame: frameIndex, events: events.recent(12), tool: toolA, toolB, handB: hands.stateB, holdingB: hands.engagedB, nodeB, peel: { mode: peelMode, mm: peelMm }, lipomaFree: lattice.lipomaFree, capsule: [lattice.capsuleAlive, lattice.capsuleTotal], clusterRiseMm,
       gapMm: lattice.distanceBetween(vec3.fromValues(gapPts[0], 0, gapPts[1]), vec3.fromValues(gapPts[2], 0, gapPts[3])), vertexCount, fps, report, readout: { ...r, hit: r.hit ? Array.from(r.hit) : null }, totals: physics.totals, simTime: physics.simTime, autoDone, settings: gen.settings };
     if (!headless) requestAnimationFrame(loop); else setTimeout(loop, 10);
   };
@@ -402,6 +528,8 @@ function carveDemo(volume: Volume, mode: number) {
   if (mode & 4) carveSdf(volume, (x, y, d) => { const r = Math.hypot(x / 1.17, y); return Math.max(Math.abs(r - 7.3) - (1.3 + d * 0.1), d - 14); });
   // 8: undermining plane beneath the lipoma (as with closed scissors), leaving a thin pedicle at the centre
   if (mode & 8) carveSdf(volume, (x, y, d) => Math.max(Math.hypot(x / 1.17, y) - 8.2, Math.abs(d - 14) - 0.6, 1.2 - Math.hypot(x, y)));
+  // 16: a 16 mm trench over a centred lipoma down to its capsule (the scalpel incision, deepened), for dissection checks
+  if (mode & 16) carveSdf(volume, (x, y, d) => Math.max(Math.abs(x) - 8, Math.abs(y) - (0.6 + d * 0.35), d - 3.2));
 }
 
 main().catch((e) => fatal(String(e?.message ?? e)));

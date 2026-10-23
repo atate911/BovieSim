@@ -12,7 +12,7 @@ namespace BovieSim
         public Activation activation; public int activeWatts; public bool remFault;
         public float zOhm = float.PositiveInfinity, powerW, vRms; public int contact;
         public float maxT = 37, vaporised, simTime, bloodLost, pooled, rimMm, charMm3;
-        public int carbon, exposedArt, exposedVen, sealedVx, charPlug, rebleeds, tris; public bool capped;
+        public int carbon, exposedArt, exposedVen, sealedVx, charPlug, rebleeds, tris, oozing, cutVx, bluntVx; public bool capped;
         // timing
         public float frameMs, cpuMs, gpuMs, fps; public int stateAge, heightsAge, surfaceAge;
         // section
@@ -321,7 +321,7 @@ namespace BovieSim
             feed = Box(root);
             feed.style.position = Position.Absolute; feed.style.left = 16f; feed.style.bottom = 40f; feed.style.width = 560f;
             feed.style.justifyContent = Justify.FlexEnd;
-            var hint = Text(root, "F1 brief · F2 controls · F9 settings · V teaching view · K depth peel · P replay · Tab instrument · Z/X pedals", 12, Muted);
+            var hint = Text(root, "F1 brief · F2 controls · F9 settings · V teaching view · K depth peel · P replay · Tab / Shift+Tab instruments · Space left hand · Z/X pedals", 12, Muted);
             hint.style.position = Position.Absolute; hint.style.left = 18f; hint.style.bottom = 14f;
         }
 
@@ -369,9 +369,10 @@ namespace BovieSim
             Heading(help, "Controls · F2");
             string[,] keys = {
                 { "Z / X", "Footswitch cut / coag (or the on-screen pedals)" },
-                { "Left mouse", "Pencil: hand-switch cut (Ctrl = coag). Forceps: grasp. Suction: on. Hook: catch and drag" },
-                { "Space", "Lift the closed forceps (traction, delivering a freed lipoma)" },
-                { "Tab or Q", "Next instrument: pencil, Adson forceps, Frazier suction, skin hook" },
+                { "Left mouse", "Pencil: hand-switch cut (Ctrl = coag). Scalpel: hold to cut. Scissors: click snips, Ctrl + hold spreads. Forceps: grasp. Suction: on. Hook: catch and drag" },
+                { "Space (hold)", "The pointer drives the left hand: press to grasp or catch, drag to pull. Release Space to leave it holding where it is" },
+                { "Wheel while holding", "Lift the held tissue (traction, delivering a freed lipoma)" },
+                { "Tab or Q · Shift+Tab", "Right-hand instrument: pencil, scalpel, scissors, forceps, suction, hook · left-hand instrument: none, forceps, hook, suction" },
                 { "1-4 / 5-6", "Cut mode Pure, Blend, Low, Valleylab / coag Fulgurate, Spray" },
                 { "[ ]  ; '", "Cut / coag watts −5 +5 (Shift: 1 W)" },
                 { "B N O · R · T", "Blade, needle, ball · roll the blade 45° · toothed / smooth forceps" },
@@ -527,9 +528,9 @@ namespace BovieSim
             rows["tool"].text = d.toolText;
             rows["under"].text = d.underTip;
             rows["temp"].text = d.maxT.ToString("0") + " °C"; rows["temp"].style.color = d.maxT >= 100 ? BadC : d.maxT >= 60 ? WarnC : Ink;
-            rows["char"].text = d.charMm3.ToString("0.0") + " mm³ / " + d.vaporised.ToString("0") + " vx"; rows["char"].style.color = d.carbon > 0 ? BadC : Ink;
+            rows["char"].text = d.charMm3.ToString("0.0") + " mm³ / " + d.vaporised.ToString("0") + " vx" + (d.cutVx > 0 ? " · steel " + d.cutVx + " vx" : "") + (d.bluntVx > 0 ? " · spread " + d.bluntVx + " vx" : ""); rows["char"].style.color = d.carbon > 0 ? BadC : Ink;
             rows["blood"].text = d.bloodLost.ToString("0.00") + " ml / " + d.pooled.ToString("0.00") + " ml";
-            rows["ends"].text = d.exposedArt + " arterial · " + d.exposedVen + " venous"; rows["ends"].style.color = d.exposedArt > 0 ? BadC : d.exposedVen > 0 ? WarnC : Ink;
+            rows["ends"].text = d.exposedArt + " arterial · " + d.exposedVen + " venous" + (d.oozing > 0 ? " · skin edge oozing" : ""); rows["ends"].style.color = d.exposedArt > 0 ? BadC : d.exposedVen > 0 ? WarnC : Ink;
             rows["seal"].text = d.sealedVx + " · " + d.charPlug + " · " + d.rebleeds; rows["seal"].style.color = d.charPlug > 0 ? WarnC : Ink;
             rows["rim"].text = d.rimMm > 0 ? d.rimMm.ToString("0.00") + " mm" : "no incision edge yet"; rows["rim"].style.color = d.rimMm >= 0.5f ? BadC : d.rimMm >= 0.4f ? WarnC : Ink;
             capsuleRow.style.display = string.IsNullOrEmpty(d.capsuleText) ? DisplayStyle.None : DisplayStyle.Flex;

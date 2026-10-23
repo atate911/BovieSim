@@ -66,8 +66,8 @@ npm run build
 ```
 
 URL options: `?scenario=freeplay|hemostasis|lipoma`, `?voxel=0.5` (coarser bed for slower GPUs;
-default 0.25 mm), `?seed=3` (re-randomise anatomy), `?cut=1|2|4|8` (pre-carved trench, pit, ring
-around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temperature / damage / tissue-type overlay), `?mech=0`
+default 0.25 mm), `?seed=3` (re-randomise anatomy), `?cut=1|2|4|8|16` (pre-carved trench, pit, ring
+around the lipoma, undermining plane beneath it, trench down to the lipoma capsule; add them), `?debug=1|2|3` (temperature / damage / tissue-type overlay), `?mech=0`
 (disable the mechanics lattice), `?peel=block,6` or `?peel=dissect,20` (start with the depth peel at that depth in mm).
 
 ### Controls (browser build)
@@ -76,10 +76,14 @@ around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temp
 |---|---|
 | Cut / coag footswitch | `Z` / `X`, or the on-screen pedals |
 | Hand switch | left mouse = cut, Ctrl + left = coag (pencil) |
-| Instrument | `Tab` or `Q` cycles pencil → Adson forceps → Frazier suction → skin hook; `T` toothed/smooth forceps |
-| Forceps | left button closes the jaws (grasp, pinch, lift); pedal with closed jaws buzzes the forceps |
+| Right-hand instrument | `Tab` or `Q` cycles pencil → #15 scalpel → Metzenbaum scissors → Adson forceps → Frazier suction → skin hook; `T` toothed/smooth forceps |
+| Left-hand instrument | `Shift+Tab` cycles none → forceps → hook → suction. Hold `Space` and the pointer drives the left hand (press to grasp or catch, drag to pull); release `Space` and it stays, latched, holding its traction |
+| Scalpel | hold the left button to cut; pen pressure sets the depth (0.5 to 5 mm); no heat, the dermal edge oozes until it clots or is coagulated |
+| Scissors | click snips between the open tips; `Ctrl` + hold spreads (blunt dissection: fat parts, septa and the capsule resist, small vessels tear) |
+| Forceps | left button closes the jaws (grasp, pinch); pedal with closed jaws buzzes them, or touch the active pencil to forceps held in the left hand |
 | Suction | left button drains blood and pulls smoke at the tip |
 | Skin hook | left-drag attaches to the tissue and retracts it |
+| Lift | wheel while holding tissue (forceps or hook) raises it; a freed lipoma comes up with the forceps |
 | Pen tablet | pressure sets contact depth, tilt sets pencil orientation |
 | Cut mode / coag mode | `1-4` (Pure, Blend, Low, Valleylab) / `5-6` (Fulgurate, Spray), or tap the mode on the panel |
 | Watts | `[` `]` cut, `;` `'` coag (Shift = ±1) |
@@ -94,7 +98,7 @@ around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temp
 src/core        tissue property table, voxel volume, scenario schema + anatomy generator, FT10 model
 src/physics     WGSL kernels (jacobi, heating, generator, bioheat, pick, slice), pipeline, CPU reference
 src/render      surface extraction, PBR tissue materials, drapes/instruments, particles, post
-src/tools       electrode, forceps, suction, hook poses and geometry (instrument model in docs/tools.md)
+src/tools       electrode, scalpel, scissors, forceps, suction, hook poses; two hands on one pointer (docs/tools.md)
 src/mechanics   XPBD lattice (gaping, shrinkage, lipoma delivery, muscle twitch)
 src/education   event bus (what happened, what it means)
 src/ui          FT10 panel, cross-section inspector, audio

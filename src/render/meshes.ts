@@ -52,6 +52,16 @@ export class MeshBuilder {
       }
     }
   }
+  /** torus in the XY plane (axis along Z) centred at c: major radius R, tube radius r */
+  torus(c: vec3, R: number, r: number, seg = 24, tube = 10) {
+    const P = (a: number, b: number) => vec3.fromValues(c[0] + (R + r * Math.cos(b)) * Math.cos(a), c[1] + (R + r * Math.cos(b)) * Math.sin(a), c[2] + r * Math.sin(b));
+    const N = (a: number, b: number) => vec3.fromValues(Math.cos(b) * Math.cos(a), Math.cos(b) * Math.sin(a), Math.sin(b));
+    for (let i = 0; i < seg; i++) for (let j = 0; j < tube; j++) {
+      const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2, b0 = (j / tube) * Math.PI * 2, b1 = ((j + 1) / tube) * Math.PI * 2;
+      this.tri(P(a0, b0), P(a1, b0), P(a1, b1), N(a0, b0)); this.tri(P(a0, b0), P(a1, b1), P(a0, b1), N(a0, b1));
+    }
+  }
+  append(other: MeshBuilder) { this.data.push(...other.data); this.count += other.count; }
   transform(m: mat4, from = 0) {
     for (let i = from; i < this.data.length; i += 8) {
       const p = vec3.fromValues(this.data[i], this.data[i + 1], this.data[i + 2]);
@@ -167,5 +177,44 @@ export function buildSkinHook(): MeshBuilder {
   const m = mat4.create(); mat4.rotateX(m, m, 110 * Math.PI / 180); tine.transform(m);
   (mb as unknown as { data: number[] }).data.push(...(tine as unknown as { data: number[] }).data);
   mb.count += tine.count;
+  return mb;
+}
+
+/**
+ * #15 scalpel on a #3 handle, tip at the origin, +Y along the handle, blade face normal +Z, cutting edge in the
+ * XY plane. The small curved #15 blade is approximated by a tapered plate with a bevelled point.
+ */
+export function buildScalpel(): MeshBuilder {
+  const mb = new MeshBuilder();
+  // blade plate: 0.3 mm thick, belly 3.2 mm wide, 9 mm from the point to the neck
+  mb.box(vec3.fromValues(0, 5.5, 0), vec3.fromValues(1.6, 3.5, 0.15));
+  mb.tri(vec3.fromValues(-1.6, 2, 0.15), vec3.fromValues(1.6, 2, 0.15), vec3.fromValues(0.4, 0, 0), vec3.fromValues(0, -0.2, 1));
+  mb.tri(vec3.fromValues(1.6, 2, -0.15), vec3.fromValues(-1.6, 2, -0.15), vec3.fromValues(0.4, 0, 0), vec3.fromValues(0, -0.2, -1));
+  // blade slot / neck and the flat #3 handle (125 mm, 8 mm wide, 3 mm thick) with grip ridges
+  mb.box(vec3.fromValues(0, 11, 0), vec3.fromValues(1.4, 2.5, 0.6));
+  mb.box(vec3.fromValues(0, 13.5 + 20, 0), vec3.fromValues(2.4, 20, 1.2));
+  mb.box(vec3.fromValues(0, 53.5 + 42, 0), vec3.fromValues(4.0, 42, 1.5));
+  for (let i = 0; i < 8; i++) mb.box(vec3.fromValues(0, 100 + i * 4, 1.5), vec3.fromValues(3.6, 0.5, 0.15));
+  return mb;
+}
+
+/**
+ * One Metzenbaum blade with its shank and ring, +Y from the tip (origin) to the pivot at `jawLength`, blade normal +Z.
+ * The two blades are posed converging at the pivot (like the forceps arms).
+ */
+export function buildScissorsArm(jawLength = 20, shankLength = 95): MeshBuilder {
+  const mb = new MeshBuilder();
+  // slender curved-pattern blade: narrow at the tip, 2.4 mm at the pivot, 0.8 mm thick
+  mb.box(vec3.fromValues(0, jawLength * 0.25, 0), vec3.fromValues(0.55, jawLength * 0.25, 0.3));
+  mb.box(vec3.fromValues(0, jawLength * 0.7, 0), vec3.fromValues(0.95, jawLength * 0.2, 0.4));
+  mb.tri(vec3.fromValues(-0.55, 0.6, 0.3), vec3.fromValues(0.55, 0.6, 0.3), vec3.fromValues(0, 0, 0), vec3.fromValues(0, -0.3, 1));
+  mb.tri(vec3.fromValues(0.55, 0.6, -0.3), vec3.fromValues(-0.55, 0.6, -0.3), vec3.fromValues(0, 0, 0), vec3.fromValues(0, -0.3, -1));
+  // pivot boss and shank
+  mb.cylinder(2.2, 2.2, jawLength - 1.5, jawLength + 1.5, 16);
+  mb.box(vec3.fromValues(0, jawLength + shankLength * 0.45, 0), vec3.fromValues(1.7, shankLength * 0.45, 1.0));
+  // ring handle in the blade plane
+  const ring = new MeshBuilder();
+  ring.torus(vec3.fromValues(0, jawLength + shankLength * 0.9 + 7, 0), 7, 1.3, 24, 10);
+  mb.append(ring);
   return mb;
 }

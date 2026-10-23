@@ -337,9 +337,9 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
       <h3>Control a bleeder</h3>
       <ol class="steps">
         <li><div><b>Find one.</b> If you cut across a perforator, the feed reports <code>bleed.start</code> and blood starts to pool. Bright red and pulsing is arterial.</div></li>
-        <li><div><b>Clear the field.</b> Press <kbd>Tab</kbd> twice for the suction. Hold the left mouse button over the pool until you can see the vessel end.</div></li>
-        <li><div><b>Grasp.</b> Press <kbd>Tab</kbd> three times to get back round to the forceps. Hold the left mouse button with the jaws on the vessel end.</div></li>
-        <li><div><b>Buzz.</b> Keep holding and press <kbd>X</kbd> (coag pedal) for about a second. The feed reports <code>forceps.buzzed</code> and then <code>bleed.sealed</code>. Release.</div></li>
+        <li><div><b>Clear the field.</b> Press <kbd>Shift</kbd>+<kbd>Tab</kbd> three times to put the suction in your left hand. Hold <kbd>Space</kbd> and hold the left mouse button over the pool until you can see the vessel end; let go of both.</div></li>
+        <li><div><b>Grasp.</b> Press <kbd>Shift</kbd>+<kbd>Tab</kbd> twice more to put the forceps in your left hand. Hold <kbd>Space</kbd>, press the left mouse button with the jaws on the vessel end and keep it pressed while you release <kbd>Space</kbd>: the forceps stay, latched, holding the vessel. Release the button.</div></li>
+        <li><div><b>Buzz.</b> With the pencil in your right hand, touch its tip to the forceps and press <kbd>X</kbd> (coag pedal) for about a second. The feed reports <code>forceps.buzzed</code> and then <code>bleed.sealed</code>. (Single-handed: press <kbd>Tab</kbd> until the forceps are in your right hand, grasp, and press <kbd>X</kbd> while holding.)</div></li>
       </ol>
       <h3>Make the classic mistakes</h3>
       <ul>
@@ -348,7 +348,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
       </ul>
       <p>Press <kbd>F5</kbd> to start again, or <kbd>F6</kbd> to move on to the hemostasis drill.</p>
       <h3>Delivering the lipoma</h3>
-      <p>In the lipoma scenario, incise the skin over the lump, deepen to the shiny capsule, then cut around it, staying on the capsule surface and going deeper each pass. A needle (<kbd>N</kbd>) at lower power gives more control. The status readout counts the capsule links still attached. When it shows <i>FREE</i>, change to the forceps, grasp the lipoma and hold <kbd>Space</kbd> to lift it. It is delivered once it rises 4 mm out of its bed.</p>
+      <p>In the lipoma scenario, work as you would at the table. <b>Incise</b> with the scalpel (<kbd>Tab</kbd> once): hold the left mouse button and draw a line over the lump; pen pressure sets the depth. The edges gape and the dermis oozes for a minute or two (<code>skin.oozing</code>); a touch of coag on a persistent point is enough. <b>Retract</b>: put the skin hook in your left hand (<kbd>Shift</kbd>+<kbd>Tab</kbd> twice), hold <kbd>Space</kbd>, catch an edge and pull it aside, then release <kbd>Space</kbd> so it stays. <b>Deepen</b> with the pencil in cut mode until the shiny capsule shows. <b>Find the plane</b> with the scissors (<kbd>Tab</kbd>): hold <kbd>Ctrl</kbd> and the left mouse button with the tips against the capsule to spread. Fat parts (<code>plane.developed</code>); a septum or the capsule will not (<code>plane.resists</code>), so snip it with a click or divide it with the pencil, then spread again beyond it. A vessel tented in the spread (<code>vessel.stretched</code>) is grasped and buzzed before it is divided. The status readout counts the capsule links still attached. When it shows <i>FREE</i>, grasp the lipoma with the forceps and roll the wheel to lift it. It is delivered once it rises 4 mm out of its bed.</p>
     </section>
 
     <section id="screen">
@@ -388,12 +388,14 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>Cut watts −5 / +5 (hold <kbd>Shift</kbd> for 1 W)</td></tr>
           <tr><td><kbd>;</kbd> <kbd>'</kbd></td><td>Coag watts −5 / +5 (hold <kbd>Shift</kbd> for 1 W)</td></tr>
           <tr class="grp"><td colspan="2">Instruments</td></tr>
-          <tr><td><kbd>Tab</kbd> or <kbd>Q</kbd></td><td>Next instrument: Bovie pencil → Adson forceps → Frazier suction → skin hook</td></tr>
+          <tr><td><kbd>Tab</kbd> or <kbd>Q</kbd></td><td>Next right-hand instrument: Bovie pencil → #15 scalpel → Metzenbaum scissors → Adson forceps → Frazier suction → skin hook</td></tr>
+          <tr><td><kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Next left-hand instrument: none → Adson forceps → skin hook → Frazier suction</td></tr>
+          <tr><td><kbd>Space</kbd> (hold)</td><td>The pointer drives the left hand: left mouse grasps or catches, drag pulls. Release <kbd>Space</kbd> and the instrument stays where it is, latched, holding its traction. Hold <kbd>Space</kbd> again to move it; press and release to re-grasp or let go.</td></tr>
           <tr><td><kbd>B</kbd> <kbd>N</kbd> <kbd>O</kbd></td><td>Pencil electrode: blade, needle, ball</td></tr>
           <tr><td><kbd>R</kbd></td><td>Roll the blade 45°</td></tr>
           <tr><td><kbd>T</kbd></td><td>Toothed / smooth forceps</td></tr>
-          <tr><td><kbd>Space</kbd></td><td>With the forceps closed: lift (traction on a grasped edge, delivering a freed lipoma). Opening the jaws lowers them again.</td></tr>
-          <tr><td>Left mouse</td><td>Forceps: close jaws (grasp). Suction: on. Hook: catch the skin and drag to retract.</td></tr>
+          <tr><td>Mouse wheel while holding</td><td>Lift the held tissue (traction on a grasped edge, delivering a freed lipoma). Letting go lowers it again.</td></tr>
+          <tr><td>Left mouse</td><td>Scalpel: hold to cut (pen pressure sets the depth, 0.5 to 5 mm). Scissors: click to snip between the open tips; <kbd>Ctrl</kbd> + hold to spread. Forceps: close jaws (grasp). Suction: on. Hook: catch the skin and drag to retract.</td></tr>
           <tr><td>Pen</td><td>Pressure sets depth; tilt sets angle; <kbd>Y</kbd> flips the tilt direction</td></tr>
           <tr class="grp"><td colspan="2">View</td></tr>
           <tr><td>Right mouse drag, or <kbd>Alt</kbd> + left drag</td><td>Orbit around the field</td></tr>
@@ -463,8 +465,20 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
         <div>
           <h3>Adson forceps</h3>
           <p>Hold the left mouse button to close the jaws. Closed jaws can:</p>
-          <ul><li><b>Grasp</b> a vessel and press its walls together.</li><li><b>Buzz</b>: press a pedal while grasping and the jaws become the electrode. This is how you seal a vessel.</li><li><b>Lift</b> tissue: hold <kbd>Space</kbd> while the jaws are closed. A freed lipoma comes up with them.</li></ul>
+          <ul><li><b>Grasp</b> a vessel and press its walls together.</li><li><b>Buzz</b>: press a pedal while grasping and the jaws become the electrode, or, with the forceps in your left hand, touch the active pencil to them. This is how you seal a vessel.</li><li><b>Lift</b> tissue: roll the wheel while the jaws are closed. A freed lipoma comes up with them.</li></ul>
           <p>Open jaws cannot be activated. <kbd>T</kbd> switches toothed and smooth.</p>
+        </div>
+        <div>
+          <h3>#15 scalpel</h3>
+          <p>Steel, no heat. Hold the left mouse button and draw: the blade follows the direction of travel and pen pressure sets how deep it sits (0.5 to 5 mm; the mouse gives about 2.8 mm, through the dermis into fat). The edges are clean with no thermal rim, the incision gapes, a transected vessel bleeds and the cut dermis oozes for a minute or two until it clots or you coagulate it.</p>
+        </div>
+        <div>
+          <h3>Metzenbaum scissors</h3>
+          <p>Two uses. <b>Snip</b>: a click divides the tissue between the open tips along the blades. <b>Spread</b>: hold <kbd>Ctrl</kbd> and the left mouse button; the closed tips go in (pressure sets how far) and open. Fat parts and the plane opens on a lipoma capsule; a septum, a fascia, skin or the capsule itself will not spread and must be cut; a small vessel tears and oozes; a larger vessel or a nerve is tented in the spread, a warning to see it and control it before you divide it.</p>
+        </div>
+        <div>
+          <h3>Two hands</h3>
+          <p>Your right hand is the pointer. Hold <kbd>Space</kbd> and the pointer becomes your left hand, holding whatever <kbd>Shift</kbd>+<kbd>Tab</kbd> chose: forceps, hook or suction. Press to grasp or catch, drag to pull, roll the wheel to lift. Release <kbd>Space</kbd> and that instrument stays on the field, latched, holding its traction, while the pointer goes back to your right hand. Hold <kbd>Space</kbd> again to adjust it. Touching the active pencil to another instrument has consequences: forceps buzz the vessel they hold; a hook or suction diverts the current into the tissue under it, an alternate-site burn (<code>instrument.contact</code>).</p>
         </div>
         <div>
           <h3>Frazier suction</h3>
@@ -534,7 +548,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           </dl>
         </article>
       </div>
-      <p><b>In the lipoma case</b>, the status readout shows how many capsule links are still intact. Once most of them are cut, it reads <i>FREE</i> and the event feed reports <code>lesion.freed</code>. Grasp with the forceps and hold <kbd>Space</kbd> to lift: <code>lesion.delivered</code> fires when it has risen 4 mm out of its bed.</p>
+      <p><b>In the lipoma case</b>, the status readout shows how many capsule links are still intact. Spreading on the capsule and dividing what resists cuts them; once most are cut it reads <i>FREE</i> and the event feed reports <code>lesion.freed</code>. Grasp with the forceps and roll the wheel to lift: <code>lesion.delivered</code> fires when it has risen 4 mm out of its bed.</p>
     </section>
 
     <section id="feedback">

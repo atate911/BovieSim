@@ -14,6 +14,8 @@ namespace BovieSim
         public float pressure = 0.5f;
         public bool isPen; public Vector2 tiltDeg;
         public bool pedalCut, pedalCoag;
+        /// <summary>Space held: the pointer drives the non-dominant hand; wheel this frame (lifts a held instrument)</summary>
+        public bool spaceHeld; public float wheel;
         /// <summary>flip if leaning the pen toward you tilts the instrument away from you</summary>
         public static bool invertTiltY;
 
@@ -24,6 +26,8 @@ namespace BovieSim
             ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
             pedalCut = Input.GetKey(KeyCode.Z);
             pedalCoag = Input.GetKey(KeyCode.X);
+            spaceHeld = Input.GetKey(KeyCode.Space);
+            wheel = Input.mouseScrollDelta.y;
             isPen = false; tiltDeg = Vector2.zero;
             pressure = leftHeld ? 0.5f : 0.35f;
             if (!ReadInputSystemPen()) ReadLegacyStylus();

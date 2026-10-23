@@ -14,7 +14,7 @@ namespace BovieSim
     {
         /// <summary>section image size in pixels: 640 x 400 at scale 1 (DetailSettings.sliceScale), drawn with bilinear filtering</summary>
         public readonly int sliceW, sliceH;
-        const int StateWords = 64;
+        const int StateWords = 72;
         const int MaxDrops = 16;
 
         readonly ComputeShader cs;
@@ -25,7 +25,7 @@ namespace BovieSim
         public readonly RenderTexture sliceTex;
         readonly uint[] zeros = new uint[StateWords];
 
-        readonly int kSeed, kRed, kBlack, kHeating, kGenerator, kBioheat, kSurfaceHeight, kBloodSource, kBloodDrops, kBloodFlow, kBloodCommit, kCoapt, kProbe, kPick, kSlice, kRim;
+        readonly int kSeed, kRed, kBlack, kHeating, kGenerator, kBioheat, kSurfaceHeight, kBloodSource, kBloodDrops, kBloodFlow, kBloodCommit, kCoapt, kMechCut, kProbe, kPick, kSlice, kRim;
         readonly int[] allKernels;
 
         public readonly SimReadout readout = new SimReadout();
@@ -34,7 +34,7 @@ namespace BovieSim
         public int relaxSweeps = 40;
         public readonly int subdomain;
         public readonly float dtMax;
-        public float totalVapVoxels, activeSeconds;
+        public float totalVapVoxels, activeSeconds; public int totalCutVoxels, totalBluntVoxels;
 
         // slice plane
         public Vector3 sliceOrigin; public Vector3 sliceU = Vector3.right; public float sliceWidthMm = 32, sliceDepthMm = 20; public int sliceMode; public bool sliceEnabled = true;
@@ -69,6 +69,9 @@ namespace BovieSim
         int probeEvery;
         bool stateInFlight, probeInFlight;
         Vector3 tool2A, tool2B; float tool2Radius; int tool2Mode, tool2LastMode;
+        // mechanical cut this frame: blade box (half extents along axis / w / n, rounded by r) swept from cutA to cutB
+        Vector3 cutA, cutB, cutAxis = Vector3.up, cutW = Vector3.right, cutN = Vector3.forward; float cutHa, cutHw, cutHn, cutR; int cutMode;
+        readonly int[] cutBox0 = new int[3]; int cutSize; bool lastStepCut; readonly int[] cutMin = new int[3], cutMax = new int[3];
         readonly Vector4[] dropData = new Vector4[MaxDrops];
         public readonly System.Collections.Generic.List<Vector4> pendingDrops = new System.Collections.Generic.List<Vector4>();
 
@@ -101,9 +104,9 @@ namespace BovieSim
             kSeed = cs.FindKernel("SeedPotential"); kRed = cs.FindKernel("RelaxRed"); kBlack = cs.FindKernel("RelaxBlack");
             kHeating = cs.FindKernel("Heating"); kGenerator = cs.FindKernel("Generator"); kBioheat = cs.FindKernel("Bioheat");
             kSurfaceHeight = cs.FindKernel("SurfaceHeight"); kBloodSource = cs.FindKernel("BloodSource"); kBloodDrops = cs.FindKernel("BloodDrops");
-            kBloodFlow = cs.FindKernel("BloodFlow"); kBloodCommit = cs.FindKernel("BloodCommit"); kCoapt = cs.FindKernel("CoaptMark");
+            kBloodFlow = cs.FindKernel("BloodFlow"); kBloodCommit = cs.FindKernel("BloodCommit"); kCoapt = cs.FindKernel("CoaptMark"); kMechCut = cs.FindKernel("MechCut");
             kProbe = cs.FindKernel("ConstraintProbe"); kPick = cs.FindKernel("Pick"); kSlice = cs.FindKernel("Slice"); kRim = cs.FindKernel("RimMeasure");
-            allKernels = new[] { kSeed, kRed, kBlack, kHeating, kGenerator, kBioheat, kSurfaceHeight, kBloodSource, kBloodDrops, kBloodFlow, kBloodCommit, kCoapt, kProbe, kPick, kSlice, kRim };
+            allKernels = new[] { kSeed, kRed, kBlack, kHeating, kGenerator, kBioheat, kSurfaceHeight, kBloodSource, kBloodDrops, kBloodFlow, kBloodCommit, kCoapt, kMechCut, kProbe, kPick, kSlice, kRim };
 
             vol.SetVolumeInfo(cs);
             cs.SetInts("_LatDims", 2, 2, 2, 0);
@@ -135,6 +138,30 @@ namespace BovieSim
         {
             for (int a = 0; a < 3; a++) { wbMin[a] = Math.Min(wbMin[a], min[a]); wbMax[a] = Math.Max(wbMax[a], max[a]); }
         }
+
+        /// <summary>
+        /// Mechanical cut for this frame (cleared after the step): a rounded box with half extents ha along axis, hw along
+        /// w and hn along n, rounded by r, swept from centre a to centre b. Mode 1 is a blade (scalpel stroke, scissor
+        /// snip), mode 2 a blunt spread. The region joins the wound box so bleeding is scanned there.
+        /// </summary>
+        public void SetMechCut(int mode, Vector3 a, Vector3 b, Vector3 axis, Vector3 w, Vector3 n, float ha, float hw, float hn, float r)
+        {
+            cutMode = mode; if (mode == 0) return;
+            cutA = a; cutB = b; cutAxis = axis; cutW = w; cutN = n; cutHa = ha; cutHw = hw; cutHn = hn; cutR = r;
+            var v = vol.cpu; float h = v.h;
+            var ext = new Vector3(ha * Math.Abs(axis.x) + hw * Math.Abs(w.x) + hn * Math.Abs(n.x) + r + h, ha * Math.Abs(axis.y) + hw * Math.Abs(w.y) + hn * Math.Abs(n.y) + r + h, ha * Math.Abs(axis.z) + hw * Math.Abs(w.z) + hn * Math.Abs(n.z) + r + h);
+            var lo = Vector3.Min(a, b) - ext; var hi = Vector3.Max(a, b) + ext;
+            float v0x, v0y, v0z, v1x, v1y, v1z;
+            v.WorldToVoxel(lo.x, lo.y, lo.z, out v0x, out v0y, out v0z); v.WorldToVoxel(hi.x, hi.y, hi.z, out v1x, out v1y, out v1z);
+            cutBox0[0] = (int)Math.Floor(Math.Min(v0x, v1x)); cutBox0[1] = (int)Math.Floor(Math.Min(v0y, v1y)); cutBox0[2] = (int)Math.Floor(Math.Min(v0z, v1z));
+            int sz = Math.Max(Math.Max((int)Math.Ceiling(Math.Max(v0x, v1x)) - cutBox0[0], (int)Math.Ceiling(Math.Max(v0y, v1y)) - cutBox0[1]), (int)Math.Ceiling(Math.Max(v0z, v1z)) - cutBox0[2]) + 1;
+            cutSize = Math.Min(96, (sz + 3) / 4 * 4);
+            for (int i = 0; i < 3; i++) { cutMin[i] = cutBox0[i]; cutMax[i] = cutBox0[i] + cutSize; }
+            MarkWound(cutMin, cutMax);
+        }
+
+        /// <summary>The region a blade or spread changed in the last step (voxels, max exclusive), if any.</summary>
+        public bool CutBox(out int[] min, out int[] max) { min = cutMin; max = cutMax; return lastStepCut; }
 
         public void SetConstraintSegments(Vector4[] segData)
         {
@@ -228,6 +255,12 @@ namespace BovieSim
             SetBox("_WBox1", ws[0], ws[1], ws[2], 0);
             cs.SetVector("_Tool2", new Vector4(tool2A.x, tool2A.y, tool2A.z, tool2Radius));
             cs.SetVector("_Tool2B", new Vector4(tool2B.x, tool2B.y, tool2B.z, tool2Mode));
+            cs.SetVector("_Cut0", new Vector4(cutA.x, cutA.y, cutA.z, cutMode));
+            cs.SetVector("_Cut1", new Vector4(cutB.x, cutB.y, cutB.z, cutR));
+            cs.SetVector("_CutAxis", new Vector4(cutAxis.x, cutAxis.y, cutAxis.z, cutHa));
+            cs.SetVector("_CutW", new Vector4(cutW.x, cutW.y, cutW.z, cutHw));
+            cs.SetVector("_CutN", new Vector4(cutN.x, cutN.y, cutN.z, cutHn));
+            SetBox("_CBox0", cutBox0[0], cutBox0[1], cutBox0[2], cutSize);
             int nd = Math.Min(pendingDrops.Count, MaxDrops);
             for (int n = 0; n < nd; n++) dropData[n] = pendingDrops[n];
             pendingDrops.Clear();
@@ -260,6 +293,10 @@ namespace BovieSim
             }
             if (tool2Mode == 1 || tool2LastMode == 1) cs.Dispatch(kCoapt, 3, 3, 3);
             tool2LastMode = tool2Mode;
+            // steel: scalpel stroke, scissor snip or blunt spread (one dispatch per frame, then cleared)
+            bool cutting = cutMode != 0 && cutSize > 0;
+            if (cutting) { int cg = Ceil(cutSize, 4); cs.Dispatch(kMechCut, cg, cg, cg); }
+            lastStepCut = cutting; cutMode = 0;
             if (ws[0] > 0 && ws[1] > 0 && ws[2] > 0)
             {
                 foreach (var k in new[] { kSurfaceHeight, kBloodSource, kBloodDrops, kBloodFlow, kBloodCommit }) Bind(k, vol.temp, vol.tempNext);
@@ -289,15 +326,15 @@ namespace BovieSim
             }
             if (!stateInFlight) { stateInFlight = true; stateRequestFrame = Time.frameCount; AsyncGPUReadback.Request(state, OnState); }
             simTime += dtFrame;
-            return hot;
+            return hot || cutting;
         }
 
         void Bind(int k, ComputeBuffer src, ComputeBuffer dst) { cs.SetBuffer(k, "_Src", src); cs.SetBuffer(k, "_Dst", dst); }
 
         void ResetState()
         {
-            // contiguous ranges keep the uploads few: [0..4), [16..20), [21..23), [26..29)
-            state.SetData(zeros, 0, 0, 4); state.SetData(zeros, 0, 16, 4); state.SetData(zeros, 0, 21, 2); state.SetData(zeros, 0, 26, 3);
+            // contiguous ranges keep the uploads few: [0..4), [16..20), [21..23), [26..29), [64..72)
+            state.SetData(zeros, 0, 0, 4); state.SetData(zeros, 0, 16, 4); state.SetData(zeros, 0, 21, 2); state.SetData(zeros, 0, 26, 3); state.SetData(zeros, 0, 64, 8);
         }
 
         void OnRim(AsyncGPUReadbackRequest req)
@@ -337,7 +374,8 @@ namespace BovieSim
             r.poolMl = u[26] / 2e6f; r.poolAtTipMm = u[27] / 1000f;
             r.bleedCount = (int)Math.Min(u[28], 8u);
             for (int n = 0; n < r.bleedCount; n++) r.bleedPoints[n] = new Vector4(F(32 + n * 4), F(33 + n * 4), F(34 + n * 4), F(35 + n * 4));
-            totalVapVoxels += r.vapVoxels;
+            r.cutVoxels = (int)u[64]; r.bluntVoxels = (int)u[65]; r.bluntResist = (int)u[66]; r.vesselStretch = (int)u[67]; r.nerveStretch = (int)u[68]; r.oozeVoxels = (int)u[69]; r.vesselTorn = (int)u[70];
+            totalVapVoxels += r.vapVoxels; totalCutVoxels += r.cutVoxels; totalBluntVoxels += r.bluntVoxels;
         }
 
         void OnProbe(AsyncGPUReadbackRequest req)

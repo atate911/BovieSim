@@ -68,12 +68,14 @@ from the repo root to copy it into `Assets/BovieSim/Resources/BovieSim/Scenarios
 | Z / X (or the on-screen CUT / COAG pedals) | Footswitch cut / coag |
 | LMB on the pencil | Hand-switch cut; Ctrl+LMB hand-switch coag |
 | LMB with forceps / suction / hook | Grasp (and buzz with a pedal) / suck / hook and retract |
-| Tab or Q | Next instrument: Bovie pencil, Adson forceps, Frazier suction, skin hook |
+| Tab or Q | Next right-hand instrument: Bovie pencil, #15 scalpel, Metzenbaum scissors, Adson forceps, Frazier suction, skin hook |
+| Shift+Tab | Next left-hand instrument: none, Adson forceps, skin hook, Frazier suction |
+| Space (hold) | The pointer drives the left hand: press to grasp or catch, drag to pull. Release Space and it stays, latched, holding its traction |
 | 1-4 / 5-6 | Cut mode Pure, Blend, Low, Valleylab / coag Fulgurate, Spray |
 | `[` `]` and `;` `'` | Cut and coag watts -5/+5 (Shift: 1 W); or the FT10 panel buttons |
 | B / N / O, R | Blade / needle / ball electrode, roll the blade 45 degrees |
 | T | Toothed / smooth forceps |
-| Space (forceps closed) | Lift the jaws (traction on a grasped edge, delivering a freed lipoma) |
+| Wheel while holding | Lift the held tissue (traction on a grasped edge, delivering a freed lipoma) |
 | C / J / H | Cross-section mode / orientation (across view or across the blade) / hide |
 | - / = | Section zoom out / in (16 × 10 mm up to the full 56 × 35 mm) |
 | Shift+C | Large section (800 px over the field) |

@@ -16,6 +16,7 @@ float4 _HInfo;  // x = voxel edge (mm), y = voxel edge (m)
 static const uint T_AIR = 0u, T_EPI = 1u, T_DERMIS = 2u, T_FAT = 3u, T_SEPTUM = 4u, T_SFASCIA = 5u, T_DFASCIA = 6u;
 static const uint T_MUSCLE = 7u, T_ARTERY = 8u, T_VEIN = 9u, T_NERVE = 10u, T_LIPOMA = 11u, T_CAPSULE = 12u, T_BLOOD = 13u;
 static const uint S_NORMAL = 0u, S_COAG = 1u, S_DESIC = 2u, S_CARBON = 3u, S_VAPOR = 4u;
+static const uint FLAG_DERMAL_PLEXUS = 1u << 24;
 static const uint FLAG_COAPTED = 1u << 26, FLAG_SEALED = 1u << 27, FLAG_CHARPLUG = 1u << 28, FLAG_BLOODCOVER = 1u << 29, FLAG_REBLED = 1u << 30;
 
 static const int3 NB6[6] = { int3(1, 0, 0), int3(-1, 0, 0), int3(0, 1, 0), int3(0, -1, 0), int3(0, 0, 1), int3(0, 0, -1) };

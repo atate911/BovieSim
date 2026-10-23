@@ -14,5 +14,7 @@ namespace BovieSim
         /// <summary>exposed bleeding voxels this frame: xyz mm, w = ml/s (negative = venous)</summary>
         public readonly Vector4[] bleedPoints = new Vector4[8];
         public int bleedCount;
+        /// <summary>mechanical cut and blunt dissection this frame (voxels), and dermal plexus voxels oozing</summary>
+        public int cutVoxels, bluntVoxels, bluntResist, vesselStretch, nerveStretch, vesselTorn, oozeVoxels;
     }
 }

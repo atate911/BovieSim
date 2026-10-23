@@ -294,6 +294,43 @@ namespace BovieSim
             return f.Build("SkinHook");
         }
 
+        /// <summary>
+        /// #15 scalpel on a #3 handle: tip at the origin, +Y along the handle, blade face normal +Z, cutting edge in the XY
+        /// plane. The small curved #15 blade is a lofted plate whose belly bulges to 3.4 mm, with a pointed tip.
+        /// </summary>
+        public static Mesh Scalpel()
+        {
+            var f = new MeshFactory();
+            f.Box(new Vector3(0, 0.2f, 0), new Vector3(0.25f, 0.2f, 0.12f));
+            f.Loft(0.3f, 9.5f, 12, y => new Vector2(Mathf.Lerp(0.3f, 1.7f, Mathf.Sin(Mathf.Clamp01((y - 0.3f) / 9.2f) * Mathf.PI * 0.8f)), 0.15f), 6f, 20);
+            // neck and the flat #3 handle (125 mm, 8 x 3 mm) with grip ridges
+            f.Box(new Vector3(0, 11f, 0), new Vector3(1.4f, 2.5f, 0.6f));
+            f.Loft(13.5f, 53.5f, 8, y => new Vector2(Mathf.Lerp(2.4f, 4f, Mathf.InverseLerp(13.5f, 53.5f, y)), 1.3f), 4f, 20);
+            f.Loft(53.5f, 137.5f, 4, y => new Vector2(4f, 1.5f), 4f, 20);
+            for (float y = 100; y <= 128; y += 4f) f.Box(new Vector3(0, y, 1.5f), new Vector3(3.6f, 0.5f, 0.15f));
+            return f.Build("Scalpel");
+        }
+
+        /// <summary>
+        /// One Metzenbaum blade with its shank and ring handle: +Y from the tip (origin) to the pivot at jawLength, blade
+        /// normal +Z. The two blades are posed converging at the pivot, like the forceps arms.
+        /// </summary>
+        public static Mesh ScissorsBlade(float jawLength = 20f, float shankLength = 95f)
+        {
+            var f = new MeshFactory();
+            f.Loft(0f, jawLength, 16, y => new Vector2(Mathf.Lerp(0.3f, 1.2f, Mathf.InverseLerp(0, jawLength, y)), Mathf.Lerp(0.25f, 0.45f, Mathf.InverseLerp(0, jawLength, y))), 3f, 16);
+            // pivot boss: a short disc about the blade normal
+            f.Transform(Matrix4x4.TRS(new Vector3(0, jawLength, 0), Quaternion.Euler(90, 0, 0), Vector3.one));
+            f.Cylinder(2.2f, 2.2f, -0.9f, 0.9f, 16);
+            f.Transform(Matrix4x4.identity);
+            f.Loft(jawLength + 1.5f, jawLength + shankLength * 0.9f, 6, y => new Vector2(1.7f, 1.0f), 4f, 16);
+            var ring = new List<Vector3>();
+            float cy = jawLength + shankLength * 0.9f + 7f;
+            for (int i = 0; i <= 24; i++) { float a = i / 24f * Mathf.PI * 2; ring.Add(new Vector3(Mathf.Cos(a) * 7f, cy + Mathf.Sin(a) * 7f, 0)); }
+            f.Tube(ring, 1.3f, 10);
+            return f.Build("ScissorsBlade");
+        }
+
         /// <summary>Drape frame around the bed aperture with a sloped lip down to the skin.</summary>
         public static Mesh Drapes(float halfX, float halfZ, float margin = 2.5f)
         {

@@ -8,10 +8,12 @@ export interface PointerState {
   buttons: number;
   /** left button without modifiers: hand-switch cut; with Ctrl: hand-switch coag */
   handCut: boolean; handCoag: boolean;
+  /** Ctrl held (scissors: spread instead of snip) */
+  ctrl: boolean;
 }
 
 export function attachPointer(el: HTMLElement): PointerState {
-  const st: PointerState = { ndcX: 0, ndcY: 0, inside: false, pressure: 0.5, tiltX: 0, tiltY: 0, isPen: false, buttons: 0, handCut: false, handCoag: false };
+  const st: PointerState = { ndcX: 0, ndcY: 0, inside: false, pressure: 0.5, tiltX: 0, tiltY: 0, isPen: false, buttons: 0, handCut: false, handCoag: false, ctrl: false };
   const update = (e: PointerEvent) => {
     const r = el.getBoundingClientRect();
     st.ndcX = ((e.clientX - r.left) / r.width) * 2 - 1;
@@ -23,6 +25,7 @@ export function attachPointer(el: HTMLElement): PointerState {
     const plain = (e.buttons & 1) === 1 && !e.altKey && !e.shiftKey;
     st.handCut = plain && !e.ctrlKey;
     st.handCoag = plain && e.ctrlKey;
+    st.ctrl = e.ctrlKey;
   };
   el.addEventListener('pointermove', update);
   el.addEventListener('pointerdown', (e) => { update(e); if (e.button === 0 && !e.altKey && !e.shiftKey) e.preventDefault(); });

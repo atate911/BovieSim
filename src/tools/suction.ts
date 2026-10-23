@@ -10,10 +10,10 @@ export class SuctionTool {
   readonly model = mat4.create();
   tipRadius = 1.5;
   drainRadius = 2.5;
-  place(hit: vec3 | null, cameraPos: vec3, tilt: { x: number; y: number } | null) {
+  place(hit: vec3 | null, cameraPos: vec3, tilt: { x: number; y: number } | null, leftHand = false) {
     if (!hit) { this.visible = false; mat4.copy(this.model, HIDDEN); return; }
     this.visible = true;
-    const axis = handAxis(hit, cameraPos, tilt);
+    const axis = handAxis(hit, cameraPos, tilt, leftHand);
     vec3.copy(this.axis, axis);
     vec3.scaleAndAdd(this.tip, hit, axis, 0.5);
     const { x, z } = handFrame(axis);

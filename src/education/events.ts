@@ -14,7 +14,9 @@ export type SimEventType =
   | 'generator.settingChanged' | 'generator.remFault' | 'tool.changed'
   | 'vessel.exposed' | 'bleed.start' | 'bleed.sealed' | 'bleed.charPlug' | 'vessel.rebleed'
   | 'blood.poolConducts' | 'field.obscured' | 'suction.used' | 'forceps.buzzed'
-  | 'muscle.stimulated' | 'lesion.freed' | 'lesion.delivered' | 'lesion.breached';
+  | 'muscle.stimulated' | 'lesion.freed' | 'lesion.delivered' | 'lesion.breached'
+  | 'incision.made' | 'skin.oozing' | 'plane.developed' | 'plane.resists'
+  | 'vessel.stretched' | 'vessel.torn' | 'nerve.stretched' | 'instrument.contact';
 
 export interface SimEvent {
   t: number;
@@ -45,6 +47,14 @@ const TEACHING: Partial<Record<SimEventType, string>> = {
   'muscle.stimulated': 'Current through muscle made it jump. Shorter bursts, cut rather than coag, and check the return pad.',
   'lesion.freed': 'The capsule is free around most of its circumference: the lipoma will deliver with gentle traction.',
   'lesion.breached': 'You have entered the lipoma. Fat spills, the plane is lost and fragments left behind recur.',
+  'incision.made': 'Steel divides without heat: the edges are clean and there is no thermal rim. Counter-traction with the other hand keeps the line straight and opens the incision as you go.',
+  'skin.oozing': 'The dermal plexus oozes from a fresh skin edge. It stops by itself in a minute or two; a touch of coag on a persistent point is enough. Do not paint the whole edge.',
+  'plane.developed': 'Fat parts along the plane of least resistance: spreading finds the capsule without cutting into it. Stay on the shiny surface.',
+  'plane.resists': 'That does not spread: a septum, fascia or the capsule itself. Divide it sharply (scissors, or a light cut with the pencil) and spread again beyond it.',
+  'vessel.stretched': 'A vessel is tented in the spread. Stop, see it, control it (grasp and buzz, or tie) before it tears.',
+  'vessel.torn': 'A small vessel tore under blunt force. It will ooze: grasp the end and buzz it.',
+  'nerve.stretched': 'A nerve is being stretched. Traction injury is as real as thermal injury: ease off and dissect around it.',
+  'instrument.contact': 'The active electrode touched another instrument. Current left through it and burned the tissue under it, an alternate-site burn where you were not looking. Keep the pencil clear of other metal.',
 };
 
 export class EventBus {
@@ -61,6 +71,9 @@ export class EventBus {
   private lastCoagReport = -1e9;
   private lastExposed = 0; private lastSealed = 0; private lastCharPlug = 0; private lastRebleeds = 0;
   private poolWarned = false; private obscuredWarned = false; private lastSuction = false; private lastMuscle = -1e9; private lastBuzz = false;
+  private cutAccum = 0; private lastCutT = -1e9; private oozeWarned = false; private lastOozeT = -1e9;
+  private bluntAccum = 0; private lastPlane = -1e9; private resistT = 0; private lastResist = -1e9;
+  private lastStretch = -1e9; private lastTorn = -1e9; private lastNerve = -1e9; private lastContact = false;
 
   on(fn: (e: SimEvent) => void) { this.listeners.push(fn); }
   emit(e: SimEvent) { this.events.push(e); for (const l of this.listeners) l(e); }
@@ -134,10 +147,25 @@ export class EventBus {
     if (this.lastSettings && settings !== this.lastSettings) this.push(t, 'generator.settingChanged', `${gen.settings.cutMode} ${gen.settings.cutWatts} W / ${gen.settings.coagMode} ${gen.settings.coagWatts} W`);
     this.lastSettings = settings;
     if (toolName !== this.lastTool) { if (this.lastTool) this.push(t, 'tool.changed', toolName); this.lastTool = toolName; }
-    void frameDt;
+    // steel: a scalpel stroke or scissor snip is reported when it ends
+    this.cutAccum += r.cutVoxels;
+    if (r.cutVoxels > 0) this.lastCutT = t;
+    if (this.cutAccum > 0 && t - this.lastCutT > 0.4) { this.push(t, 'incision.made', `${this.cutAccum} voxels divided, no heat`); this.cutAccum = 0; }
+    if (r.oozeVoxels > 0) { this.lastOozeT = t; if (!this.oozeWarned) { this.push(t, 'skin.oozing', `${r.oozeVoxels} dermal edge voxels oozing`); this.oozeWarned = true; } }
+    else if (t - this.lastOozeT > 5) this.oozeWarned = false;
+    // blunt dissection: the plane opening, or something that will not spread
+    this.bluntAccum += r.bluntVoxels;
+    if (this.bluntAccum > 60 && t - this.lastPlane > 1.5) { this.push(t, 'plane.developed', `${this.bluntAccum} voxels of fat separated`); this.bluntAccum = 0; this.lastPlane = t; }
+    if (r.bluntResist > 30 && r.bluntVoxels < 5) this.resistT += frameDt; else this.resistT = 0;
+    if (this.resistT > 0.5 && t - this.lastResist > 3) { this.push(t, 'plane.resists', `${r.bluntResist} voxels resist the spread`, 'warn'); this.lastResist = t; this.resistT = 0; }
+    if (r.vesselStretch > 3 && t - this.lastStretch > 2) { this.push(t, 'vessel.stretched', `${r.vesselStretch} vessel voxels in the spread`, 'warn'); this.lastStretch = t; }
+    if (r.vesselTorn > 0 && t - this.lastTorn > 1) { this.push(t, 'vessel.torn', `${r.vesselTorn} vessel voxels torn by blunt dissection`, 'bad'); this.lastTorn = t; }
+    if (r.nerveStretch > 3 && t - this.lastNerve > 2) { this.push(t, 'nerve.stretched', `${r.nerveStretch} nerve voxels in the spread`, 'warn'); this.lastNerve = t; }
+    if (active && this.instrumentContact && !this.lastContact) this.push(t, 'instrument.contact', 'active electrode on another instrument', 'bad');
+    this.lastContact = active && this.instrumentContact;
   }
 
   /** set by the app each frame */
-  suctionOn = false; buzzing = false;
+  suctionOn = false; buzzing = false; instrumentContact = false;
   recent(n: number): SimEvent[] { return this.events.slice(-n); }
 }

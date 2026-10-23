@@ -4,6 +4,26 @@ All notable changes. Versions follow `MAJOR.MINOR.PATCH`; each release is a git 
 (see [docs/upgrading.md](docs/upgrading.md)). "Setup" means *Bovie Sim > Set Up Project* must be re-run
 after updating (the editor offers it automatically).
 
+## 0.6.0: Two hands and steel (scalpel, scissors, latched non-dominant hand)
+
+- **Two hands on one pointer.** Hold `Space` and the pointer drives the left hand (forceps, hook or suction, chosen
+  with `Shift+Tab`): press to grasp or catch, drag to pull, wheel to lift. Release `Space` and the instrument stays where
+  it is, latched, holding its traction, while the pointer goes back to the right hand. Hold `Space` again to move it.
+  Both instruments are on the field at once: retract an edge with the hook and dissect under it with the pencil, hold a
+  vessel in the forceps and touch the pencil to them to buzz it, or touch a retractor by mistake and burn the tissue
+  under it (`instrument.contact`).
+- **#15 scalpel.** A mechanical cut with no heat: hold the button, pen pressure sets the depth (0.5 to 5 mm), the blade
+  follows the direction of travel. The incision gapes, transected vessels bleed, and a fresh dermal edge oozes from the
+  dermal plexus (`skin.oozing`) until it clots or is coagulated. Pre-made wounds in the scenarios no longer count as fresh.
+- **Metzenbaum scissors.** Click to snip between the open tips; `Ctrl` + hold to spread. Spreading parts fat and opens
+  the plane on a lipoma capsule (`plane.developed`); septa, fasciae, skin and the capsule resist (`plane.resists`) and
+  must be cut; vessels up to 0.3 mm tear (`vessel.torn`); larger vessels keep their fat cuff and are tented
+  (`vessel.stretched`), as are nerves (`nerve.stretched`). This is what makes a lipoma excision possible: incise,
+  retract, spread on the capsule, divide what resists, lift and deliver.
+- One `mechCut` compute kernel (WGSL and HLSL) does both: a rounded blade box swept between poses, sharp or blunt, with
+  per-tissue cohesion rules; new education events with teaching text in `scenarios/teaching.json`; the instrument
+  model in `docs/tools.md` is updated. Lifting a held instrument moved from `Space` to the wheel.
+
 ## 0.5.0: Beneath the surface (section resolution, depth peel)
 
 - **Section at twice the resolution.** The cross-section is rendered at 1280 × 800 (960 × 600 at Low detail,

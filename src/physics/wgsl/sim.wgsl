@@ -28,6 +28,13 @@ struct SimParams {
   wbox1: vec4i,    // wound box size
   tool2: vec4f,    // secondary tool tip (mm), w = radius (mm)
   tool2b: vec4f,   // secondary tool second point (forceps jaw B), w = mode (0 none, 1 grasp, 2 suction)
+  // mechanical cut (scalpel blade, scissor snip, blunt spread): a rounded box swept from cut0 to cut1
+  cut0: vec4f,     // blade box centre at the previous pose (mm), w = mode (0 none, 1 sharp, 2 blunt)
+  cut1: vec4f,     // blade box centre at the current pose (mm), w = rounding radius (mm)
+  cutAxis: vec4f,  // unit axis (tip -> handle), w = half length (mm)
+  cutW: vec4f,     // unit width direction (along the edge / the spread), w = half width (mm)
+  cutN: vec4f,     // unit blade normal, w = half thickness (mm)
+  cbox0: vec4i,    // cut dispatch box origin (voxels), w = size
 };
 
 struct SimState {
@@ -52,6 +59,15 @@ struct SimState {
   poolAtTipFixed: atomic<u32>, // blood depth under the electrode tip, micrometres
   bleedN: atomic<u32>, pad4: u32, pad5: u32, pad6: u32,
   bleedPts: array<vec4f, 8>,   // exposed bleeding voxels this frame: xyz (mm), w = ml/s (arterial > 0, venous < 0)
+  // mechanical cut and blunt dissection this frame (words 64..71)
+  cutCount: atomic<u32>,       // voxels divided by a blade
+  bluntCount: atomic<u32>,     // voxels separated by spreading (fat, the plane around a capsule)
+  resistCount: atomic<u32>,    // voxels in the spread wedge that resist (septum, fascia, capsule, skin, muscle)
+  stretchCount: atomic<u32>,   // vessel voxels (> 0.3 mm) stretched by the spread
+  nerveCount: atomic<u32>,     // nerve voxels in the spread wedge
+  oozeCount: atomic<u32>,      // dermal plexus voxels oozing
+  tornCount: atomic<u32>,      // small vessel voxels torn by blunt dissection
+  pad7: u32,
 };
 
 struct TissueProp { sigma: f32, k: f32, rho: f32, c: f32, wb: f32, water: f32, eaR: f32, lnA: f32 };
@@ -70,8 +86,12 @@ struct PropTable { t: array<TissueProp, 14> };
 @group(1) @binding(0) var<storage, read> srcA: array<f32>;      // potential (jacobi) or temp (bioheat)
 @group(1) @binding(1) var<storage, read_write> dstA: array<f32>;
 
-const T_AIR = 0u; const T_EPI = 1u; const T_FAT = 3u; const T_LIPOMA = 11u; const T_ARTERY = 8u; const T_VEIN = 9u; const T_MUSCLE = 7u; const T_BLOOD = 13u;
+const T_AIR = 0u; const T_EPI = 1u; const T_DERMIS = 2u; const T_FAT = 3u; const T_SEPTUM = 4u; const T_LIPOMA = 11u; const T_CAPSULE = 12u; const T_ARTERY = 8u; const T_VEIN = 9u; const T_NERVE = 10u; const T_MUSCLE = 7u; const T_BLOOD = 13u;
+const FLAG_DERMAL_PLEXUS = 1u << 24u;
 const FLAG_COAPTED = 1u << 26u; const FLAG_SEALED = 1u << 27u; const FLAG_CHARPLUG = 1u << 28u; const FLAG_BLOODCOVER = 1u << 29u; const FLAG_REBLED = 1u << 30u;
+/** capillary ooze from a freshly divided dermal edge (ml/s per 0.25 mm voxel face); stops by itself within minutes or at once when coagulated */
+const PLEXUS_OOZE_ML_S: f32 = 4.0e-6;
+const PLEXUS_OOZE_MEAN_S: f32 = 120.0;
 const SIGMA_BLOOD: f32 = 0.7;
 /** ml/s from a fully transected vessel of radius r (mm), arterial, mean over the pulse */
 fn vesselFlowMlS(rMm: f32) -> f32 { return 0.25 * rMm * rMm * rMm; }
@@ -464,10 +484,23 @@ fn bloodSource(@builtin(global_invocation_id) gid: vec3u) {
   let idx = idx3(i, j, k);
   var c = cells[idx];
   let ty = cellType(c);
-  if ((ty != T_ARTERY && ty != T_VEIN) || occ[idx] < 0.5) { return; }
-  if (!hasAirNeighbour(i, j, k)) { return; }
+  if (occ[idx] < 0.5) { return; }
   let dt = sim.dt.x * f32(sim.wbox0.w);   // frame dt (substeps * dt)
   let t = sim.dt.y;
+  // dermal plexus: a freshly divided skin edge oozes until it clots or is coagulated
+  if (ty == T_DERMIS) {
+    if ((c & FLAG_DERMAL_PLEXUS) == 0u || (c & FLAG_SEALED) != 0u || cellState(c) != S_NORMAL || !hasAirNeighbour(i, j, k)) { return; }
+    // one clotting draw per 50 ms: the edge seals itself after PLEXUS_OOZE_MEAN_S on average
+    if (hash13(vec3f(f32(idx & 0xffffu), f32(idx >> 16u), floor(t * 20.0))) < 0.05 / PLEXUS_OOZE_MEAN_S) { cells[idx] = c | FLAG_SEALED; return; }
+    atomicAdd(&state.oozeCount, 1u);
+    let volUlOoze = PLEXUS_OOZE_ML_S * (info.hMm * info.hMm) / (0.25 * 0.25) * dt * 1000.0;
+    let cio = colIdx(i, j);
+    blood[cio].h = blood[cio].h + volUlOoze / (info.hMm * info.hMm);
+    atomicAdd(&state.bloodLostFixed, select(0u, 1u, hash13(vec3f(f32(idx), t, 2.0)) < volUlOoze));
+    return;
+  }
+  if (ty != T_ARTERY && ty != T_VEIN) { return; }
+  if (!hasAirNeighbour(i, j, k)) { return; }
   let r = max(f32(cellAux(c)) * 0.05, 0.1);
   // char plug: stochastic rebleed (hash per voxel and second)
   if ((c & FLAG_CHARPLUG) != 0u) {
@@ -604,6 +637,74 @@ fn coaptMark(@builtin(global_invocation_id) gid: vec3u) {
   let inside = d <= rad && sim.tool2b.w > 0.5 && sim.tool2b.w < 1.5;
   if (inside) { c |= FLAG_COAPTED; } else { c &= ~FLAG_COAPTED; }
   cells[idx] = c;
+}
+
+// ------------------------------------------------------------------ mechanical cut and blunt dissection
+/** Signed distance (mm) from a point to the blade box (half extents along cutAxis / cutW / cutN) centred at c, rounded by cut1.w. */
+/** Largest radius (mm) of a vessel in the 6-neighbourhood: blunt spreading leaves such a vessel in its fat cuff. */
+fn vesselNeighbourRadius(i: i32, j: i32, k: i32) -> f32 {
+  let nb = array<vec3i, 6>(vec3i(1,0,0), vec3i(-1,0,0), vec3i(0,1,0), vec3i(0,-1,0), vec3i(0,0,1), vec3i(0,0,-1));
+  var r = 0.0;
+  for (var n = 0; n < 6; n++) {
+    let o = nb[n];
+    let ii = i + o.x; let jj = j + o.y; let kk = k + o.z;
+    if (!inVolume(ii, jj, kk)) { continue; }
+    let c = cells[idx3(ii, jj, kk)];
+    let ty = cellType(c);
+    if ((ty == T_ARTERY || ty == T_VEIN) && occ[idx3(ii, jj, kk)] >= 0.5) { r = max(r, f32(cellAux(c)) * 0.05); }
+  }
+  return r;
+}
+
+fn cutBoxDistance(p: vec3f, centre: vec3f) -> f32 {
+  let rel = p - centre;
+  let q = vec3f(abs(dot(rel, sim.cutAxis.xyz)) - sim.cutAxis.w, abs(dot(rel, sim.cutW.xyz)) - sim.cutW.w, abs(dot(rel, sim.cutN.xyz)) - sim.cutN.w);
+  return length(max(q, vec3f(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0) - sim.cut1.w;
+}
+
+/**
+ * Steel against tissue, no heat. Sharp (mode 1): a scalpel blade or closing scissor blades sweep from cut0 to cut1
+ * and divide everything in their path, leaving fractional occupancy at the face for a smooth wall. Blunt (mode 2):
+ * closed tips are spread; tissue with little cohesion parts (fat, so the plane around a capsule opens), small vessels
+ * tear, and septa, fasciae, skin, muscle, the capsule and the lipoma itself resist and are counted so the feed can
+ * say "that needs to be cut". Vessels over 0.3 mm keep their fat cuff and are counted as stretched (tented, to be
+ * divided under control), as are nerves in the wedge.
+ */
+@compute @workgroup_size(4, 4, 4)
+fn mechCut(@builtin(global_invocation_id) gid: vec3u) {
+  let S = sim.cbox0.w;
+  if (i32(gid.x) >= S || i32(gid.y) >= S || i32(gid.z) >= S) { return; }
+  let i = sim.cbox0.x + i32(gid.x); let j = sim.cbox0.y + i32(gid.y); let k = sim.cbox0.z + i32(gid.z);
+  if (!inVolume(i, j, k)) { return; }
+  let idx = idx3(i, j, k);
+  let c = cells[idx];
+  let ty = cellType(c);
+  if (ty == T_AIR || occ[idx] < 0.5) { return; }
+  let p = worldOf(i, j, k);
+  let a = sim.cut0.xyz; let b = sim.cut1.xyz;
+  let n = clamp(i32(ceil(length(b - a) / (0.5 * info.hMm))), 1, 16);
+  var d = 1e9;
+  for (var s = 0; s <= n; s++) { d = min(d, cutBoxDistance(p, mix(a, b, f32(s) / f32(n)))); }
+  if (d >= info.hMm) { return; }
+  if (sim.cut0.w > 1.5) {
+    if (d >= 0.0) { return; }
+    let r = f32(cellAux(c)) * 0.05;
+    var yields = ty == T_FAT;
+    // fat around a vessel over 0.3 mm stays as its cuff: the vessel is tented in the spread, not bared and left to bleed
+    if (yields && vesselNeighbourRadius(i, j, k) > 0.3) { yields = false; atomicAdd(&state.stretchCount, 1u); }
+    else if (ty == T_ARTERY || ty == T_VEIN) { if (r <= 0.3) { yields = true; atomicAdd(&state.tornCount, 1u); } else { atomicAdd(&state.stretchCount, 1u); } }
+    else if (ty == T_NERVE) { atomicAdd(&state.nerveCount, 1u); }
+    else if (!yields) { atomicAdd(&state.resistCount, 1u); }
+    if (!yields) { return; }
+    occ[idx] = 0.0; cells[idx] = 0u; water[idx] = 0.0;
+    atomicAdd(&state.bluntCount, 1u);
+    return;
+  }
+  let keep = clamp(0.5 + d / info.hMm, 0.0, 1.0);
+  let o = min(occ[idx], keep);
+  if (o >= occ[idx]) { return; }
+  occ[idx] = o;
+  if (o < 0.5) { cells[idx] = 0u; water[idx] = 0.0; atomicAdd(&state.cutCount, 1u); }
 }
 
 // ------------------------------------------------------------------ constraint probe (mechanics)

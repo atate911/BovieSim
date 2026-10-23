@@ -281,6 +281,22 @@ namespace BovieSim
                             if (v.occupancy[idx] < 0.5f) v.cell[idx] = 0;
                         }
                     }
+            SealDermalEdges(v);
+        }
+
+        /// <summary>A pre-made wound is not fresh: its dermal edges have stopped oozing (only a new scalpel cut oozes).</summary>
+        public static void SealDermalEdges(Volume v)
+        {
+            Func<int, int, int, bool> air = (i, j, k) => i < 0 || j < 0 || k < 0 || i >= v.nx || j >= v.ny || k >= v.nz || v.occupancy[v.Index(i, j, k)] < 0.5f;
+            for (int k = 0; k < v.nz; k++)
+                for (int j = 0; j < v.ny; j++)
+                    for (int i = 0; i < v.nx; i++)
+                    {
+                        int idx = v.Index(i, j, k);
+                        uint c = v.cell[idx];
+                        if (Cell.Type(c) != Tissue.Dermis || (c & Cell.FlagDermalPlexus) == 0 || v.occupancy[idx] < 0.5f) continue;
+                        if (air(i + 1, j, k) || air(i - 1, j, k) || air(i, j + 1, k) || air(i, j - 1, k) || air(i, j, k + 1) || air(i, j, k - 1)) v.cell[idx] = c | Cell.FlagSealed;
+                    }
         }
 
         /// <summary>Demo carves for review, same codes as the web ?cut= option (bit flags 1, 2, 4, 8).</summary>

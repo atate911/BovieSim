@@ -17,6 +17,8 @@ export interface VolumeDims {
 
 export const FLAG_DERMAL_PLEXUS = 1 << 24;
 export const FLAG_FIBRE_X = 1 << 25; // fibre direction hint for shading
+/** vessel wall sealed (coaptive coagulation, thrombosis) or a dermal edge that has stopped oozing */
+export const FLAG_SEALED = 1 << 27;
 
 export function packCell(type: Tissue, state: TissueState = TissueState.Normal, aux = 0, flags = 0): number {
   return ((type & 0xff) | ((state & 0xff) << 8) | ((aux & 0xff) << 16) | flags) >>> 0;

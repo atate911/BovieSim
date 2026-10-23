@@ -26,7 +26,7 @@
   plug vs rebleed rules; blood height field with downhill flow, clotting, pool conduction penalty;
   droplet jets; suction. Hemostasis drill scenario with a pre-carved trench crossing a 1.0 mm artery
   and a 0.6 mm vein.
-- Instruments: Adson forceps (grasp, buzz, lift), Frazier suction, skin hook; Tab cycles tools.
+- Instruments: Adson forceps (grasp, buzz, lift), Frazier suction, skin hook; Tab cycles tools (0.6.0 adds the scalpel, scissors and a second hand).
 - Mechanics: XPBD lattice with per-layer compliance and skin pre-tension; GPU probe severs and
   shrinks links from the voxel state; incisions gape; lipoma cluster frees and delivers; muscle
   twitch on coag; rendered tissue follows the lattice.
@@ -96,7 +96,31 @@
   blanched footprint on the cut face. Section sampled trilinearly at 640 × 400.
 - Not yet verified in Unity (compiled and unit-tested here only).
 
+## Two hands and steel (0.6.0)
+- Non-dominant hand on the same pointer: hold Space to drive it (forceps, hook or suction), release to latch it
+  holding its traction; the pointer returns to the dominant hand (`src/tools/hands.ts`, `Core/Hands.cs`, unit-tested
+  state machine). Both instruments stay on the field; the pencil buzzes forceps it touches and diverts current through
+  a hook or suction it touches (`instrument.contact`).
+- #15 scalpel (sharp mechanical cut, pressure-set depth, swept blade) and Metzenbaum scissors (snip; Ctrl + hold
+  spreads) through one `mechCut` kernel in WGSL and HLSL: sharp divides everything with fractional occupancy at the
+  face; blunt parts fat, tears vessels up to 0.3 mm, keeps larger vessels in their fat cuff (tented) and is resisted
+  by septa, fasciae, skin, muscle and the capsule. Fresh dermal edges ooze from the plexus until they clot (two
+  minutes on average) or are coagulated; pre-made wounds start sealed. Events: `incision.made`, `skin.oozing`,
+  `plane.developed`, `plane.resists`, `vessel.stretched`, `vessel.torn`, `nerve.stretched`, `instrument.contact`.
+- Verified headless (0.5 mm, software GPU): a 30 mm scalpel stroke divides 500 voxels with no heat (max T unchanged,
+  nothing vaporised), transects a vein, oozes from 148 dermal edge voxels and gapes 0.7 mm between nodes 3 mm apart
+  (2.75 mm deep, the mouse depth); a 7 mm scissors spread in the fat beside the lipoma (trench to the capsule
+  pre-carved) separates 270 voxels, cuts 21 of 303 capsule links, tents a vessel (66 voxels, no bleeding from it)
+  and reports 594 resisting voxels on the capsule; a skin hook in the non-dominant hand latched on a trench edge
+  pulls its node 3.5 mm aside and widens the gap from 7.3 to 8.9 mm while the pencil is free.
+- Unity: same kernels (26 entry points compile), C# port compiles against the reference assemblies, 36 EditMode tests
+  pass under Mono. Not yet verified in Unity.
+
 ## Known gaps (next)
+- A vessel bared along its side by a cut bleeds like a transected end (blunt spreading now keeps larger vessels in
+  their cuff). Blunt dissection does not yet open a visible cleft on the capsule in the section unless fat is removed.
+- The non-dominant hand has no second pointing device yet (latch only); touch and gamepad input are the next step.
+- Hemostat, Allis, Senn and ties remain decision points only.
 - The depth peel is display-only: an instrument used while peeled still acts on the hidden tissue above the plane,
   so the tip floats over the cut face.
 - Picking and tool placement use material coordinates: with large deformation the instrument

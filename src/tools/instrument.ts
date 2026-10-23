@@ -1,23 +1,33 @@
 import { mat4, vec3 } from 'gl-matrix';
 
-export type ToolKind = 'pencil' | 'forceps' | 'suction' | 'hook';
-export const TOOL_ORDER: ToolKind[] = ['pencil', 'forceps', 'suction', 'hook'];
-export const TOOL_LABEL: Record<ToolKind, string> = { pencil: 'Bovie pencil', forceps: 'Adson forceps', suction: 'Frazier suction', hook: 'Skin hook' };
+/**
+ * Instruments. The dominant hand (pointer) holds any of them; the non-dominant hand holds the
+ * retracting set (`HAND_B_ORDER`) and is driven while Space is held, then latched (see `hands.ts`).
+ */
+export type ToolKind = 'pencil' | 'scalpel' | 'scissors' | 'forceps' | 'suction' | 'hook';
+export const TOOL_ORDER: ToolKind[] = ['pencil', 'scalpel', 'scissors', 'forceps', 'suction', 'hook'];
+export const TOOL_LABEL: Record<ToolKind, string> = {
+  pencil: 'Bovie pencil', scalpel: '#15 scalpel', scissors: 'Metzenbaum scissors', forceps: 'Adson forceps', suction: 'Frazier suction', hook: 'Skin hook',
+};
+/** what the non-dominant hand can hold ('none' parks it off the field) */
+export type HandBKind = 'none' | 'forceps' | 'hook' | 'suction';
+export const HAND_B_ORDER: HandBKind[] = ['none', 'forceps', 'hook', 'suction'];
 
 /**
  * Shared hand-held instrument pose: the handle runs toward the surgeon's right hand (the
  * to-camera direction rotated 55 deg clockwise, 38 deg above the surface) unless pen tilt is given.
+ * The non-dominant hand mirrors it (rotated the other way), so the two instruments do not cross.
  */
-export function handAxis(hit: vec3, cameraPos: vec3, tilt: { x: number; y: number } | null): vec3 {
+export function handAxis(hit: vec3, cameraPos: vec3, tilt: { x: number; y: number } | null, leftHand = false): vec3 {
   let axis: vec3;
   if (tilt) {
     const tx = tilt.x * Math.PI / 180, ty = tilt.y * Math.PI / 180;
     axis = vec3.fromValues(Math.sin(tx), Math.cos(tx) * Math.cos(ty), -Math.sin(ty));
   } else {
     const toCam = vec3.sub(vec3.create(), cameraPos, hit); toCam[1] = 0; vec3.normalize(toCam, toCam);
-    const ang = -55 * Math.PI / 180, ca = Math.cos(ang), sa = Math.sin(ang);
+    const ang = (leftHand ? 55 : -55) * Math.PI / 180, ca = Math.cos(ang), sa = Math.sin(ang);
     const hx = toCam[0] * ca - toCam[2] * sa, hz = toCam[0] * sa + toCam[2] * ca;
-    const el = 38 * Math.PI / 180;
+    const el = (leftHand ? 45 : 38) * Math.PI / 180;
     axis = vec3.fromValues(hx * Math.cos(el), Math.sin(el), hz * Math.cos(el));
   }
   return vec3.normalize(axis, axis);
@@ -37,3 +47,14 @@ export function frameMatrix(out: mat4, x: vec3, y: vec3, z: vec3, origin: vec3):
 }
 
 export const HIDDEN = mat4.fromTranslation(mat4.create(), [0, -1e4, 0]);
+
+/**
+ * Distance (mm) from a point to the metal of an instrument modelled as a capsule from `tip` along
+ * `axis` for `length`, radius `r`: used for pencil-to-instrument contact (buzzing the forceps, or an
+ * accidental touch on a retractor that diverts the current).
+ */
+export function metalDistance(p: vec3, tip: vec3, axis: vec3, length: number, r: number): number {
+  const rel = vec3.sub(vec3.create(), p, tip);
+  const t = Math.min(Math.max(vec3.dot(rel, axis), 0), length);
+  return vec3.length(vec3.scaleAndAdd(rel, rel, axis, -t)) - r;
+}
