@@ -15,6 +15,13 @@ export class MeshBuilder {
     }
     this.count += 3;
   }
+  /** triangle with a normal per vertex (smooth surfaces) */
+  triN(a: vec3, b: vec3, c: vec3, na: vec3, nb: vec3, nc: vec3) {
+    for (const [p, n] of [[a, na], [b, nb], [c, nc]] as [vec3, vec3][]) {
+      this.data.push(p[0], p[1], p[2], n[0], n[1], n[2], p[0] * 0.05, p[2] * 0.05);
+    }
+    this.count += 3;
+  }
   quad(a: vec3, b: vec3, c: vec3, d: vec3, n?: vec3) {
     this.tri(a, b, c, n, [0, 0], [1, 0], [1, 1]);
     this.tri(a, c, d, n, [0, 0], [1, 1], [0, 1]);
@@ -72,26 +79,111 @@ export class MeshBuilder {
   }
 }
 
-/** Drape frame around the bed aperture, lying just above the skin, with a soft lip. */
-export function buildDrapes(halfX: number, halfZ: number, margin = 2.5): MeshBuilder {
-  const mb = new MeshBuilder();
-  const ax = halfX - margin, az = halfZ - margin; // aperture half extents
-  const R = 400; // drape outer extent
-  const y = 0.6; // mm above skin
-  const lip = 3.0;
-  const q = (x0: number, z0: number, x1: number, z1: number, yy = y) =>
-    mb.quad(vec3.fromValues(x0, yy, z1), vec3.fromValues(x1, yy, z1), vec3.fromValues(x1, yy, z0), vec3.fromValues(x0, yy, z0), vec3.fromValues(0, 1, 0));
-  // four flat panels around the aperture
-  q(-R, -R, R, -az - lip); q(-R, az + lip, R, R); q(-R, -az - lip, -ax - lip, az + lip); q(ax + lip, -az - lip, R, az + lip);
-  // sloped lip down to the skin
-  const slope = (x0: number, z0: number, x1: number, z1: number, x2: number, z2: number, x3: number, z3: number) => {
-    mb.quad(vec3.fromValues(x0, y, z0), vec3.fromValues(x1, y, z1), vec3.fromValues(x2, 0.15, z2), vec3.fromValues(x3, 0.15, z3));
-  };
-  slope(ax + lip, -az - lip, -ax - lip, -az - lip, -ax, -az, ax, -az);          // front
-  slope(-ax - lip, az + lip, ax + lip, az + lip, ax, az, -ax, az);              // back
-  slope(-ax - lip, -az - lip, -ax - lip, az + lip, -ax, az, -ax, -az);          // left
-  slope(ax + lip, az + lip, ax + lip, -az - lip, ax, -az, ax, az);              // right
-  return mb;
+// ---- deterministic 2D value noise (same hash as the Unity client's Core/Noise.cs, so both clients fold their drapes alike)
+function hash2(ix: number, iy: number, seed: number): number {
+  let h = (Math.imul(ix, 374761393) + Math.imul(iy, 668265263) + Math.imul(seed, 2246822519)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 4294967296;
+}
+function value2(x: number, y: number, seed: number): number {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const sm = (t: number) => t * t * (3 - 2 * t);
+  const fx = sm(x - ix), fy = sm(y - iy);
+  const a = hash2(ix, iy, seed), b = hash2(ix + 1, iy, seed), c = hash2(ix, iy + 1, seed), d = hash2(ix + 1, iy + 1, seed);
+  return (a + (b - a) * fx) * (1 - fy) + (c + (d - c) * fx) * fy;
+}
+export function fbm2(x: number, y: number, octaves: number, seed = 0): number {
+  let sum = 0, amp = 0.5, norm = 0, f = 1;
+  for (let o = 0; o < octaves; o++) { sum += amp * value2(x * f, y * f, seed + o * 101); norm += amp; amp *= 0.5; f *= 2.03; }
+  return sum / norm;
+}
+const smoothstep = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+// ---- fenestrated drape ------------------------------------------------------------------------------------
+/** Aperture geometry in mm: half extents and corner radius of the rounded-rectangle fenestration. */
+export interface DrapeSpec { ax: number; az: number; rc: number }
+export const DRAPE_FILM_MM = 5;   // incise film margin adhered to the skin
+export const DRAPE_PAD_MM = 20;   // absorbent reinforcement around the fenestration
+
+/** Signed distance outward from the aperture edge (negative inside). */
+export function apertureDist(x: number, z: number, s: DrapeSpec): number {
+  const qx = Math.abs(x) - (s.ax - s.rc), qz = Math.abs(z) - (s.az - s.rc);
+  const ox = Math.max(qx, 0), oz = Math.max(qz, 0);
+  return Math.hypot(ox, oz) + Math.min(Math.max(qx, qz), 0) - s.rc;
+}
+
+/**
+ * Drape height above the skin plane (mm). The incise film lies on the skin, the reinforcement pad is thicker
+ * and flat, and beyond it the loose drape carries broad swells, pleats radiating from the fenestration where
+ * it was pulled taut, and fine wrinkles; past the table edge it hangs down.
+ */
+export function drapeHeight(x: number, z: number, s: DrapeSpec): number {
+  const d = apertureDist(x, z, s);
+  let y = 0.12 + 0.35 * smoothstep(0, DRAPE_FILM_MM, d) + 0.55 * smoothstep(DRAPE_FILM_MM, DRAPE_PAD_MM, d);
+  const loose = smoothstep(DRAPE_PAD_MM - 4, 60, d);
+  const far = smoothstep(60, 220, d);
+  const swell = (fbm2(x / 70, z / 70, 3, 5) - 0.5) * 2;
+  const ang = Math.atan2(z, x);
+  const pleat = Math.sin(ang * 9 + (fbm2(x / 40, z / 40, 2, 11) - 0.5) * 6) * 0.5 + 0.5;
+  const wrinkle = (fbm2(x / 14, z / 14, 2, 17) - 0.5) * 2;
+  y += loose * (swell * (2.5 + 6 * far) + pleat * pleat * (1.2 + 3 * far) + wrinkle * 0.5);
+  y -= Math.max(0, d - 260) * 0.5;
+  return y;
+}
+
+function drapeNormal(x: number, z: number, s: DrapeSpec): vec3 {
+  const e = 0.5;
+  const dx = (drapeHeight(x + e, z, s) - drapeHeight(x - e, z, s)) / (2 * e);
+  const dz = (drapeHeight(x, z + e, s) - drapeHeight(x, z - e, s)) / (2 * e);
+  return vec3.normalize(vec3.create(), vec3.fromValues(-dx, 1, -dz));
+}
+
+/** Point on the rounded rectangle offset by d from the aperture, at perimeter sample k of n (consistent topology per ring). */
+function ringPoint(k: number, n: number, d: number, s: DrapeSpec): [number, number] {
+  const a = s.ax + d, b = s.az + d, r = s.rc + d;
+  const nEdge = Math.round(n / 12), nArc = n / 4 - nEdge;
+  const seg = Math.floor(k / (n / 4)), t = k - seg * (n / 4);
+  // each quarter: a straight run then a corner arc, going counter-clockwise from (+a, -b+r)
+  let px: number, pz: number;
+  if (t < nEdge) {
+    const u = t / nEdge;
+    switch (seg) {
+      case 0: px = a; pz = -(b - r) + u * 2 * (b - r); break;
+      case 1: px = (a - r) - u * 2 * (a - r); pz = b; break;
+      case 2: px = -a; pz = (b - r) - u * 2 * (b - r); break;
+      default: px = -(a - r) + u * 2 * (a - r); pz = -b; break;
+    }
+  } else {
+    const u = (t - nEdge) / nArc;
+    const base = seg * Math.PI / 2, ang = base + u * Math.PI / 2;
+    const cx = seg === 0 || seg === 3 ? a - r : -(a - r), cz = seg === 0 || seg === 1 ? b - r : -(b - r);
+    px = cx + Math.cos(ang) * r; pz = cz + Math.sin(ang) * r;
+  }
+  return [px, pz];
+}
+
+export interface DrapeSet { film: MeshBuilder; pad: MeshBuilder; drape: MeshBuilder; spec: DrapeSpec }
+
+/** Fenestrated drape around the bed aperture in three parts: incise film, reinforcement pad, loose blue drape. */
+export function buildDrapeSet(halfX: number, halfZ: number, margin = 2.5): DrapeSet {
+  const spec: DrapeSpec = { ax: halfX - margin, az: halfZ - margin, rc: 6 };
+  const rings = [0, 1.5, 3, DRAPE_FILM_MM, 7, 10, 14, 17, DRAPE_PAD_MM, 24, 28, 32, 36, 40, 46, 53, 61, 70, 80, 92, 106, 122, 140, 162, 188, 220, 260, 320, 400];
+  const n = 144;
+  const film = new MeshBuilder(), pad = new MeshBuilder(), drape = new MeshBuilder();
+  const P = (k: number, d: number) => { const [x, z] = ringPoint(k % n, n, d, spec); return vec3.fromValues(x, drapeHeight(x, z, spec), z); };
+  const N = (k: number, d: number) => { const [x, z] = ringPoint(k % n, n, d, spec); return drapeNormal(x, z, spec); };
+  for (let r = 0; r < rings.length - 1; r++) {
+    const d0 = rings[r], d1 = rings[r + 1];
+    const mb = d1 <= DRAPE_FILM_MM ? film : d1 <= DRAPE_PAD_MM ? pad : drape;
+    for (let k = 0; k < n; k++) {
+      const a = P(k, d0), b = P(k + 1, d0), c = P(k + 1, d1), d = P(k, d1);
+      const na = N(k, d0), nb = N(k + 1, d0), nc = N(k + 1, d1), nd = N(k, d1);
+      mb.triN(a, c, b, na, nc, nb);
+      mb.triN(a, d, c, na, nd, nc);
+    }
+  }
+  return { film, pad, drape, spec };
 }
 
 /** Bovie pencil along -Y (tip at origin pointing down), length ~150 mm, blade electrode. */

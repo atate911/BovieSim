@@ -62,6 +62,10 @@ namespace BovieSim
         MeshFilter electrodeFilter; Mesh bladeMesh, needleMesh, ballMesh;
         MeshRenderer cutButton, coagButton; MaterialPropertyBlock buttonMpb;
         Light arcLight; DepthOfField dof;
+        // render-side effects driven by detail level and the ray-tracing tier (runtime copies of the volume profile)
+        ScreenSpaceAmbientOcclusion ao; ScreenSpaceReflection ssr; GlobalIllumination gi; SubSurfaceScattering sssRt; ContactShadows contactShadows;
+        readonly System.Collections.Generic.List<HDAdditionalLightData> headLights = new System.Collections.Generic.List<HDAdditionalLightData>();
+        int rtTier; string rtText = "";
         SimAssets assets;
         int frames; float fps, fpsT;
 
@@ -172,7 +176,12 @@ namespace BovieSim
             orbit = new OrbitCamera(viewCamera, field);
             audioOut = gameObject.AddComponent<ActivationAudio>();
             if (postVolume == null) postVolume = FindAnyObjectByType<UnityEngine.Rendering.Volume>();
-            if (postVolume != null && postVolume.sharedProfile != null) postVolume.sharedProfile.TryGet(out dof);
+            if (postVolume != null && postVolume.sharedProfile != null)
+            {
+                // the volume's runtime copy: focus and ray-tracing changes must not be written into the generated asset
+                var prof = postVolume.profile;
+                prof.TryGet(out dof); prof.TryGet(out ao); prof.TryGet(out ssr); prof.TryGet(out gi); prof.TryGet(out sssRt); prof.TryGet(out contactShadows);
+            }
             if (dof != null) dof.active = dofOn; // off by default: blur reads as lag when the view moves
             ApplyRenderDetail();
             status = "";
@@ -182,7 +191,8 @@ namespace BovieSim
         /// <summary>
         /// Epidermis textures are baked for one skin tone and prep; tint runtime copies of those materials so the
         /// skin matches this scenario's tone and prep (chlorhexidine, povidone-iodine or none). The ratio is taken in
-        /// linear space because HDRP multiplies the base map by _BaseColor there.
+        /// linear space because HDRP multiplies the base map by _BaseColor there, then converted back to sRGB because
+        /// Unity gamma-decodes every non-HDR colour property on upload in a linear-colour-space project.
         /// </summary>
         Material[] SkinCorrectedMaterials()
         {
@@ -190,7 +200,7 @@ namespace BovieSim
             Color want = TissuePalette.Skin(scenario.skin.tone) * TissuePalette.Prep(scenario.skin.prep);
             Color baked = TissuePalette.Skin(TissuePalette.BakedTone) * TissuePalette.Prep(TissuePalette.BakedPrep);
             Color w = want.linear, b = baked.linear;
-            var k = new Color(Mathf.Clamp(w.r / Mathf.Max(b.r, 1e-3f), 0, 2), Mathf.Clamp(w.g / Mathf.Max(b.g, 1e-3f), 0, 2), Mathf.Clamp(w.b / Mathf.Max(b.b, 1e-3f), 0, 2), 1);
+            var k = new Color(Mathf.Clamp(w.r / Mathf.Max(b.r, 1e-3f), 0, 2), Mathf.Clamp(w.g / Mathf.Max(b.g, 1e-3f), 0, 2), Mathf.Clamp(w.b / Mathf.Max(b.b, 1e-3f), 0, 2), 1).gamma;
             foreach (int bucket in new[] { 0, 8 }) // epidermis, and coagulated epidermis (half strength: blanching hides the stain)
             {
                 if (mats[bucket] == null) continue;
@@ -201,19 +211,25 @@ namespace BovieSim
             return mats;
         }
 
-        GameObject MakePart(string name, Mesh mesh, Material mat, Transform parent)
+        GameObject MakePart(string name, Mesh mesh, Material mat, Transform parent) { return MakePart(name, mesh, new[] { mat }, parent); }
+
+        GameObject MakePart(string name, Mesh mesh, Material[] mats, Transform parent)
         {
             var go = new GameObject(name);
             go.transform.SetParent(parent, false);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = mat;
+            mr.sharedMaterials = mats;
+            // instruments move, drapes do not: HDRP keeps their ray-tracing acceleration structures accordingly
+            mr.rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.DynamicTransform;
             return go;
         }
 
         void BuildInstruments()
         {
-            drapes = MakePart("Drapes", MeshFactory.Drapes(volume.SizeX / 2, volume.SizeZ / 2), assets.drape, field);
+            drapes = MakePart("Drapes", MeshFactory.Drapes(volume.SizeX / 2, volume.SizeZ / 2), new[] { assets.drapeFilm, assets.drapePad, assets.drape }, field);
+            drapes.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            BuildLampDomes();
             pencil = new GameObject("Bovie pencil"); pencil.transform.SetParent(field, false);
             MakePart("Body", MeshFactory.PencilBody(), assets.pencilBody, pencil.transform);
             cutButton = MakePart("Cut button", MeshFactory.PencilButton(44, 58), assets.pencilCutButton, pencil.transform).GetComponent<MeshRenderer>();
@@ -239,6 +255,25 @@ namespace BovieSim
             arcLight.intensity = 0;
             arcLight.shadows = LightShadows.None;
             arcLight.enabled = false;
+        }
+
+        /// <summary>
+        /// The operating-light heads themselves: an emissive dome on each surgical light so steel instruments and wet
+        /// tissue reflect the lamps (screen-space or ray-traced reflections), as they do in theatre.
+        /// </summary>
+        void BuildLampDomes()
+        {
+            if (assets.lampDome == null) return;
+            var mesh = MeshFactory.LampDome();
+            foreach (var n in new[] { "Surgical light A", "Surgical light B" })
+            {
+                var lightGo = GameObject.Find(n); if (lightGo == null || lightGo.transform.Find("Dome") != null) continue;
+                var dome = MakePart("Dome", mesh, assets.lampDome, lightGo.transform);
+                dome.transform.localRotation = Quaternion.Euler(90, 0, 0); // mesh +Y (the emissive face) toward the light's forward axis, i.e. the field
+                var mr = dome.GetComponent<MeshRenderer>();
+                mr.shadowCastingMode = ShadowCastingMode.Off;
+                mr.rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            }
         }
 
         // ------------------------------------------------------------------------------------------------
@@ -589,25 +624,87 @@ namespace BovieSim
                 case "antialiasing": settings.antialiasing = (settings.antialiasing + 1) % AaModes.Length; aaIndex = settings.antialiasing; if (hdCam != null) hdCam.antialiasing = AaModes[aaIndex]; break;
                 case "invertTiltY": settings.invertTiltY = !settings.invertTiltY; InputState.invertTiltY = settings.invertTiltY; break;
                 case "showTiming": settings.showTiming = !settings.showTiming; ui.showPerf = settings.showTiming; break;
+                case "rayTracing":
+                {
+                    var opts = UserSettings.RayTracingOptions;
+                    settings.rayTracing = opts[(Mathf.Max(0, Array.IndexOf(opts, settings.rayTracing)) + 1) % opts.Length];
+                    ApplyRayTracing();
+                    break;
+                }
             }
             SaveSettings();
         }
 
-        /// <summary>Render-side detail: ambient occlusion and the surgical lights' shadow maps scale with the level.</summary>
+        /// <summary>Render-side detail: ambient occlusion and the surgical lights' shadow maps scale with the level; then the ray-tracing tier.</summary>
         void ApplyRenderDetail()
         {
-            if (postVolume != null && postVolume.sharedProfile != null)
-            {
-                ScreenSpaceAmbientOcclusion ao;
-                if (postVolume.sharedProfile.TryGet(out ao)) ao.active = detail.ssao;
-            }
+            if (ao != null) ao.active = detail.ssao;
+            headLights.Clear();
             foreach (var n in new[] { "Surgical light A", "Surgical light B" })
             {
                 var go = GameObject.Find(n); if (go == null) continue;
                 var hd = go.GetComponent<HDAdditionalLightData>();
-                if (hd != null) { hd.SetShadowResolutionOverride(true); hd.SetShadowResolution(detail.shadowResolution); }
+                if (hd != null) { hd.SetShadowResolutionOverride(true); hd.SetShadowResolution(detail.shadowResolution); headLights.Add(hd); }
                 var l = go.GetComponent<Light>(); if (l != null) l.shadows = detail.softShadows ? LightShadows.Soft : LightShadows.Hard;
             }
+            ApplyRayTracing();
+        }
+
+        /// <summary>
+        /// DirectX Raytracing by tier (Settings > Ray tracing; Auto follows the detail level): 1 ray-traced shadows
+        /// from the light domes plus ray-traced ambient occlusion, 2 adds ray-traced reflections (steel, wet
+        /// tissue, the lamps), 3 adds global illumination (blue drape and red wound bounce) and ray-traced
+        /// subsurface scattering. Without DXR the raster effects stay: PCSS soft shadows, SSAO, and screen-space
+        /// reflections from High detail up. The tissue meshes are rebuilt on the GPU, so they enter the acceleration
+        /// structure as dynamic geometry (SurfaceRenderer.SetRayTracing).
+        /// </summary>
+        void ApplyRayTracing()
+        {
+            rtTier = ResolveRayTracing(out rtText);
+            bool rt = rtTier > 0;
+            foreach (var hd in headLights)
+            {
+                if (hd == null) continue;
+                hd.useRayTracedShadows = rt;
+                hd.numRayTracingSamples = rtTier >= 3 ? 8 : 4;
+                hd.filterTracedShadow = true; hd.filterSizeTraced = 16;
+            }
+            if (ao != null) { ao.rayTracing.Override(rt); ao.rayLength.Override(0.03f); ao.sampleCount.Override(rtTier >= 3 ? 4 : 2); ao.denoise.Override(true); }
+            if (ssr != null)
+            {
+                ssr.enabled.Override(detail.ssr || rtTier >= 2);
+                ssr.tracing.Override(rtTier >= 2 ? RayCastingMode.RayTracing : RayCastingMode.RayMarching);
+                ssr.mode.Override(UnityEngine.Rendering.HighDefinition.RayTracingMode.Performance);
+                ssr.rayLength.Override(3f); ssr.clampValue.Override(2f); ssr.denoise.Override(true); ssr.denoiserRadius.Override(8);
+            }
+            if (gi != null)
+            {
+                gi.enable.Override(rtTier >= 3);
+                gi.tracing.Override(RayCastingMode.RayTracing);
+                gi.mode.Override(UnityEngine.Rendering.HighDefinition.RayTracingMode.Performance);
+                gi.rayLength.Override(1.5f); gi.clampValue.Override(3f); gi.denoise.Override(true); gi.fullResolution.Override(false);
+            }
+            if (sssRt != null) { sssRt.rayTracing.Override(rtTier >= 3); sssRt.sampleCount.Override(2); }
+            if (contactShadows != null) contactShadows.rayTracing.Override(rt);
+            if (surface != null) surface.SetRayTracing(rt);
+        }
+
+        /// <summary>Ray-tracing tier 0-3 from the setting, the detail level and whether the GPU can ray trace at all; `text` describes it for the settings panel.</summary>
+        int ResolveRayTracing(out string text)
+        {
+            string[] names = { "off", "shadows + ambient occlusion", "shadows, AO + reflections", "full (shadows, AO, reflections, global illumination, subsurface)" };
+            if (!HardwareProfile.RayTracingSupported) { text = settings.rayTracing == "Off" ? "off" : "not available on this PC"; return 0; }
+            int tier;
+            switch (settings.rayTracing)
+            {
+                case "Off": tier = 0; break;
+                case "Shadows": tier = 1; break;
+                case "Reflections": tier = 2; break;
+                case "Full": tier = 3; break;
+                default: tier = detail.rayTracing; break;
+            }
+            text = (settings.rayTracing == "Auto" ? "Auto · " : "") + names[tier];
+            return tier;
         }
 
         void SetOverlayMode(int m)
@@ -626,7 +723,7 @@ namespace BovieSim
             if (budget.overBudget && !budgetDismissed && detail.level > DetailLevel.Low)
                 ui.ShowBudgetWarning("At " + detail.Name + " detail this PC takes about " + hud.frameMs.ToString("0") + " ms per frame, over the " + detail.frameBudgetMs.ToString("0") + " ms budget (" + (detail.frameBudgetMs > 20 ? "30" : "60") + " fps). Restart at " + (DetailLevel)((int)detail.level - 1) + " detail?");
             else ui.ShowBudgetWarning(null);
-            ui.RefreshSettings(settings, detail.level, detailReason, chosenLevel);
+            ui.RefreshSettings(settings, detail.level, detailReason, chosenLevel, rtText);
         }
 
         // ------------------------------------------------------------------ teaching moments (pause and replay)

@@ -14,7 +14,7 @@ import { initWebGPU } from '@/render/gpu';
 import { SurfaceExtractor } from '@/render/surface';
 import { Renderer, SceneParams } from '@/render/renderer';
 import { OrbitCamera } from '@/render/camera';
-import { buildDrapes, buildPencilBody, buildPencilButtons, buildBlade } from '@/render/meshes';
+import { buildDrapeSet, buildPencilBody, buildPencilButtons, buildBlade } from '@/render/meshes';
 import { Volume, cellType, cellState } from '@/core/volume';
 import { TISSUE_NAMES, STATE_NAMES } from '@/core/tissueProperties';
 import { PhysicsPipeline } from '@/physics/pipeline';
@@ -95,7 +95,11 @@ async function main() {
     arcLight: { x: 0, y: 0, z: 0, intensity: 0 },
   };
 
-  renderer.addMesh(buildDrapes(sx / 2, sz / 2), 'drapes', [0.12, 0.22, 0.40], { rough: 0.9, kind: 1 });
+  // fenestrated surgical drape: incise film on the skin, absorbent pad, then the loose blue drape (albedos in linear sRGB)
+  const drape = buildDrapeSet(sx / 2, sz / 2);
+  renderer.addMesh(drape.film, 'drapeFilm', [0.30, 0.40, 0.52], { rough: 0.22, kind: 3 });
+  renderer.addMesh(drape.pad, 'drapePad', [0.085, 0.19, 0.36], { rough: 0.95, kind: 2 });
+  renderer.addMesh(drape.drape, 'drape', [0.05, 0.14, 0.31], { rough: 0.9, kind: 1 });
   const pencilBody = renderer.addMesh(buildPencilBody(), 'pencilBody', [0.92, 0.86, 0.72], { rough: 0.45 });
   const pencilButtons = renderer.addMesh(buildPencilButtons(), 'pencilButtons', [0.85, 0.75, 0.1], { rough: 0.5 });
   const blade = renderer.addMesh(buildBlade(), 'blade', [0.85, 0.85, 0.86], { rough: 0.25, metallic: 1 });

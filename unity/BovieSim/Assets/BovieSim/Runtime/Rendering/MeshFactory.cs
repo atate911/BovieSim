@@ -11,9 +11,19 @@ namespace BovieSim
         readonly List<Vector3> n = new List<Vector3>();
         readonly List<Vector2> uv = new List<Vector2>();
         readonly List<int> idx = new List<int>();
+        readonly List<int> subStarts = new List<int>();
         Matrix4x4 xf = Matrix4x4.identity;
 
         public MeshFactory Transform(Matrix4x4 m) { xf = m; return this; }
+
+        /// <summary>Starts a new submesh (one material slot) at the current triangle count.</summary>
+        public MeshFactory BeginSubmesh() { subStarts.Add(idx.Count); return this; }
+
+        /// <summary>Triangle with a normal per vertex, wound so that it faces `outward`.</summary>
+        void TriSmooth(Vector3 a, Vector3 b, Vector3 c, Vector3 na, Vector3 nb, Vector3 nc, Vector3 outward)
+        {
+            if (Vector3.Dot(Vector3.Cross(b - a, c - a), outward) < 0) Tri(a, c, b, na, nc, nb); else Tri(a, b, c, na, nb, nc);
+        }
 
         /// <summary>Adds a triangle facing `outward` (Unity front faces have cross(b-a, c-a) toward the viewer).</summary>
         void TriFacing(Vector3 a, Vector3 b, Vector3 c, Vector3 outward)
@@ -157,7 +167,17 @@ namespace BovieSim
         {
             var m = new Mesh { name = name };
             if (v.Count > 65000) m.indexFormat = IndexFormat.UInt32;
-            m.SetVertices(v); m.SetNormals(n); m.SetUVs(0, uv); m.SetTriangles(idx, 0);
+            m.SetVertices(v); m.SetNormals(n); m.SetUVs(0, uv);
+            if (subStarts.Count == 0) m.SetTriangles(idx, 0);
+            else
+            {
+                m.subMeshCount = subStarts.Count;
+                for (int s = 0; s < subStarts.Count; s++)
+                {
+                    int start = subStarts[s], end = s + 1 < subStarts.Count ? subStarts[s + 1] : idx.Count;
+                    m.SetTriangles(idx.GetRange(start, end - start), s);
+                }
+            }
             m.RecalculateTangents(); m.RecalculateBounds();
             return m;
         }
@@ -294,19 +314,107 @@ namespace BovieSim
             return f.Build("SkinHook");
         }
 
-        /// <summary>Drape frame around the bed aperture with a sloped lip down to the skin.</summary>
+        // ---- fenestrated drape (port of src/render/meshes.ts: same noise, same folds) ----------------------
+
+        /// <summary>incise film margin adhered to the skin (mm from the aperture edge)</summary>
+        public const float DrapeFilmMm = 5f;
+        /// <summary>absorbent reinforcement zone around the fenestration (mm from the aperture edge)</summary>
+        public const float DrapePadMm = 20f;
+
+        static float Smooth01(float a, float b, float x) { float t = Mathf.Clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); }
+
+        /// <summary>Signed distance outward from the rounded-rectangle aperture edge (negative inside).</summary>
+        public static float ApertureDist(float x, float z, float ax, float az, float rc)
+        {
+            float qx = Mathf.Abs(x) - (ax - rc), qz = Mathf.Abs(z) - (az - rc);
+            float ox = Mathf.Max(qx, 0), oz = Mathf.Max(qz, 0);
+            return Mathf.Sqrt(ox * ox + oz * oz) + Mathf.Min(Mathf.Max(qx, qz), 0) - rc;
+        }
+
+        /// <summary>
+        /// Drape height above the skin plane (mm). The incise film lies on the skin, the reinforcement pad is
+        /// thicker and flat, and beyond it the loose drape carries broad swells, pleats radiating from the
+        /// fenestration where it was pulled taut, and fine wrinkles; past the table edge it hangs down.
+        /// </summary>
+        public static float DrapeHeight(float x, float z, float ax, float az, float rc)
+        {
+            float d = ApertureDist(x, z, ax, az, rc);
+            float y = 0.12f + 0.35f * Smooth01(0, DrapeFilmMm, d) + 0.55f * Smooth01(DrapeFilmMm, DrapePadMm, d);
+            float loose = Smooth01(DrapePadMm - 4, 60, d);
+            float far = Smooth01(60, 220, d);
+            float swell = ((float)Noise.Fbm2(x / 70.0, z / 70.0, 3, 5) - 0.5f) * 2;
+            float ang = Mathf.Atan2(z, x);
+            float pleat = Mathf.Sin(ang * 9 + ((float)Noise.Fbm2(x / 40.0, z / 40.0, 2, 11) - 0.5f) * 6) * 0.5f + 0.5f;
+            float wrinkle = ((float)Noise.Fbm2(x / 14.0, z / 14.0, 2, 17) - 0.5f) * 2;
+            y += loose * (swell * (2.5f + 6 * far) + pleat * pleat * (1.2f + 3 * far) + wrinkle * 0.5f);
+            y -= Mathf.Max(0, d - 260) * 0.5f;
+            return y;
+        }
+
+        static Vector3 DrapeNormal(float x, float z, float ax, float az, float rc)
+        {
+            const float e = 0.5f;
+            float dx = (DrapeHeight(x + e, z, ax, az, rc) - DrapeHeight(x - e, z, ax, az, rc)) / (2 * e);
+            float dz = (DrapeHeight(x, z + e, ax, az, rc) - DrapeHeight(x, z - e, ax, az, rc)) / (2 * e);
+            return new Vector3(-dx, 1, -dz).normalized;
+        }
+
+        /// <summary>Point on the rounded rectangle offset by d from the aperture, at perimeter sample k of n (same topology on every ring).</summary>
+        static Vector2 RingPoint(int k, int n, float d, float ax, float az, float rc)
+        {
+            float a = ax + d, b = az + d, r = rc + d;
+            int quarter = n / 4, nEdge = Mathf.RoundToInt(n / 12f), nArc = quarter - nEdge;
+            int seg = k / quarter, t = k - seg * quarter;
+            if (t < nEdge)
+            {
+                float u = t / (float)nEdge;
+                switch (seg)
+                {
+                    case 0: return new Vector2(a, -(b - r) + u * 2 * (b - r));
+                    case 1: return new Vector2((a - r) - u * 2 * (a - r), b);
+                    case 2: return new Vector2(-a, (b - r) - u * 2 * (b - r));
+                    default: return new Vector2(-(a - r) + u * 2 * (a - r), -b);
+                }
+            }
+            float v = (t - nEdge) / (float)nArc;
+            float angle = seg * Mathf.PI / 2 + v * Mathf.PI / 2;
+            float cx = seg == 0 || seg == 3 ? a - r : -(a - r), cz = seg == 0 || seg == 1 ? b - r : -(b - r);
+            return new Vector2(cx + Mathf.Cos(angle) * r, cz + Mathf.Sin(angle) * r);
+        }
+
+        /// <summary>
+        /// Fenestrated drape around the bed aperture, three submeshes for three materials: 0 incise film,
+        /// 1 absorbent reinforcement pad, 2 the loose blue drape with folds.
+        /// </summary>
         public static Mesh Drapes(float halfX, float halfZ, float margin = 2.5f)
         {
+            float ax = halfX - margin, az = halfZ - margin, rc = 6f;
+            float[] rings = { 0, 1.5f, 3, DrapeFilmMm, 7, 10, 14, 17, DrapePadMm, 24, 28, 32, 36, 40, 46, 53, 61, 70, 80, 92, 106, 122, 140, 162, 188, 220, 260, 320, 400 };
+            const int n = 144;
             var f = new MeshFactory();
-            float ax = halfX - margin, az = halfZ - margin, R = 400, y = 0.6f, lip = 3f;
-            System.Action<float, float, float, float> q = (x0, z0, x1, z1) => f.Quad(new Vector3(x0, y, z0), new Vector3(x0, y, z1), new Vector3(x1, y, z1), new Vector3(x1, y, z0), Vector3.up);
-            q(-R, -R, R, -az - lip); q(-R, az + lip, R, R); q(-R, -az - lip, -ax - lip, az + lip); q(ax + lip, -az - lip, R, az + lip);
-            System.Action<Vector3, Vector3, Vector3, Vector3> slope = (a, b, c, d) => f.Quad(a, b, c, d, Vector3.up);
-            slope(new Vector3(ax + lip, y, -az - lip), new Vector3(-ax - lip, y, -az - lip), new Vector3(-ax, 0.15f, -az), new Vector3(ax, 0.15f, -az));
-            slope(new Vector3(-ax - lip, y, az + lip), new Vector3(ax + lip, y, az + lip), new Vector3(ax, 0.15f, az), new Vector3(-ax, 0.15f, az));
-            slope(new Vector3(-ax - lip, y, -az - lip), new Vector3(-ax - lip, y, az + lip), new Vector3(-ax, 0.15f, az), new Vector3(-ax, 0.15f, -az));
-            slope(new Vector3(ax + lip, y, az + lip), new Vector3(ax + lip, y, -az - lip), new Vector3(ax, 0.15f, -az), new Vector3(ax, 0.15f, az));
+            System.Func<int, float, Vector3> P = (k, d) => { var q = RingPoint(k % n, n, d, ax, az, rc); return new Vector3(q.x, DrapeHeight(q.x, q.y, ax, az, rc), q.y); };
+            System.Func<int, float, Vector3> N = (k, d) => { var q = RingPoint(k % n, n, d, ax, az, rc); return DrapeNormal(q.x, q.y, ax, az, rc); };
+            int part = -1;
+            for (int r = 0; r < rings.Length - 1; r++)
+            {
+                float d0 = rings[r], d1 = rings[r + 1];
+                int want = d1 <= DrapeFilmMm ? 0 : d1 <= DrapePadMm ? 1 : 2;
+                while (part < want) { f.BeginSubmesh(); part++; }
+                for (int k = 0; k < n; k++)
+                {
+                    Vector3 a = P(k, d0), b = P(k + 1, d0), c = P(k + 1, d1), d = P(k, d1);
+                    Vector3 na = N(k, d0), nb = N(k + 1, d0), nc = N(k + 1, d1), nd = N(k, d1);
+                    f.TriSmooth(a, c, b, na, nc, nb, Vector3.up);
+                    f.TriSmooth(a, d, c, na, nd, nc, Vector3.up);
+                }
+            }
             return f.Build("Drapes");
+        }
+
+        /// <summary>Operating-light head: a flat dome (metres, +Y toward the field) whose face is emissive, so instruments and wet tissue reflect it.</summary>
+        public static Mesh LampDome(float radius = 0.3f, float depth = 0.08f)
+        {
+            return new MeshFactory().Cylinder(radius * 0.8f, radius, -depth, 0, 48).Build("LampDome");
         }
     }
 }

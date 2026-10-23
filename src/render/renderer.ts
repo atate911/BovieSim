@@ -1,5 +1,6 @@
 import { mat4, vec3 } from 'gl-matrix';
 import commonWgsl from './wgsl/common.wgsl?raw';
+import lightingWgsl from './wgsl/lighting.wgsl?raw';
 import tissueWgsl from './wgsl/tissue.wgsl?raw';
 import simpleWgsl from './wgsl/simple.wgsl?raw';
 import postWgsl from './wgsl/post.wgsl?raw';
@@ -29,15 +30,26 @@ export interface SimpleDraw {
   castsShadow: boolean;
 }
 
-const FRAME_BYTES = 64 * 3 + 16 * 7;
-const SHADOW_SIZE = 2048;
+/** One head of the overhead surgical light: a dome fixed in the room, ~0.85 m above the field. */
+export interface LightHead {
+  /** position in field millimetres */
+  position: vec3;
+  intensity: number;
+  shadowSize: number;
+}
 
-/** Raw WebGPU forward renderer: shadow pass, HDR main pass, tonemap pass, optional readback. */
+const FRAME_BYTES = 64 * 4 + 16 * 9;
+/** half-angle of the light dome seen from the field (radius ~0.25 m at ~0.85 m): sets penumbra width and highlight size */
+const DOME_TAN = 0.22;
+const SHADOW_NEAR = 100, SHADOW_FAR = 500;
+
+/** Raw WebGPU forward renderer: two shadow passes (one per light head), HDR main pass, tonemap pass, optional readback. */
 export class Renderer {
   readonly device: GPUDevice;
   private frameBuf: GPUBuffer;
-  private shadowTex: GPUTexture;
-  private shadowView: GPUTextureView;
+  private shadowTex: GPUTexture[] = [];
+  private shadowView: GPUTextureView[] = [];
+  private shadowSel: GPUBuffer[] = [];
   private shadowSampler: GPUSampler;
   private hdr!: GPUTexture; private hdrView!: GPUTextureView;
   private depth!: GPUTexture; private depthView!: GPUTextureView;
@@ -47,7 +59,7 @@ export class Renderer {
   private simplePipe: GPURenderPipeline; private simpleShadowPipe: GPURenderPipeline;
   private postPipe: GPURenderPipeline;
   private tissueBG!: GPUBindGroup; private simpleFrameBG: GPUBindGroup;
-  private tissueShadowBG!: GPUBindGroup; private simpleShadowBG: GPUBindGroup;
+  private tissueShadowBG: GPUBindGroup[] = []; private simpleShadowBG: GPUBindGroup[] = [];
   private shadowFrameLayout: GPUBindGroupLayout;
   private postBG!: GPUBindGroup;
   private simpleMatLayout: GPUBindGroupLayout;
@@ -57,16 +69,26 @@ export class Renderer {
   readonly particles: ParticleSystem;
   private latInfo: GPUBuffer; private latDisp: GPUBuffer;
   private readback: GPUBuffer | null = null;
-  readonly lightDir = vec3.normalize(vec3.create(), [0.25, 1, 0.35]);
-  lightIntensity = 2.1;
+  /** dual-head surgical light: the main head over the surgeon's left shoulder, a fill head opposite, as in theatre */
+  readonly heads: LightHead[] = [
+    { position: vec3.scale(vec3.create(), vec3.normalize(vec3.create(), [-0.35, 0.85, 0.3]), 850), intensity: 1.7, shadowSize: 2048 },
+    { position: vec3.scale(vec3.create(), vec3.normalize(vec3.create(), [0.4, 0.8, -0.25]), 800), intensity: 1.0, shadowSize: 1024 },
+  ];
+  /** 4300 K heads after the eye's white balance: near white with a trace of warmth */
+  lightColor: [number, number, number] = [1.0, 0.965, 0.91];
   ambient = 0.22;
   time = 0;
 
   constructor(private gpu: GpuContext, private surface: SurfaceExtractor, private volumeBufs: { blood: GPUBuffer; info: GPUBuffer }) {
     const d = gpu.device; this.device = d;
     this.frameBuf = d.createBuffer({ label: 'frame', size: FRAME_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    this.shadowTex = d.createTexture({ label: 'shadow', size: [SHADOW_SIZE, SHADOW_SIZE], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
-    this.shadowView = this.shadowTex.createView();
+    for (let i = 0; i < 2; i++) {
+      const size = this.heads[i].shadowSize;
+      this.shadowTex[i] = d.createTexture({ label: 'shadow' + i, size: [size, size], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+      this.shadowView[i] = this.shadowTex[i].createView();
+      this.shadowSel[i] = d.createBuffer({ label: 'shadowSel' + i, size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      d.queue.writeBuffer(this.shadowSel[i], 0, new Uint32Array([i, 0, 0, 0]));
+    }
     this.shadowSampler = d.createSampler({ compare: 'less', magFilter: 'linear', minFilter: 'linear' });
     this.linearSampler = d.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 
@@ -81,6 +103,7 @@ export class Renderer {
         { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 6, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
         { binding: 7, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 8, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
       ],
     });
     const simpleFrameLayout = d.createBindGroupLayout({
@@ -89,6 +112,7 @@ export class Renderer {
         { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
+        { binding: 8, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
       ],
     });
     this.shadowFrameLayout = d.createBindGroupLayout({
@@ -98,6 +122,7 @@ export class Renderer {
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 6, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
         { binding: 7, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 9, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
       ],
     });
     // lattice displacement (identity until a lattice is attached)
@@ -106,12 +131,15 @@ export class Renderer {
     this.latDisp = d.createBuffer({ label: 'latticeDisp', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     const simpleShadowFrameLayout = d.createBindGroupLayout({
       label: 'simpleShadowFrameLayout',
-      entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } }],
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 9, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+      ],
     });
     this.simpleMatLayout = d.createBindGroupLayout({ label: 'simpleMat', entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }] });
 
-    const tissueMod = createShader(d, 'tissue', commonWgsl + VOLUME_INFO_WGSL + tissueWgsl);
-    const simpleMod = createShader(d, 'simple', commonWgsl + simpleWgsl);
+    const tissueMod = createShader(d, 'tissue', commonWgsl + lightingWgsl + VOLUME_INFO_WGSL + tissueWgsl);
+    const simpleMod = createShader(d, 'simple', commonWgsl + lightingWgsl + simpleWgsl);
     const postMod = createShader(d, 'post', commonWgsl + postWgsl);
 
     const tissueLayout = d.createPipelineLayout({ bindGroupLayouts: [this.frameLayout] });
@@ -151,8 +179,12 @@ export class Renderer {
       primitive: { topology: 'triangle-list' },
     });
     this.simpleFrameBG = d.createBindGroup({ layout: simpleFrameLayout, entries: [
-      { binding: 0, resource: { buffer: this.frameBuf } }, { binding: 2, resource: this.shadowView }, { binding: 3, resource: this.shadowSampler }] });
-    this.simpleShadowBG = d.createBindGroup({ layout: simpleShadowFrameLayout, entries: [{ binding: 0, resource: { buffer: this.frameBuf } }] });
+      { binding: 0, resource: { buffer: this.frameBuf } }, { binding: 2, resource: this.shadowView[0] }, { binding: 3, resource: this.shadowSampler },
+      { binding: 8, resource: this.shadowView[1] }] });
+    for (let i = 0; i < 2; i++) {
+      this.simpleShadowBG[i] = d.createBindGroup({ layout: simpleShadowFrameLayout, entries: [
+        { binding: 0, resource: { buffer: this.frameBuf } }, { binding: 9, resource: { buffer: this.shadowSel[i] } }] });
+    }
     this.particles = new ParticleSystem(d, this.frameBuf);
     this.rebuildTissueBG();
   }
@@ -160,12 +192,16 @@ export class Renderer {
   rebuildTissueBG() {
     this.tissueBG = this.device.createBindGroup({ layout: this.frameLayout, entries: [
       { binding: 0, resource: { buffer: this.frameBuf } }, { binding: 1, resource: { buffer: this.surface.vertexBuffer } },
-      { binding: 2, resource: this.shadowView }, { binding: 3, resource: this.shadowSampler },
+      { binding: 2, resource: this.shadowView[0] }, { binding: 3, resource: this.shadowSampler },
       { binding: 4, resource: { buffer: this.volumeBufs.blood } }, { binding: 5, resource: { buffer: this.volumeBufs.info } },
-      { binding: 6, resource: { buffer: this.latInfo } }, { binding: 7, resource: { buffer: this.latDisp } }] });
-    this.tissueShadowBG = this.device.createBindGroup({ layout: this.shadowFrameLayout, entries: [
-      { binding: 0, resource: { buffer: this.frameBuf } }, { binding: 1, resource: { buffer: this.surface.vertexBuffer } },
-      { binding: 6, resource: { buffer: this.latInfo } }, { binding: 7, resource: { buffer: this.latDisp } }] });
+      { binding: 6, resource: { buffer: this.latInfo } }, { binding: 7, resource: { buffer: this.latDisp } },
+      { binding: 8, resource: this.shadowView[1] }] });
+    for (let i = 0; i < 2; i++) {
+      this.tissueShadowBG[i] = this.device.createBindGroup({ layout: this.shadowFrameLayout, entries: [
+        { binding: 0, resource: { buffer: this.frameBuf } }, { binding: 1, resource: { buffer: this.surface.vertexBuffer } },
+        { binding: 6, resource: { buffer: this.latInfo } }, { binding: 7, resource: { buffer: this.latDisp } },
+        { binding: 9, resource: { buffer: this.shadowSel[i] } }] });
+    }
   }
 
   /** Attaches a mechanics lattice: allocates the displacement buffer and writes its info. */
@@ -219,39 +255,44 @@ export class Renderer {
 
   private paddedRow() { return Math.ceil((this.width * 4) / 256) * 256; }
 
-  private lightViewProj(cam: OrbitCamera, bedHalf: number): mat4 {
+  /** Orthographic shadow projection of one head over the field around the camera target; returns the matrix and its half extent (mm). */
+  private lightViewProj(cam: OrbitCamera, bedHalf: number, head: LightHead): { lvp: mat4; r: number } {
     const center = vec3.fromValues(cam.target[0], -8, cam.target[2]);
-    const eye = vec3.scaleAndAdd(vec3.create(), center, this.lightDir, 300);
+    const dir = vec3.normalize(vec3.create(), head.position);
+    const eye = vec3.scaleAndAdd(vec3.create(), center, dir, 300);
     const view = mat4.lookAt(mat4.create(), eye, center, [0, 0, -1]);
     const r = Math.max(bedHalf * 1.6, 50);
-    const proj = mat4.orthoZO(mat4.create(), -r, r, -r, r, 100, 500);
-    return mat4.multiply(mat4.create(), proj, view);
+    const proj = mat4.orthoZO(mat4.create(), -r, r, -r, r, SHADOW_NEAR, SHADOW_FAR);
+    return { lvp: mat4.multiply(mat4.create(), proj, view), r };
   }
 
   writeFrame(cam: OrbitCamera, p: SceneParams) {
     const buf = new ArrayBuffer(FRAME_BYTES);
     const f = new Float32Array(buf);
-    const lvp = this.lightViewProj(cam, Math.max(p.bedHalfX, p.bedHalfZ));
-    f.set(cam.viewProj, 0); f.set(cam.view, 16); f.set(lvp, 32);
-    let o = 48;
+    const bedHalf = Math.max(p.bedHalfX, p.bedHalfZ);
+    const a = this.lightViewProj(cam, bedHalf, this.heads[0]), b = this.lightViewProj(cam, bedHalf, this.heads[1]);
+    f.set(cam.viewProj, 0); f.set(cam.view, 16); f.set(a.lvp, 32); f.set(b.lvp, 48);
+    let o = 64;
     f.set([cam.position[0], cam.position[1], cam.position[2], this.time], o); o += 4;
-    f.set([this.lightDir[0], this.lightDir[1], this.lightDir[2], this.lightIntensity], o); o += 4;
-    f.set([1.0, 0.97, 0.92, this.ambient], o); o += 4;
+    f.set([this.heads[0].position[0], this.heads[0].position[1], this.heads[0].position[2], this.heads[0].intensity], o); o += 4;
+    f.set([this.heads[1].position[0], this.heads[1].position[1], this.heads[1].position[2], this.heads[1].intensity], o); o += 4;
+    f.set([this.lightColor[0], this.lightColor[1], this.lightColor[2], this.ambient], o); o += 4;
     f.set([p.arcLight.x, p.arcLight.y, p.arcLight.z, p.arcLight.intensity], o); o += 4;
     f.set([p.skinTone, p.prep, p.langerRad, p.exposure], o); o += 4;
     f.set([p.debugMode, p.bedHalfX, p.bedHalfZ, 0.25], o); o += 4;
+    f.set([DOME_TAN, 2 * a.r / this.heads[0].shadowSize, 2 * b.r / this.heads[1].shadowSize, SHADOW_FAR - SHADOW_NEAR], o); o += 4;
     f.set([this.width, this.height, 0, 0], o);
     this.device.queue.writeBuffer(this.frameBuf, 0, buf);
   }
 
   /** Encodes one frame. Returns the command encoder for additional passes. */
   render(enc: GPUCommandEncoder) {
-    // shadow pass
-    {
-      const pass = enc.beginRenderPass({ label: 'shadow', colorAttachments: [], depthStencilAttachment: { view: this.shadowView, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' } });
-      pass.setPipeline(this.tissueShadowPipe); pass.setBindGroup(0, this.tissueShadowBG);
+    // shadow passes, one per light head
+    for (let i = 0; i < 2; i++) {
+      const pass = enc.beginRenderPass({ label: 'shadow' + i, colorAttachments: [], depthStencilAttachment: { view: this.shadowView[i], depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' } });
+      pass.setPipeline(this.tissueShadowPipe); pass.setBindGroup(0, this.tissueShadowBG[i]);
       pass.drawIndirect(this.surface.indirect, 0);
-      pass.setPipeline(this.simpleShadowPipe); pass.setBindGroup(0, this.simpleShadowBG);
+      pass.setPipeline(this.simpleShadowPipe); pass.setBindGroup(0, this.simpleShadowBG[i]);
       for (const dr of this.draws) { if (!dr.castsShadow) continue; pass.setBindGroup(1, dr.bindGroup); pass.setVertexBuffer(0, dr.buffer); pass.draw(dr.count); }
       pass.end();
     }

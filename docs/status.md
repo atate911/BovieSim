@@ -81,6 +81,18 @@
 - Upgrade path: version constant, changelog, tags, setup/settings/scenario versioning (docs/upgrading.md).
 - Not yet verified in Unity.
 
+## Surgical field, round 3 (0.5.0)
+- Drapes: folded fenestrated sheet (incise film, reinforcement pad, loose blue drape) built from one shared
+  heightfield (`src/render/meshes.ts`, `MeshFactory.Drapes`); three materials in Unity, three procedural fabric
+  kinds in the browser build.
+- Lights: two dome-sized surgical light heads; soft shadows with contact-sharp penumbrae (PCSS in both clients),
+  dome-widened highlights, emissive lamp heads for reflections, contact shadows and wound-scale AO in Unity.
+- Ray tracing (Unity, DXR): shadows + AO / + reflections / + GI and subsurface by tier, Auto from the detail level;
+  HDRP asset and DirectX 12 configured by Set Up Project; tissue bricks as dynamic ray-tracing geometry.
+- Colour: PBR Neutral tone mapping and sRGB output in the browser build; sRGB-correct scenario skin tint in Unity.
+- Verified: browser build headless at 0.5 mm (drape, soft shadows, tone mapping); Unity C# compile check and
+  EditMode tests under Mono. **Not yet verified in Unity**: HDRP rendering, DXR on real hardware, performance.
+
 ## Known gaps (next)
 - Picking and tool placement use material coordinates: with large deformation the instrument
   draws slightly off the displaced surface.

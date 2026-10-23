@@ -1,16 +1,20 @@
-// Simple PBR for drapes and instruments (vertex buffers), with procedural cloth option.
+// PBR for drapes and instruments (vertex buffers) under the surgical light rig, with procedural
+// fabric kinds: 1 blue nonwoven drape, 2 absorbent reinforcement pad, 3 incise film.
 
 struct Vtx { @location(0) pos: vec3f, @location(1) nrm: vec3f, @location(2) uv: vec2f };
 struct Material {
-  color: vec4f,      // rgb albedo, a = metallic
-  params: vec4f,     // x rough, y kind (0 solid, 1 cloth, 2 towel), z emissive, w unused
+  color: vec4f,      // rgb albedo (linear), a = metallic
+  params: vec4f,     // x rough, y kind (0 solid, 1 drape, 2 pad, 3 film), z emissive, w unused
   model: mat4x4f,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
-@group(0) @binding(2) var shadowMap: texture_depth_2d;
+@group(0) @binding(2) var shadowMapA: texture_depth_2d;
 @group(0) @binding(3) var shadowSampler: sampler_comparison;
+@group(0) @binding(8) var shadowMapB: texture_depth_2d;
 @group(1) @binding(0) var<uniform> mat: Material;
+struct ShadowSel { head: u32, pad0: u32, pad1: u32, pad2: u32 };
+@group(0) @binding(9) var<uniform> shadowSel: ShadowSel;
 
 struct VSOut { @builtin(position) pos: vec4f, @location(0) wpos: vec3f, @location(1) nrm: vec3f, @location(2) uv: vec2f };
 
@@ -27,63 +31,73 @@ fn vs_main(v: Vtx) -> VSOut {
 
 @vertex
 fn vs_shadow(v: Vtx) -> @builtin(position) vec4f {
-  return frame.lightViewProj * (mat.model * vec4f(v.pos, 1.0));
+  let wp = mat.model * vec4f(v.pos, 1.0);
+  if (shadowSel.head == 1u) { return frame.light2ViewProj * wp; }
+  return frame.lightViewProj * wp;
 }
 
-fn shadowFactor(wpos: vec3f, N: vec3f, L: vec3f) -> f32 {
-  let bias = frame.params1.w * (1.0 + 2.0 * (1.0 - max(dot(N, L), 0.0)));
-  let lp = frame.lightViewProj * vec4f(wpos + N * bias, 1.0);
-  let ndc = lp.xyz / lp.w;
-  let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-  if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { return 1.0; }
-  let texel = 1.0 / vec2f(textureDimensions(shadowMap));
-  var s = 0.0;
-  for (var y = -1; y <= 1; y++) { for (var x = -1; x <= 1; x++) {
-    s += textureSampleCompareLevel(shadowMap, shadowSampler, uv + vec2f(f32(x), f32(y)) * texel, ndc.z - 0.0005);
-  }}
-  return s / 9.0;
+/** Small wrinkle normals for cloth and film (the geometry carries the large folds). */
+fn wrinkleNormal(p: vec3f, scale: f32, amp: f32) -> vec3f {
+  let e = 0.4;
+  let h0 = fbm3(p * scale, 3);
+  let hx = fbm3((p + vec3f(e, 0.0, 0.0)) * scale, 3);
+  let hz = fbm3((p + vec3f(0.0, 0.0, e)) * scale, 3);
+  return vec3f((hx - h0) / e, 0.0, (hz - h0) / e) * amp;
 }
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4f {
-  var N = normalize(in.nrm);
+  let Ngeo = normalize(in.nrm);
+  var N = Ngeo;
   let V = normalize(frame.cameraPos.xyz - in.wpos);
   var albedo = mat.color.rgb;
   var rough = mat.params.x;
   let metallic = mat.color.a;
   let kind = mat.params.y;
-  if (kind > 0.5) {
-    // cloth: weave + folds
-    let p = in.wpos;
-    let weave = 0.5 + 0.5 * sin(p.x * 12.0) * sin(p.z * 12.0);
-    let folds = fbm3(p * 0.02, 3);
-    let crease = abs(fbm3(p * 0.06 + vec3f(9.0), 3) - 0.5);
-    let e = 0.6;
-    let foldN = vec3f(fbm3((p + vec3f(e, 0.0, 0.0)) * 0.02, 3) - folds, 0.0, fbm3((p + vec3f(0.0, 0.0, e)) * 0.02, 3) - folds) * 1.5
-             + vec3f(abs(fbm3((p + vec3f(e, 0.0, 0.0)) * 0.06 + vec3f(9.0), 3) - 0.5) - crease, 0.0, abs(fbm3((p + vec3f(0.0, 0.0, e)) * 0.06 + vec3f(9.0), 3) - 0.5) - crease) * 2.5;
-    N = normalize(N + foldN);
-    albedo = albedo * (0.93 + 0.07 * weave) * (0.9 + 0.2 * folds) * (0.85 + 0.3 * smoothstep(0.0, 0.25, crease));
-    if (kind > 1.5) { albedo *= (0.9 + 0.2 * fbm3(p * 0.4, 2)); }
-    rough = 0.85;
+  var sheen = 0.0;
+  var f0 = mix(vec3f(0.04), albedo, metallic);
+  let p = in.wpos;
+  if (kind > 0.5 && kind < 1.5) {
+    // SMS nonwoven drape: embossed bonding dots on a 1.3 mm pitch, fibrous mottling, soft wrinkles, velvet sheen
+    let w = worley3(vec3f(p.x, 0.0, p.z) * 0.77 + vec3f(0.5));
+    let bond = 1.0 - smoothstep(0.22, 0.34, w.x);
+    let mottle = 0.9 + 0.2 * fbm3(p * 0.9, 3);
+    albedo = albedo * mottle * (1.0 - 0.10 * bond);
+    N = normalize(N + wrinkleNormal(p, 0.11, 0.9));
+    rough = 0.92; sheen = 0.35;
+  } else if (kind > 1.5 && kind < 2.5) {
+    // absorbent reinforcement: quilted fleece, matte, lighter
+    let q = worley3(vec3f(p.x, 0.0, p.z) * 0.16);
+    let dimple = smoothstep(0.1, 0.6, q.x);
+    albedo = albedo * (0.92 + 0.16 * fbm3(p * 0.5, 3)) * (0.94 + 0.08 * dimple);
+    N = normalize(N + wrinkleNormal(p, 0.2, 0.35));
+    rough = 0.96; sheen = 0.5;
+  } else if (kind > 2.5) {
+    // incise film: thin glossy plastic with fine creases
+    N = normalize(N + wrinkleNormal(p, 0.33, 0.45));
+    rough = 0.2; f0 = vec3f(0.045);
   }
   if (dot(N, V) < 0.0) { N = normalize(N - V * dot(N, V) * 1.01); }
-  let L = normalize(frame.lightDir.xyz);
-  let lightCol = frame.lightColor.rgb * frame.lightDir.w;
-  let sh = shadowFactor(in.wpos, normalize(in.nrm), L);
-  let f0 = mix(vec3f(0.04), albedo, metallic);
   let diff = albedo * (1.0 - metallic);
-  let d = shadeLight(N, V, L, diff, rough, f0, 0.0);
-  var color = (d.diffuse + d.specular) * lightCol * sh;
-  let amb = hemiAmbient(N, vec3f(0.55, 0.6, 0.7), vec3f(0.3, 0.25, 0.22)) * frame.lightColor.w;
+  let px = in.pos.xy;
+  var color = vec3f(0.0);
+  for (var i = 0; i < 2; i++) {
+    let h = lightHead(i, in.wpos, Ngeo, px);
+    let d = shadeLight(N, V, h.L, diff, rough, f0, 0.0, domeWiden());
+    let NoL = max(dot(N, h.L), 0.0);
+    color += (d.diffuse + d.specular) * h.radiance * h.shadow;
+    // cloth sheen: fibres catch the light at grazing view angles
+    color += (albedo * 0.6 + 0.1) * sheen * pow(1.0 - max(dot(N, V), 0.0), 3.5) * NoL * h.radiance * h.shadow * 0.4;
+  }
+  // ambient: cool room above, blue drape bounce from around
+  let amb = hemiAmbient(N, vec3f(0.50, 0.56, 0.68), vec3f(0.18, 0.24, 0.34)) * frame.lightColor.w;
   color += diff * amb;
   let NoV = max(dot(N, V), 0.0);
-  // metals: reflect a soft OR environment (bright ceiling light, dim surround)
   let R = reflect(-V, N);
-  let env = mix(vec3f(0.25, 0.27, 0.3), vec3f(1.6, 1.6, 1.5), pow(max(R.y, 0.0), 3.0)) * frame.lightColor.w * 2.0;
-  color += F_Schlick(f0, NoV) * env * (1.0 - rough) * (0.4 + 0.6 * metallic);
+  color += F_Schlick(f0, NoV) * envReflection(R, in.wpos) * (1.0 - rough) * (0.4 + 0.6 * metallic);
   if (frame.arcLight.w > 0.0) {
     let toA = frame.arcLight.xyz - in.wpos; let dist2 = max(dot(toA, toA), 0.25);
-    let a = shadeLight(N, V, normalize(toA), diff, rough, f0, 0.0);
+    let a = shadeLight(N, V, normalize(toA), diff, rough, f0, 0.0, 0.0);
     color += (a.diffuse + a.specular) * vec3f(0.7, 0.8, 1.0) * frame.arcLight.w / dist2;
   }
   color += albedo * mat.params.z;

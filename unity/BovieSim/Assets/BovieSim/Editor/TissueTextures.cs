@@ -218,7 +218,7 @@ namespace BovieSim.EditorTools
         public static Set Fabric(int size)
         {
             int n = size * size; var col = new Color[n]; var hgt = new float[n]; var mask = new Color[n];
-            var baseC = new Color(0.10f, 0.24f, 0.40f);
+            var baseC = new Color(0.15f, 0.30f, 0.49f);
             for (int y = 0; y < size; y++)
                 for (int x = 0; x < size; x++)
                 {

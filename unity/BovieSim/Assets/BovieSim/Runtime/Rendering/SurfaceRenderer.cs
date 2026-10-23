@@ -55,6 +55,7 @@ namespace BovieSim
         readonly uint[] zeros;
         static int[] identity = new int[0];
         public int lastVertexCount;
+        bool rayTracing;
         /// <summary>frames from starting a brick extraction to showing it (latest)</summary>
         public int lastAgeFrames;
         public bool capped;
@@ -119,6 +120,7 @@ namespace BovieSim
             var bmr = bloodGo.AddComponent<MeshRenderer>();
             bmr.sharedMaterial = bloodMaterial;
             bmr.shadowCastingMode = ShadowCastingMode.Off;
+            bmr.rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Off;
 
             vol.SetVolumeInfo(cs);
             cs.SetFloat("_BloodShowMm", 0.015f);
@@ -290,11 +292,14 @@ namespace BovieSim
                 s.mr.sharedMaterials = materials;
                 s.mr.shadowCastingMode = ShadowCastingMode.On; s.mr.receiveShadows = true;
                 s.mr.enabled = false;
+                s.mr.rayTracingMode = BrickRayTracingMode();
                 var ov = new GameObject("Teaching overlay");
                 ov.transform.SetParent(s.go.transform, false);
                 ov.AddComponent<MeshFilter>();
                 s.overlay = ov.AddComponent<MeshRenderer>();
                 s.overlay.shadowCastingMode = ShadowCastingMode.Off; s.overlay.receiveShadows = false;
+                // the overlay shader has no ray-tracing passes: keep it out of the acceleration structure
+                s.overlay.rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Off;
                 if (overlayMaterials != null) s.overlay.sharedMaterials = overlayMaterials;
                 s.overlay.enabled = false;
                 b.slots[si] = s;
@@ -318,6 +323,23 @@ namespace BovieSim
             s.mesh = m; s.vb = m.GetVertexBuffer(0); s.capacity = capacity; s.verts = 0;
             s.go.GetComponent<MeshFilter>().sharedMesh = m;
             s.overlay.GetComponent<MeshFilter>().sharedMesh = m;
+        }
+
+        UnityEngine.Experimental.Rendering.RayTracingMode BrickRayTracingMode()
+        {
+            // the vertex buffers are rewritten by compute whenever a brick changes, so HDRP must rebuild their
+            // bottom-level acceleration structures every frame (DynamicGeometry); DynamicTransform would keep a
+            // stale copy of the mesh in ray-traced shadows and reflections
+            return rayTracing ? UnityEngine.Experimental.Rendering.RayTracingMode.DynamicGeometry : UnityEngine.Experimental.Rendering.RayTracingMode.Off;
+        }
+
+        /// <summary>Includes the tissue and blood meshes in HDRP's ray-tracing acceleration structure (DXR effects on), or leaves them out.</summary>
+        public void SetRayTracing(bool on)
+        {
+            rayTracing = on;
+            var mode = BrickRayTracingMode();
+            foreach (var b in bricks) foreach (var s in b.slots) if (s != null) s.mr.rayTracingMode = mode;
+            bloodGo.GetComponent<MeshRenderer>().rayTracingMode = mode;
         }
 
         /// <summary>Teaching view: the same meshes drawn again with an overlay material (temperature or damage colouring).</summary>

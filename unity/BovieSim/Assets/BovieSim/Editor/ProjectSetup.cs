@@ -15,9 +15,10 @@ namespace BovieSim.EditorTools
 {
     /// <summary>
     /// One-click project setup (menu Bovie Sim > Set Up Project; runs once automatically after HDRP is installed):
-    /// linear colour space and legacy input, HDRP asset, diffusion profiles, baked tissue textures and HDRP Lit
-    /// materials for every surface bucket, instrument/drape/blood/particle materials, the post-processing volume
-    /// profile, CC0 HDRI and fabric downloads (with procedural fallbacks), the Main scene and the SimAssets registry.
+    /// linear colour space, DirectX 12 and legacy input, HDRP asset (ray tracing, reflections, high-quality soft
+    /// shadows), diffusion profiles, baked tissue textures and HDRP Lit materials for every surface bucket,
+    /// instrument/drape/blood/particle materials, the post-processing volume profile, CC0 HDRI and fabric downloads
+    /// (with procedural fallbacks), the Main scene and the SimAssets registry.
     /// Everything it makes goes to Assets/BovieSim/Generated (git-ignored) and is safe to regenerate.
     /// </summary>
     [InitializeOnLoad]
@@ -45,8 +46,8 @@ namespace BovieSim.EditorTools
                 if (existing != null && existing.setupVersion >= SimAssets.CurrentSetupVersion) return;
                 SessionState.SetBool("BovieSim.SetupOffered", true);
                 string msg = existing == null
-                    ? "Set up the project now? This configures HDRP, bakes tissue textures and materials, downloads a CC0 HDRI and drape fabric (optional), and creates the Main scene. It takes a minute or two."
-                    : "Bovie Sim was updated and its generated assets (materials, interface theme, scene) need rebuilding. Run Set Up Project now?";
+                    ? "Set up the project now? This configures HDRP and DirectX 12, bakes tissue textures and materials, downloads a CC0 HDRI and drape fabric (optional), and creates the Main scene. It takes a minute or two."
+                    : "Bovie Sim was updated and its generated assets (materials, lights, interface theme, scene) need rebuilding. Run Set Up Project now?";
                 if (EditorUtility.DisplayDialog("Bovie Sim", msg, "Set up", "Later")) Run();
             };
         }
@@ -64,6 +65,7 @@ namespace BovieSim.EditorTools
 
                 Progress("HDRP asset", 0.05f);
                 var hdrp = CreateOrLoad<HDRenderPipelineAsset>(Root + "/BovieHDRP.asset");
+                ConfigureHdrpAsset(hdrp);
                 GraphicsSettings.defaultRenderPipeline = hdrp;
                 int current = QualitySettings.GetQualityLevel();
                 for (int q = 0; q < QualitySettings.names.Length; q++) { QualitySettings.SetQualityLevel(q, false); QualitySettings.renderPipeline = hdrp; }
@@ -93,6 +95,16 @@ namespace BovieSim.EditorTools
 
                 Progress("Downloading drape fabric (ambientCG, CC0)", 0.66f);
                 assets.drape = DrapeMaterial();
+                var drapeNormal = assets.drape.GetTexture("_NormalMap");
+                // absorbent reinforcement around the fenestration: lighter blue, matte, same fibre normals
+                assets.drapePad = LitMaterial("DrapePad", new Color(0.36f, 0.50f, 0.66f), 0, 0.10f, 0);
+                if (drapeNormal != null) { assets.drapePad.SetTexture("_NormalMap", drapeNormal); assets.drapePad.SetFloat("_NormalScale", 0.5f); assets.drapePad.SetFloat("_UVBase", 5); assets.drapePad.SetFloat("_TexWorldScale", 1000f / 30f); HDMaterial.ValidateMaterial(assets.drapePad); }
+                // incise film adhered to the skin at the aperture edge: thin glossy plastic
+                assets.drapeFilm = LitMaterial("DrapeFilm", new Color(0.58f, 0.66f, 0.74f), 0, 0.74f, 0.4f);
+                // operating-light heads: the emissive face is what steel and wet tissue reflect (~150 000 nits at EV 15)
+                assets.lampDome = LitMaterial("LampDome", new Color(0.82f, 0.82f, 0.82f), 0, 0.35f, 0);
+                assets.lampDome.SetColor("_EmissiveColor", new Color(1f, 0.93f, 0.86f) * 150000f);
+                HDMaterial.ValidateMaterial(assets.lampDome);
                 assets.particlesAlpha = ParticleMaterial("ParticlesAlpha", BlendMode.SrcAlpha, BlendMode.OneMinusSrcAlpha);
                 assets.particlesAdditive = ParticleMaterial("ParticlesAdditive", BlendMode.One, BlendMode.One);
                 assets.uiTheme = RuntimeTheme();
@@ -138,6 +150,14 @@ namespace BovieSim.EditorTools
             PlayerSettings.companyName = "Bovie Sim"; PlayerSettings.productName = "BovieSim";
             // CPU/GPU frame times for the F3 timing readout
             PlayerSettings.enableFrameTimingStats = true;
+            // DirectX 12 first: HDRP ray tracing (DXR) needs it; DirectX 11 stays as the fallback
+            var apis = PlayerSettings.GetGraphicsAPIs(BuildTarget.StandaloneWindows64);
+            if (apis == null || apis.Length == 0 || apis[0] != GraphicsDeviceType.Direct3D12)
+            {
+                PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.StandaloneWindows64, false);
+                PlayerSettings.SetGraphicsAPIs(BuildTarget.StandaloneWindows64, new[] { GraphicsDeviceType.Direct3D12, GraphicsDeviceType.Direct3D11 });
+                Debug.Log("[Bovie Sim] Graphics API set to DirectX 12 (DirectX 11 fallback). Restart the editor for it to take effect; ray tracing needs it.");
+            }
             // the sim reads the legacy Input class (mouse, keys) and the Input System (pen): needs "Both"
             var ps = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset");
             if (ps != null && ps.Length > 0)
@@ -146,6 +166,37 @@ namespace BovieSim.EditorTools
                 var p = so.FindProperty("activeInputHandler");
                 if (p != null && p.intValue != 2) { p.intValue = 2; so.ApplyModifiedProperties(); Debug.Log("[Bovie Sim] Active Input Handling set to Both (restart the editor if prompted)."); }
             }
+        }
+
+        /// <summary>
+        /// Render-pipeline features the sim uses, set on the serialized asset (the settings struct has no public
+        /// setter): DXR ray tracing, screen-space reflections and global illumination (the ray-traced versions are
+        /// switched on at runtime by tier), screen-space shadows (ray-traced shadows render through them) and
+        /// high-quality soft-shadow filtering (PCSS from the lights' shape radius).
+        /// </summary>
+        static void ConfigureHdrpAsset(HDRenderPipelineAsset hdrp)
+        {
+            var so = new SerializedObject(hdrp);
+            var set = new System.Collections.Generic.Dictionary<string, object>
+            {
+                { "m_RenderPipelineSettings.supportRayTracing", true },
+                { "m_RenderPipelineSettings.supportSSR", true },
+                { "m_RenderPipelineSettings.supportSSGI", true },
+                { "m_RenderPipelineSettings.supportSSAO", true },
+                { "m_RenderPipelineSettings.supportSubsurfaceScattering", true },
+                { "m_RenderPipelineSettings.hdShadowInitParams.supportScreenSpaceShadows", true },
+                { "m_RenderPipelineSettings.hdShadowInitParams.maxScreenSpaceShadowSlots", 8 },
+                { "m_RenderPipelineSettings.hdShadowInitParams.shadowFilteringQuality", 2 }, // High
+            };
+            var missing = new System.Collections.Generic.List<string>();
+            foreach (var kv in set)
+            {
+                var p = so.FindProperty(kv.Key);
+                if (p == null) { missing.Add(kv.Key); continue; }
+                if (kv.Value is bool) p.boolValue = (bool)kv.Value; else if (p.propertyType == SerializedPropertyType.Enum) p.enumValueIndex = (int)kv.Value; else p.intValue = (int)kv.Value;
+            }
+            so.ApplyModifiedPropertiesWithoutUndo();
+            if (missing.Count > 0) Debug.LogWarning("[Bovie Sim] HDRP asset: could not find " + string.Join(", ", missing.ToArray()) + " (HDRP version differs); set them in Generated/BovieHDRP.asset by hand if ray tracing or reflections are missing.");
         }
 
         static string BucketName(int b)
@@ -424,8 +475,20 @@ namespace BovieSim.EditorTools
             // the eye adapts to the 4300 K operating light: cool the image so white fascia reads white
             Override<WhiteBalance>(p).temperature.Override(-18f);
             Override<Bloom>(p).intensity.Override(0.12f);
+            // ambient occlusion at wound scale (radius in metres: 1.5 cm), not room scale
             var ao = Override<ScreenSpaceAmbientOcclusion>(p);
-            ao.intensity.Override(0.6f); ao.radius.Override(0.25f);
+            ao.intensity.Override(0.8f); ao.radius.Override(0.015f);
+            // contact shadows ground the instrument tip and the wound edges where shadow maps are too coarse
+            var contact = Override<ContactShadows>(p);
+            contact.enable.Override(true); contact.length.Override(0.01f); contact.opacity.Override(0.8f); contact.maxDistance.Override(2f);
+            // reflections, global illumination, ray-traced subsurface and ray-tracing settings exist in the profile so
+            // the runtime can switch them by detail level and ray-tracing tier (SimulationRunner.ApplyRayTracing)
+            var ssr = Override<ScreenSpaceReflection>(p);
+            ssr.enabled.Override(false); ssr.minSmoothness.Override(0.45f); ssr.smoothnessFadeStart.Override(0.55f);
+            Override<GlobalIllumination>(p).enable.Override(false);
+            Override<SubSurfaceScattering>(p).rayTracing.Override(false);
+            var rts = Override<RayTracingSettings>(p);
+            rts.extendShadowCulling.Override(true); rts.extendCameraCulling.Override(true);
             var dof = Override<DepthOfField>(p);
             dof.focusMode.Override(DepthOfFieldMode.Manual);
             dof.nearFocusStart.Override(0f); dof.nearFocusEnd.Override(0.05f);
@@ -473,7 +536,7 @@ namespace BovieSim.EditorTools
             var go = new GameObject(name);
             go.transform.position = pos;
             go.transform.LookAt(Vector3.zero);
-            go.AddHDLight(LightType.Spot);
+            var hd = go.AddHDLight(LightType.Spot);
             var l = go.GetComponent<Light>();
             l.spotAngle = 28f; l.innerSpotAngle = 18f;
             l.useColorTemperature = true; l.colorTemperature = 4300f;
@@ -481,6 +544,13 @@ namespace BovieSim.EditorTools
             l.intensity = candela; // ~60-80 klux at the field from each head
             l.shadows = LightShadows.Soft;
             l.range = 3f;
+            if (hd != null)
+            {
+                // a 50 cm light dome, not a point: penumbrae widen with distance from the blocker (PCSS, and the
+                // ray-traced shadows sample the same disc), sharp where the instrument touches tissue
+                hd.shapeRadius = 0.25f;
+                hd.useContactShadow.useOverride = true; hd.useContactShadow.@override = true;
+            }
         }
 
         static void WriteDownloadLog()

@@ -4,6 +4,27 @@ All notable changes. Versions follow `MAJOR.MINOR.PATCH`; each release is a git 
 (see [docs/upgrading.md](docs/upgrading.md)). "Setup" means *Bovie Sim > Set Up Project* must be re-run
 after updating (the editor offers it automatically).
 
+## 0.5.0: Surgical field (drapes, lights, colour, ray tracing) · Setup required
+
+- **Fenestrated drape with folds.** The flat frame is replaced by a draped sheet: an incise-film margin on the
+  skin, an absorbent reinforcement zone, then the loose blue nonwoven drape with swells, pleats radiating from
+  the fenestration and fine wrinkles (same geometry in both clients). Surgical-blue fabric with bonding dots
+  and a cloth sheen in the browser build; three HDRP materials (film, pad, drape) in Unity.
+- **Overhead surgical light.** Two light heads modelled as 50 cm domes: shadows are sharp where the instrument
+  touches tissue and widen with distance (PCSS in Unity from the lights' shape radius with High shadow filtering,
+  percentage-closer soft shadows with two shadow maps in the browser build), the specular highlight on wet
+  tissue broadens to the dome's size, contact shadows ground the tip, and the lamp heads themselves are emissive
+  domes seen in reflections on steel and wet tissue.
+- **Ray tracing (Unity, DirectX 12 + RTX / RX 6000-class card).** Set Up Project enables DXR on the HDRP asset and
+  puts DirectX 12 first. Settings (F9) > *Ray tracing*: Auto by detail level (Medium: ray-traced shadows + ambient
+  occlusion; High: + reflections; Ultra: + global illumination and subsurface scattering), or Off / Shadows /
+  Reflections / Full. GPU-rebuilt tissue meshes enter the acceleration structure as dynamic geometry. Without
+  DXR the raster effects stay (screen-space reflections from High detail up).
+- **Colour rendering.** Browser build: Khronos PBR Neutral tone mapping (blood stays red, fat stays yellow) with a
+  proper sRGB transfer curve and a lighter vignette; near-white 4300 K light with the room's cool ambient and
+  blue drape bounce. Unity: ambient occlusion at wound scale (1.5 cm, not 25 cm); the scenario skin-tone and
+  prep tint is now applied in the right colour space.
+
 ## 0.4.0: Round 2 (resolution, teaching view, replay, hardware) · Setup required
 
 - **Resolution scales with the PC.** Detail levels Low / Medium / High / Ultra (0.35 / 0.25 / 0.20 / 0.16 mm
