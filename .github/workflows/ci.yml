@@ -39,6 +39,8 @@ jobs:
           curl -sSfL -o "$RUNNER_TEMP/s.nupkg" https://api.nuget.org/v3-flatcontainer/unity3d.sdk/2021.1.14.1/unity3d.sdk.2021.1.14.1.nupkg
           unzip -q "$RUNNER_TEMP/m.nupkg" -d "$RUNNER_TEMP/refs"
           unzip -q "$RUNNER_TEMP/s.nupkg" -d "$RUNNER_TEMP/sdk"
+          f="$RUNNER_TEMP/refs/lib/net45/UnityEngine.CoreModule.dll"
+          echo "::notice title=refs::$(sha256sum "$f" | cut -c1-16) $(stat -c %s "$f") bytes; $(file -b "$f" | head -c 120); nupkg $(stat -c %s "$RUNNER_TEMP/m.nupkg")"
       - name: Compile compute kernels and particle shader
         run: unity/tools/check/shaders.sh
       - name: Compile C# and run EditMode tests
