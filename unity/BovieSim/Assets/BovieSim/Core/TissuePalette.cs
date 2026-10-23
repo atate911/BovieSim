@@ -25,6 +25,10 @@ namespace BovieSim
         public static readonly Color Nerve = new Color(0.94f, 0.91f, 0.78f);
         public static readonly Color Lipoma = new Color(0.98f, 0.86f, 0.48f);
         public static readonly Color Capsule = new Color(0.93f, 0.88f, 0.74f);
+        public static readonly Color Areolar = new Color(0.93f, 0.82f, 0.80f);
+        public static readonly Color Viscera = new Color(0.62f, 0.30f, 0.30f);
+        public static readonly Color Serosa = new Color(0.90f, 0.87f, 0.85f);
+        public static readonly Color Strand = new Color(0.93f, 0.80f, 0.78f);
         public static readonly Color BloodFresh = new Color(0.55f, 0.03f, 0.03f);
         public static readonly Color BloodPooled = new Color(0.32f, 0.02f, 0.02f);
 
@@ -37,6 +41,9 @@ namespace BovieSim
         public static readonly Color CoagMuscle = new Color(0.66f, 0.52f, 0.46f);
         public static readonly Color CoagBlood = new Color(0.36f, 0.18f, 0.12f);
         public static readonly Color CoagVein = new Color(0.30f, 0.17f, 0.16f);
+        public static readonly Color CoagViscera = new Color(0.66f, 0.52f, 0.46f);
+        public static readonly Color Clot = new Color(0.22f, 0.04f, 0.04f);
+        public static readonly Color Coagulum = new Color(0.08f, 0.04f, 0.03f);
         public static readonly Color Desiccated = new Color(0.62f, 0.48f, 0.32f);
         public static readonly Color Char = new Color(0.04f, 0.035f, 0.03f);
 

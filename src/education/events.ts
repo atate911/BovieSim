@@ -11,9 +11,11 @@ export type SimEventType =
   | 'activation.start' | 'activation.end' | 'activation.noContact'
   | 'tissue.coagulated' | 'tissue.desiccated' | 'tissue.carbonized' | 'tissue.vaporized'
   | 'tissue.fatContact' | 'tissue.fasciaContact' | 'tissue.muscleContact' | 'tissue.vesselContact' | 'tissue.nerveContact'
+  | 'tissue.areolarContact' | 'tissue.visceraContact'
   | 'generator.settingChanged' | 'generator.remFault' | 'tool.changed'
-  | 'vessel.exposed' | 'bleed.start' | 'bleed.sealed' | 'bleed.charPlug' | 'vessel.rebleed'
-  | 'blood.poolConducts' | 'field.obscured' | 'suction.used' | 'forceps.buzzed'
+  | 'vessel.exposed' | 'bleed.start' | 'bleed.sealed' | 'bleed.charPlug' | 'vessel.rebleed' | 'vessel.spasm'
+  | 'blood.poolConducts' | 'blood.boiling' | 'blood.clotted' | 'field.obscured' | 'suction.used' | 'suction.clot' | 'forceps.buzzed'
+  | 'tissue.oozing' | 'tissue.torn' | 'plane.dissected' | 'gauze.dab' | 'gauze.wipe' | 'gauze.saturated' | 'viscera.heated'
   | 'muscle.stimulated' | 'lesion.freed' | 'lesion.delivered' | 'lesion.breached';
 
 export interface SimEvent {
@@ -45,6 +47,19 @@ const TEACHING: Partial<Record<SimEventType, string>> = {
   'muscle.stimulated': 'Current through muscle made it jump. Shorter bursts, cut rather than coag, and check the return pad.',
   'lesion.freed': 'The capsule is free around most of its circumference: the lipoma will deliver with gentle traction.',
   'lesion.breached': 'You have entered the lipoma. Fat spills, the plane is lost and fragments left behind recur.',
+  'tissue.areolarContact': 'Loose areolar tissue: the wispy plane that spreads apart bluntly. Energy here is rarely needed; push and spread with the hemostat.',
+  'tissue.visceraContact': 'Viscera: thin wall, very vascular, low impedance. Current here cooks deep fast and a hole does not show until later. Lowest power, briefest touch, or no energy at all.',
+  'vessel.spasm': 'A small vessel has stopped on its own: arterioles spasm and venules clot within seconds. Do not disturb the clot; pressure, not energy.',
+  'blood.boiling': 'The electrode is boiling the blood: spatter, steam and a skin of coagulum that hides the bleeder and insulates it from the current. Clear the pool first.',
+  'blood.clotted': 'Clotted blood does not flow and suction will not lift it. Wipe it off with gauze, or grasp and lift it with forceps, then find the vessel underneath.',
+  'suction.clot': 'The suction is over clot: it takes the liquid and leaves the coagulum. Use gauze to wipe the clot away.',
+  'tissue.oozing': 'The raw surface is weeping from its capillaries. Most ooze stops on its own in about a minute; a few seconds of gauze pressure speeds it up. Coag only what keeps bleeding.',
+  'tissue.torn': 'Tissue tore under traction. Fat and areolar strands give way easily; fascia and dermis hold. Torn vessels bleed and torn parenchyma oozes.',
+  'plane.dissected': 'The plane is opening bluntly: lobules part along their septa and areolar tissue strings out. Vessels crossing the plane stay as bridges until you cut or tear them.',
+  'gauze.dab': 'Dabbing lifts liquid blood and presses the capillaries closed. Hold still for a few seconds for the ooze to settle.',
+  'gauze.wipe': 'Wiping drags the clot off and restarts the ooze, and a small vessel that had spasmed shut can bleed again. Dab, do not wipe.',
+  'gauze.saturated': 'The gauze is saturated and no longer absorbs. Discard it for a fresh one (U).',
+  'viscera.heated': 'Heat is spreading into the viscus. Full-thickness injury here means a delayed perforation.',
 };
 
 export class EventBus {
@@ -61,6 +76,10 @@ export class EventBus {
   private lastCoagReport = -1e9;
   private lastExposed = 0; private lastSealed = 0; private lastCharPlug = 0; private lastRebleeds = 0;
   private poolWarned = false; private obscuredWarned = false; private lastSuction = false; private lastMuscle = -1e9; private lastBuzz = false;
+  private lastViscera = -1e9; private lastBoil = -1e9; private clotWarned = false; private lastSuctionClot = -1e9; private oozeReported = false;
+  private tornAccum = 0; private lastTorn = -1e9; private dissectAccum = 0; private lastDissect = -1e9;
+  private lastGauzeDab = false; private lastWipe = -1e9; private lastGauzeSat = false;
+  private lastExposedNonzero = 0; private lastSealedAtBleed = 0; private lastPlugAtBleed = 0; private lastSpasm = -1e9;
 
   on(fn: (e: SimEvent) => void) { this.listeners.push(fn); }
   emit(e: SimEvent) { this.events.push(e); for (const l of this.listeners) l(e); }
@@ -89,6 +108,8 @@ export class EventBus {
         else if (ty === Tissue.Muscle) this.push(t, 'tissue.muscleContact', name);
         else if (ty === Tissue.Artery || ty === Tissue.Vein) this.push(t, 'tissue.vesselContact', name, 'warn');
         else if (ty === Tissue.Nerve) this.push(t, 'tissue.nerveContact', name, 'bad');
+        else if (ty === Tissue.Areolar) this.push(t, 'tissue.areolarContact', name);
+        else if (ty === Tissue.Viscera || ty === Tissue.Serosa) this.push(t, 'tissue.visceraContact', name, 'warn');
       }
       const st = cellState(r.hitCell);
       if (st === TissueState.Desiccated && active) { /* desiccation event handled via impedance below */ }
@@ -130,6 +151,30 @@ export class EventBus {
     }
     this.lastBuzz = active && this.buzzing;
     if (active && mode?.kind === 'coag' && r.muscleHeatVoxels > 20 && t - this.lastMuscle > 1.5) { this.push(t, 'muscle.stimulated', `${r.muscleHeatVoxels} muscle voxels in the current path`, 'warn'); this.lastMuscle = t; }
+    if (active && r.visceraHeatVoxels > 40 && t - this.lastViscera > 2.0) { this.push(t, 'viscera.heated', `${r.visceraHeatVoxels} viscera voxels above 45 °C`, 'bad'); this.lastViscera = t; }
+    // blood under the electrode boils and coagulates; clot resists suction
+    if (active && r.boilColumns > 0 && t - this.lastBoil > 2.0) { this.push(t, 'blood.boiling', `${Math.round(r.boilColumns)} columns of blood boiling under the electrode`, 'warn'); this.lastBoil = t; }
+    if (r.clotMl > 0.3 && !this.clotWarned) { this.push(t, 'blood.clotted', `${r.clotMl.toFixed(1)} ml of clot in the field`); this.clotWarned = true; }
+    if (r.clotMl < 0.1) this.clotWarned = false;
+    if (this.suctionOn && r.clotMl > 0.2 && r.poolAtTipMm > 0.2 && t - this.lastSuctionClot > 4.0) { this.push(t, 'suction.clot', 'clot under the suction tip', 'warn'); this.lastSuctionClot = t; }
+    // raw surfaces ooze, tissue tears, planes open
+    if (r.oozeVoxels > 10 && !this.oozeReported) { this.push(t, 'tissue.oozing', `${r.oozeVoxels} raw-surface voxels oozing`); this.oozeReported = true; }
+    if (r.oozeVoxels === 0) this.oozeReported = false;
+    this.tornAccum += r.tornVoxels;
+    if (this.tornAccum > 0 && t - this.lastTorn > 1.0) { this.push(t, 'tissue.torn', `${this.tornAccum} voxels torn`, 'warn'); this.tornAccum = 0; this.lastTorn = t; }
+    this.dissectAccum += r.dissectedVoxels;
+    if (this.dissectAccum > 150 && t - this.lastDissect > 2.0) { this.push(t, 'plane.dissected', `${this.dissectAccum} voxels separated bluntly`); this.dissectAccum = 0; this.lastDissect = t; }
+    // gauze: dab vs wipe, saturation
+    if (this.gauzeDab && !this.lastGauzeDab) this.push(t, 'gauze.dab', 'pressure on the field');
+    this.lastGauzeDab = this.gauzeDab;
+    if (this.gauzeWipe && t - this.lastWipe > 3.0) { this.push(t, 'gauze.wipe', 'wiping the raw surface', 'warn'); this.lastWipe = t; }
+    if (this.gauzeSaturated && !this.lastGauzeSat) this.push(t, 'gauze.saturated', 'gauze full', 'warn');
+    this.lastGauzeSat = this.gauzeSaturated;
+    // a small vessel that was bleeding has stopped without being sealed: spasm / thrombosis
+    if (exposed === 0 && this.lastExposedNonzero > 0 && r.sealedVoxels === this.lastSealedAtBleed && r.charPlugVoxels === this.lastPlugAtBleed && !this.suctionOn && t - this.lastSpasm > 5.0) {
+      this.push(t, 'vessel.spasm', 'bleeding stopped on its own'); this.lastSpasm = t;
+    }
+    if (exposed > 0) { this.lastExposedNonzero = t; this.lastSealedAtBleed = r.sealedVoxels; this.lastPlugAtBleed = r.charPlugVoxels; } else this.lastExposedNonzero = 0;
     const settings = JSON.stringify(gen.settings);
     if (this.lastSettings && settings !== this.lastSettings) this.push(t, 'generator.settingChanged', `${gen.settings.cutMode} ${gen.settings.cutWatts} W / ${gen.settings.coagMode} ${gen.settings.coagWatts} W`);
     this.lastSettings = settings;
@@ -138,6 +183,6 @@ export class EventBus {
   }
 
   /** set by the app each frame */
-  suctionOn = false; buzzing = false;
+  suctionOn = false; buzzing = false; gauzeDab = false; gauzeWipe = false; gauzeSaturated = false;
   recent(n: number): SimEvent[] { return this.events.slice(-n); }
 }

@@ -58,11 +58,14 @@ namespace BovieSim
             parts.Add(new P { p = a, life = 0.04f + Rnd() * 0.05f, size0 = d.magnitude, size1 = d.magnitude, kind = 2, d = d, alpha = 0.6f + Rnd() * 0.4f });
         }
 
+        /// <summary>share of a bleeding end's output thrown as droplets (the GPU keeps the rest in the column); mirrors ART/VEN_JET_FRACTION in Sim.compute</summary>
+        public const float ArterialJet = 0.7f, VenousJet = 0.15f;
+
         /// <summary>Droplets from an exposed vessel end; mlPerS > 0 arterial jet, &lt; 0 venous welling. Volume is conserved through landings.</summary>
         public void Bleed(Vector3 at, float mlPerS, float dt)
         {
             bool arterial = mlPerS > 0;
-            float volUl = Mathf.Abs(mlPerS) * dt * 1000, perDrop = arterial ? 0.4f : 0.8f;
+            float volUl = Mathf.Abs(mlPerS) * dt * 1000 * (arterial ? ArterialJet : VenousJet), perDrop = arterial ? 0.4f : 0.8f;
             float n = volUl / perDrop; int count = (int)n; if (Rnd() < n - count) count++;
             for (int i = 0; i < count && parts.Count < Max - 64; i++)
             {
@@ -75,6 +78,23 @@ namespace BovieSim
                     life = 3f, size0 = arterial ? 0.35f : 0.5f, size1 = arterial ? 0.35f : 0.5f, kind = 3, d = Vector3.up, alpha = 0.95f, vol = perDrop,
                 });
             }
+        }
+
+        /// <summary>Boiling blood under the electrode: fast fine droplets (volUl in total, landed back into the layer) and a puff of steam.</summary>
+        public void Spatter(Vector3 at, float volUl)
+        {
+            int n = Mathf.Max(1, Mathf.RoundToInt(volUl / 0.1f));
+            for (int i = 0; i < n && parts.Count < Max - 64; i++)
+            {
+                float a = Rnd() * Mathf.PI * 2, el = 0.6f + Rnd() * 0.7f, sp = 150 + Rnd() * 300;
+                parts.Add(new P
+                {
+                    p = at + new Vector3(0, 0.1f, 0),
+                    v = new Vector3(Mathf.Cos(a) * Mathf.Cos(el) * sp, Mathf.Sin(el) * sp, Mathf.Sin(a) * Mathf.Cos(el) * sp),
+                    life = 2f, size0 = 0.22f, size1 = 0.22f, kind = 3, d = Vector3.up, alpha = 0.95f, vol = volUl / n,
+                });
+            }
+            Emit(0, at, 40, 0.1f);
         }
 
         public void Update(float dt, bool suction, Vector3 suctionAt, Func<float, float, float> landingY)

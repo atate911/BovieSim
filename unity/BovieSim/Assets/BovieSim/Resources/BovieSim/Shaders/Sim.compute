@@ -1,4 +1,15 @@
-// Bovie Sim electrothermal, bleeding and mechanics-probe kernels. Port of src/physics/wgsl/sim.wgsl.
+// Bovie Sim electrothermal, bleeding, blood-layer, dissection and mechanics-probe kernels. Port of src/physics/wgsl/sim.wgsl.
+//
+//  SeedPotential/Relax*  : quasi-static potential  div(sigma grad phi) = 0 on a subdomain, unit electrode voltage
+//  Heating               : q_unit = sigma |grad phi|^2 (W/m^3 at 1 V) and the total unit power (-> impedance)
+//  Generator             : FT10 output curve -> delivered power and V_rms^2
+//  Bioheat               : Pennes step with phase change, Arrhenius damage, state transitions, vaporisation
+//  Blood*                : exposed vessel ends and raw surfaces bleed into a per-column blood layer that flows, soaks in,
+//                          clots with time and heat, boils under the electrode, and is lifted by suction or gauze
+//  Dissect               : blunt dissection: a spreading or pushing instrument separates low-cohesion planes
+//  TearCarve             : links torn by the mechanics lattice carve the tissue they ran through
+//  ConstraintProbe       : samples the voxel state along lattice links (severed, damage, dryness, char)
+//  Pick, Slice, RimMeasure: cursor hit point, the cross-section inspector, the skin-edge thermal rim
 #pragma kernel SeedPotential
 #pragma kernel RelaxRed
 #pragma kernel RelaxBlack
@@ -11,6 +22,8 @@
 #pragma kernel BloodFlow
 #pragma kernel BloodCommit
 #pragma kernel CoaptMark
+#pragma kernel Dissect
+#pragma kernel TearCarve
 #pragma kernel ConstraintProbe
 #pragma kernel Pick
 #pragma kernel Slice
@@ -39,28 +52,32 @@ float4 _SliceParams; // depth (mm), mode, flags (1 isotherms, 2 damage outline),
 int4 _WBox0;       // wound box origin, w = substeps this frame
 int4 _WBox1;       // wound box size
 float4 _Tool2;     // secondary tool point A (mm), w = radius (mm)
-float4 _Tool2B;    // secondary tool point B (mm), w = mode (0 none, 1 grasp, 2 suction)
+float4 _Tool2B;    // secondary tool point B (mm), w = mode (0 none, 1 grasp, 2 suction, 3 gauze, 4 spread, 5 push)
+float4 _Tool3;     // secondary tool velocity (mm/s) or, in modes 4/5, the jaws' entry point (mm); w = pressure 0..1
+float4 _Dis;       // x blunt dissection cohesion threshold, y carve radius (mm), z gauze absorbs (1) or is saturated (0), w 0
 int _DropCount;
 int _SegCount;
+int _TearCount;
 
 // ---- buffers ------------------------------------------------------------------------------------
-StructuredBuffer<float4> _Props;        // 2 per tissue: (sigma, k, rho, c), (wb, water, Ea/R, lnA)
-RWStructuredBuffer<uint> _State;        // layout: see SimState.cs
+StructuredBuffer<float4> _Props;        // 3 per tissue: (sigma, k, rho, c), (wb, water, Ea/R, lnA), (cohesion, oozeRate, tearStrain, 0)
+RWStructuredBuffer<uint> _State;        // layout: ST_* slots below (PhysicsPipeline.OnState reads them back)
 RWStructuredBuffer<uint> _Cells;
 RWStructuredBuffer<float> _Occ;
 RWStructuredBuffer<float> _Water;
 RWStructuredBuffer<float> _Omega;
 RWStructuredBuffer<float> _Heat;
-StructuredBuffer<float> _Src;           // potential (heating, slice modes 4-5) or temperature (bioheat, slice)
+StructuredBuffer<float> _Src;           // potential (heating, slice modes 4-5) or temperature (bioheat, blood, slice)
 RWStructuredBuffer<float> _Dst;         // potential (seed/relax) or next temperature (bioheat)
-RWStructuredBuffer<float4> _Blood;      // per column: h (mm), age (s), surface Y (mm), hNext
+RWStructuredBuffer<float4> _Blood;      // 2 per column: (h mm, age s, surface Y mm, hNext), (clot 0..1, temp C, stain 0..1, topK)
 StructuredBuffer<float4> _Drops;        // droplet landings: xyz (mm), w = microlitres
+StructuredBuffer<float4> _Tears;        // 2 per torn lattice link: (a.xyz, carve radius), (b.xyz, link tissue)
 StructuredBuffer<float4> _Segs;         // 2 per lattice constraint: a.xyz + throughTissue, b.xyz
-RWStructuredBuffer<uint2> _Probes;      // per constraint: flags (1 severed, 2 no tissue), asuint(omegaMax)
+RWStructuredBuffer<uint4> _Probes;      // per constraint: flags (1 severed, 2 no tissue, 4 char), asuint(omegaMax), asuint(dryness), 0
 RWTexture2D<float4> _SliceTex;
 RWStructuredBuffer<uint> _RimHist;     // 16 bins: distance (voxels) from a damaged skin voxel to the nearest cut wall
 
-// state slots (uint indices into _State)
+// state slots (uint indices into _State; 96 words)
 #define ST_PSUM 0
 #define ST_CONTACT 1
 #define ST_VAP 2
@@ -86,6 +103,17 @@ RWStructuredBuffer<uint> _RimHist;     // 16 bins: distance (voxels) from a dama
 #define ST_POOLTIP 27
 #define ST_BLEEDN 28
 #define ST_BLEEDPTS 32
+#define ST_SPATTERN 64
+#define ST_BOILCOLS 65
+#define ST_OOZEVOX 66
+#define ST_CLOTVOL 67
+#define ST_DISSECTED 68
+#define ST_TORN 69
+#define ST_GAUZESOAK 70
+#define ST_VISCHEAT 71
+#define ST_VISCVAP 72
+#define ST_OOZEUL 73
+#define ST_SPATTERPTS 76
 
 static const float SIGMA_BLOOD = 0.7;
 static const float BLOOD_RHO_C = 1050.0 * 3617.0;
@@ -94,15 +122,26 @@ static const float T_BOIL = 100.0;
 static const float T_CARBON = 220.0;
 static const float SEED_A = 0.35;
 static const float SOR_OMEGA = 1.5;
-static const float BLOOD_FILM = 0.05;
-static const float BLOOD_VISC = 0.35;
-static const float CLOT_AGE = 60.0;
+static const float BLOOD_FILM = 0.05;      // mm, below this blood wets but does not flow
+static const float BLOOD_VISC = 0.35;      // fraction of the head difference moved per step by a deep pool
+static const float CLOT_AGE = 20.0;        // s standing before blood starts to gel
+static const float CLOT_TIME = 45.0;       // s from gelling to a firm clot
+static const float BLOOD_HEAT_FRAC = 0.35; // share of the delivered power that goes into blood under the electrode
+static const float GAUZE_RATE = 20.0;      // mm of liquid blood depth a pressed gauze absorbs per second
+static const float GAUZE_WIPE_SPEED = 15.0; // mm/s: faster than this with pressure is a wipe, slower a dab
+static const float SUCTION_CAPTURE = 3.0;  // the pool within this many tip radii runs to the sucker
+static const float SUCTION_RUN = 12.0;     // mm/s of pooled depth drawn to the tip at its rim, falling to 0 at the capture radius
+static const float SPATTER_FRAC = 0.4;     // share of the blood boiled off a column that leaves as droplets (the rest is steam)
+/** share of a bleeding end's output that leaves as droplets (the CPU particle system lands them back into the layer) */
+static const float ART_JET_FRACTION = 0.7;
+static const float VEN_JET_FRACTION = 0.15;
 
-struct TProp { float sigma, k, rho, c, wb, water, eaR, lnA; };
+struct TProp { float sigma, k, rho, c, wb, water, eaR, lnA, cohesion, ooze, tear; };
 TProp Prop(uint t)
 {
-    float4 a = _Props[t * 2], b = _Props[t * 2 + 1];
+    float4 a = _Props[t * 3], b = _Props[t * 3 + 1], d = _Props[t * 3 + 2];
     TProp p; p.sigma = a.x; p.k = a.y; p.rho = a.z; p.c = a.w; p.wb = b.x; p.water = b.y; p.eaR = b.z; p.lnA = b.w;
+    p.cohesion = d.x; p.ooze = d.y; p.tear = d.z;
     return p;
 }
 
@@ -110,6 +149,59 @@ float VesselFlowMlS(float r) { return 0.25 * r * r * r; }
 
 void StoreF(uint slot, float v) { _State[slot] = asuint(v); }
 float LoadF(uint slot) { return asfloat(_State[slot]); }
+
+// ---- blood column records -------------------------------------------------------------------------
+struct BloodCol { float h, age, surf, hNext, clot, temp, stain, topK; };
+BloodCol LoadBlood(uint ci)
+{
+    float4 a = _Blood[ci * 2], b = _Blood[ci * 2 + 1];
+    BloodCol o; o.h = a.x; o.age = a.y; o.surf = a.z; o.hNext = a.w; o.clot = b.x; o.temp = b.y; o.stain = b.z; o.topK = b.w;
+    return o;
+}
+void StoreBlood(uint ci, BloodCol b)
+{
+    _Blood[ci * 2] = float4(b.h, b.age, b.surf, b.hNext);
+    _Blood[ci * 2 + 1] = float4(b.clot, b.temp, b.stain, b.topK);
+}
+/** Adds fresh liquid blood to a column: the clot fraction is diluted so that the clot mass (depth) is conserved. */
+void AddBlood(uint ci, float dh)
+{
+    float4 a = _Blood[ci * 2], b = _Blood[ci * 2 + 1];
+    float h2 = a.x + dh;
+    b.x = h2 > 1e-6 ? b.x * a.x / h2 : 0.0;
+    a.x = h2;
+    _Blood[ci * 2] = a; _Blood[ci * 2 + 1] = b;
+}
+
+int3 VoxelOfWorld(float3 p) { return WorldToVoxelRound(p); }
+
+bool IsTissue(uint idx) { return _Occ[idx] >= 0.5 && CellType(_Cells[idx]) != T_AIR; }
+bool IsBridging(uint ty) { return ty == T_ARTERY || ty == T_VEIN || ty == T_NERVE; }
+
+/** Kind of air in a voxel: 0 tissue, 1 the original air above the skin, 2 a bluntly dissected plane, 3 cut (a raw wound surface). */
+uint AirKind(uint idx)
+{
+    uint c = _Cells[idx];
+    if (_Occ[idx] >= 0.5 && CellType(c) != T_AIR) return 0u;
+    uint st = CellState(c);
+    if (st == S_VAPOR) return 3u;
+    if (st == S_DISSECT) return 2u;
+    return 1u;
+}
+/** Strongest air kind among the 6 neighbours: 0 buried, 1 skin surface, 2 dissected plane, 3 cut surface. */
+uint Exposure(int i, int j, int k)
+{
+    uint e = 0u;
+    for (int n = 0; n < 6; n++)
+    {
+        int3 o = NB6[n];
+        int ii = i + o.x, jj = j + o.y, kk = k + o.z;
+        if (!InVolume(ii, jj, kk)) continue;
+        e = max(e, AirKind(Idx3(ii, jj, kk)));
+    }
+    return e;
+}
+bool HasAirNeighbour(int i, int j, int k) { return Exposure(i, j, k) != 0u; }
 
 /** Signed distance (mm) from a point to the electrode surface. */
 float ElectrodeDistance(float3 p)
@@ -119,18 +211,28 @@ float ElectrodeDistance(float3 p)
     float etype = _Gen2.z;
     if (etype > 2.5)
     {
+        // forceps jaws: capsule from the tip along wdir for axis.w (jaw span), radius ndir.w
         float tc = clamp(dot(rel, _WDir.xyz), 0.0, _Axis.w);
         return length(rel - _WDir.xyz * tc) - _NDir.w;
     }
-    else if (etype > 1.5) return length(rel - _Axis.xyz * _NDir.w) - _NDir.w;
+    else if (etype > 1.5) return length(rel - _Axis.xyz * _NDir.w) - _NDir.w;   // ball
     else if (etype > 0.5)
     {
+        // needle: capsule radius wdir.w along the axis
         float tc = clamp(t, 0.0, _Axis.w);
         return length(rel - _Axis.xyz * tc) - _WDir.w;
     }
+    // blade: box with a rounded tip
     float u = dot(rel, _WDir.xyz), v = dot(rel, _NDir.xyz);
     float3 q = float3(abs(t - _Axis.w * 0.5) - _Axis.w * 0.5, abs(u) - _WDir.w, abs(v) - _NDir.w);
     return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+float SegmentDistance(float3 p, float3 a, float3 b)
+{
+    float3 ab = b - a;
+    float t = saturate(dot(p - a, ab) / max(dot(ab, ab), 1e-6));
+    return length(p - (a + ab * t));
 }
 
 float SigmaOfPot(uint idx)
@@ -138,7 +240,8 @@ float SigmaOfPot(uint idx)
     uint c = _Cells[idx];
     uint ty = CellType(c);
     if (ty == T_AIR || _Occ[idx] < 0.5) return 0.0;
-    if ((c & FLAG_BLOODCOVER) != 0u) return SIGMA_BLOOD * _Gen2.w;
+    // a surface voxel under a pool conducts like blood; under clotted coagulum far less
+    if ((c & FLAG_BLOODCOVER) != 0u) return SIGMA_BLOOD * ((c & FLAG_CLOTCOVER) != 0u ? 0.3 : 1.0) * _Gen2.w;
     if (CellState(c) == S_CARBON) return 0.002;
     TProp pr = Prop(ty);
     float g = saturate(_Water[idx] / max(pr.water, 1e-3));
@@ -147,19 +250,10 @@ float SigmaOfPot(uint idx)
 
 float Harmonic(float a, float b) { return a + b > 0.0 ? 2.0 * a * b / (a + b) : 0.0; }
 
-bool HasAirNeighbour(int i, int j, int k)
-{
-    for (int n = 0; n < 6; n++)
-    {
-        int3 o = NB6[n];
-        int ii = i + o.x, jj = j + o.y, kk = k + o.z;
-        if (!InVolume(ii, jj, kk)) continue;
-        uint nidx = Idx3(ii, jj, kk);
-        if (_Occ[nidx] < 0.5 || CellType(_Cells[nidx]) == T_AIR) return true;
-    }
-    return false;
-}
-
+/**
+ * Electrode contact set: tissue within the contact tolerance of the electrode surface, plus surface tissue the arc can
+ * reach across air, plus pool-covered surface voxels within 3 mm of the tip (current spreads through the blood).
+ */
 bool IsContact(int i, int j, int k)
 {
     float d = ElectrodeDistance(WorldOf(i, j, k));
@@ -317,6 +411,7 @@ void Bioheat(uint3 gid : SV_DispatchThreadID)
     TProp pr = Prop(ty);
     float dt = _DT.x;
     float rhoc = pr.rho * pr.c;
+    // conduction: harmonic-mean conductivity, air neighbours adiabatic
     float lap = 0.0;
     for (int n = 0; n < 6; n++)
     {
@@ -329,9 +424,11 @@ void Bioheat(uint3 gid : SV_DispatchThreadID)
         lap += Harmonic(pr.k, Prop(nty).k) * (_Src[nidx] - T0);
     }
     lap /= HM * HM;
+    // perfusion (lost once coagulated)
     float om0 = _Omega[idx];
     float w = _Water[idx];
     float perf = pr.wb * BLOOD_RHO_C * (T0 - 37.0) * (om0 > 1.0 ? 0.0 : 1.0);
+    // Joule heating from the last field solve, split into the resolved field part and the unresolved near-field layer
     float q = 0.0;
     if (_Gen2.y > 0.5 && InSubdomain(i, j, k))
     {
@@ -347,6 +444,7 @@ void Bioheat(uint3 gid : SV_DispatchThreadID)
     float T1 = T0 + (lap - perf) * dt / rhoc + dTq;
     float o = _Occ[idx];
     uint dummy;
+    // phase change: energy above boiling goes into latent heat while water remains
     if (T1 > T_BOIL && w > 0.0)
     {
         float excess = (T1 - T_BOIL) * rhoc;
@@ -359,14 +457,21 @@ void Bioheat(uint3 gid : SV_DispatchThreadID)
         o -= dOcc;
         w -= dw * (1.0 - vap * 0.5);
         T1 = T_BOIL + (excess - used) / rhoc;
-        if (dOcc > 0.0) InterlockedAdd(_State[ST_VAP], (uint)(dOcc * 1000.0), dummy);
+        if (dOcc > 0.0)
+        {
+            InterlockedAdd(_State[ST_VAP], (uint)(dOcc * 1000.0), dummy);
+            if (ty == T_VISCERA) InterlockedAdd(_State[ST_VISCVAP], (uint)(dOcc * 1000.0), dummy);
+        }
     }
+    // fat liquefies above its melting point: slow loss of material under the electrode
     if ((ty == T_FAT || ty == T_LIPOMA) && T1 > 60.0 && q > 0.0)
         o -= _Gen2.x * 0.2 * dt * saturate((T1 - 60.0) / 40.0) * 10.0;
+    // Arrhenius damage
     float om = min(om0 + dt * exp(pr.lnA - pr.eaR / (T1 + 273.15)), 1e4);
     if (o < 0.5)
     {
-        c = 0u; st = S_VAPOR; o = max(o, 0.0); w = 0.0; T1 = 37.0;
+        // the voxel is gone: cut air, a raw wound surface for its neighbours
+        c = PackCellState(0u, S_VAPOR); st = S_VAPOR; o = max(o, 0.0); w = 0.0; T1 = 37.0;
     }
     else
     {
@@ -374,13 +479,18 @@ void Bioheat(uint3 gid : SV_DispatchThreadID)
         else if (w <= 0.03 * pr.water) st = max(st, S_DESIC);
         else if (om > 0.53 && st == S_NORMAL) st = S_COAG;
         c = PackCellState(c, st);
+        // coagulated capillaries and dried or charred surfaces have stopped oozing
+        if (om > 1.0 || st >= S_DESIC) c = PackCellClock(c, CLOCK_MAX);
+        // vessel wall collagen denatured: apposed walls, small vessels and unexposed vessel inside the coagulum
+        // thrombose (sealed); only an open lumen coagulated without apposition becomes a char plug that can rebleed
         if ((ty == T_ARTERY || ty == T_VEIN) && om > 1.0 && (c & (FLAG_SEALED | FLAG_CHARPLUG)) == 0u)
         {
             float r = CellAux(c) * 0.05;
-            if ((c & FLAG_COAPTED) != 0u || r <= 0.5 || !HasAirNeighbour(i, j, k)) { c |= FLAG_SEALED; InterlockedAdd(_State[ST_SEALED], 1u, dummy); }
+            if ((c & FLAG_COAPTED) != 0u || r <= 0.5 || Exposure(i, j, k) != 3u) { c |= FLAG_SEALED; InterlockedAdd(_State[ST_SEALED], 1u, dummy); }
             else { c |= FLAG_CHARPLUG; InterlockedAdd(_State[ST_CHARPLUG], 1u, dummy); }
         }
         if (ty == T_MUSCLE && T1 > 45.0) InterlockedAdd(_State[ST_MUSCLE], 1u, dummy);
+        if (ty == T_VISCERA && T1 > 45.0) InterlockedAdd(_State[ST_VISCHEAT], 1u, dummy);
     }
     _Cells[idx] = c; _Occ[idx] = o; _Water[idx] = max(w, 0.0); _Omega[idx] = om;
     _Dst[idx] = T1;
@@ -392,6 +502,7 @@ void Bioheat(uint3 gid : SV_DispatchThreadID)
 // ------------------------------------------------------------------ blood layer
 uint ColIdx(int i, int j) { return (uint)i + (uint)NX * (uint)j; }
 
+/** Column scan: tissue top height, top voxel index and blood/clot-cover flags on the top voxel. Runs over the wound box columns. */
 [numthreads(8, 8, 1)]
 void SurfaceHeight(uint3 gid : SV_DispatchThreadID)
 {
@@ -404,16 +515,32 @@ void SurfaceHeight(uint3 gid : SV_DispatchThreadID)
         uint idx = Idx3(i, j, k);
         if (_Occ[idx] >= 0.5 && CellType(_Cells[idx]) != T_AIR) { top = k; break; }
     }
-    float4 b = _Blood[ci];
-    if (top < 0) { b.z = -1e3; _Blood[ci] = b; return; }
+    BloodCol b = LoadBlood(ci);
+    if (top < 0) { b.surf = -1e3; b.topK = -1.0; StoreBlood(ci, b); return; }
     uint tidx = Idx3(i, j, top);
-    b.z = WorldOf(i, j, top).y + 0.5 * HMM * (_Occ[tidx] - 0.5) * 2.0;
-    _Blood[ci] = b;
+    b.surf = WorldOf(i, j, top).y + 0.5 * HMM * (_Occ[tidx] - 0.5) * 2.0;
+    b.topK = (float)top;
+    StoreBlood(ci, b);
+    bool covered = b.h > 0.3;
     uint c = _Cells[tidx];
-    if (b.x > 0.3) c |= FLAG_BLOODCOVER; else c &= ~FLAG_BLOODCOVER;
+    if (covered) c |= FLAG_BLOODCOVER; else c &= ~FLAG_BLOODCOVER;
+    if (covered && b.clot > 0.6) c |= FLAG_CLOTCOVER; else c &= ~FLAG_CLOTCOVER;
     _Cells[tidx] = c;
 }
 
+void AddBloodLost(float volUl, uint idx, float t)
+{
+    uint dummy;
+    InterlockedAdd(_State[ST_BLOODLOST], (uint)volUl + (Hash13(float3(idx, t, 1.0)) < frac(volUl) ? 1u : 0u), dummy);
+}
+
+/**
+ * Bleeding sources. A vessel voxel bleeds only when its lumen is open: it has a cut-air neighbour (a cut, a tear or a
+ * pre-made wound), not merely a dissected plane or the skin surface beside it. Small vessels spasm and thrombose with
+ * time since exposure (the exposure clock), large ones keep going. Any perfused raw surface oozes from its capillaries
+ * at a tissue-specific rate that decays over about a minute unless it is wiped, and stops once coagulated. Char plugs
+ * may rebleed.
+ */
 [numthreads(4, 4, 4)]
 void BloodSource(uint3 gid : SV_DispatchThreadID)
 {
@@ -423,54 +550,104 @@ void BloodSource(uint3 gid : SV_DispatchThreadID)
     uint idx = Idx3(i, j, k);
     uint c = _Cells[idx];
     uint ty = CellType(c);
-    if ((ty != T_ARTERY && ty != T_VEIN) || _Occ[idx] < 0.5) return;
-    if (!HasAirNeighbour(i, j, k)) return;
-    float dt = _DT.x * _WBox0.w;
+    if (ty == T_AIR || _Occ[idx] < 0.5) return;
+    uint ex = Exposure(i, j, k);
+    if (ex == 0u) return;
+    float dt = _DT.x * _WBox0.w;   // frame dt (substeps * dt)
     float t = _DT.y;
-    float r = max(CellAux(c) * 0.05, 0.1);
+    uint clock = CellClock(c);
+    uint ci = ColIdx(i, j);
+    float area = HMM * HMM;
     uint dummy;
-    if ((c & FLAG_CHARPLUG) != 0u)
+    if (ty == T_ARTERY || ty == T_VEIN)
     {
-        float p = clamp((r - 0.5) / 1.5, 0.0, 0.9) * 0.15 * dt;
-        float hsh = Hash13(float3(idx & 0xffffu, idx >> 16, floor(t * 30.0)));
-        if (hsh < p) { c &= ~FLAG_CHARPLUG; c |= FLAG_REBLED; _Cells[idx] = c; InterlockedAdd(_State[ST_REBLEED], 1u, dummy); }
+        if (ex != 3u) return;                      // intact vessel exposed in a plane: visible, not bleeding
+        float r = max(CellAux(c) * 0.05, 0.1);
+        // char plug: stochastic rebleed (hash per voxel and second)
+        if ((c & FLAG_CHARPLUG) != 0u)
+        {
+            float p = clamp((r - 0.5) / 1.5, 0.0, 0.9) * 0.15 * dt;
+            float hsh = Hash13(float3(idx & 0xffffu, idx >> 16, floor(t * 30.0)));
+            if (hsh < p) { c &= ~FLAG_CHARPLUG; c |= FLAG_REBLED; c = PackCellClock(c, 0u); _Cells[idx] = c; InterlockedAdd(_State[ST_REBLEED], 1u, dummy); }
+            return;
+        }
+        if ((c & (FLAG_SEALED | FLAG_COAPTED)) != 0u) return;
+        // a gauze pressed over the end tamponades it: no flow while the pressure is held, and the clock runs faster
+        if (_Tool2B.w > 2.5 && _Tool2B.w < 3.5 && _Tool3.w > 0.3)
+        {
+            float3 p = WorldOf(i, j, k);
+            if (length(p.xz - _Tool2.xz) <= _Tool2.w && abs(p.y - _Tool2.y) < 4.0)
+            {
+                if (clock < CLOCK_MAX && Hash13(float3(idx, floor(t * 20.0), 13.0)) < dt / 0.5) _Cells[idx] = PackCellClock(c, clock + 1u);
+                return;
+            }
+        }
+        // flow of the whole transected end, shared by the voxels of its cross-section
+        float endVoxels = max(1.0, 3.14159 * r * r / area);
+        float q = VesselFlowMlS(r) / endVoxels;          // ml/s per voxel
+        bool arterial = false;
+        float ck = (float)clock;
+        if (ty == T_ARTERY)
+        {
+            float ph = frac(t * 1.2);                     // 72 bpm
+            q *= 0.35 + 1.3 * pow(max(sin(ph * 3.14159), 0.0), 3.0);
+            // arterioles spasm within seconds and the smallest thrombose; larger arteries only slow a little
+            if (r <= 0.35) q *= clock >= 20u ? 0.0 : exp(-ck / 6.0);
+            else if (r <= 0.5) q *= max(0.12, exp(-ck / 6.0));
+            else q *= 1.0 - 0.35 * min(1.0, ck / 16.0);
+            arterial = true;
+        }
+        else
+        {
+            q *= 0.3;
+            // venules clot off with time; veins keep welling
+            if (r <= 0.5) q *= clock >= 24u ? 0.0 : exp(-ck / 10.0); else q *= 1.0 - 0.2 * min(1.0, ck / 16.0);
+        }
+        // the exposure clock advances about once every 1.5 s
+        if (clock < CLOCK_MAX && Hash13(float3(idx, floor(t * 20.0), 7.0)) < dt / 1.5) _Cells[idx] = PackCellClock(c, clock + 1u);
+        if (q <= 1e-7) return;
+        if (arterial) InterlockedAdd(_State[ST_EXPART], 1u, dummy); else InterlockedAdd(_State[ST_EXPVEN], 1u, dummy);
+        // an arterial end spurts most of its output as droplets (thrown by the particle system and landed back into the
+        // layer); a vein wells up in place. The rest goes straight into the column here.
+        float jet = arterial ? ART_JET_FRACTION : VEN_JET_FRACTION;
+        uint slot;
+        InterlockedAdd(_State[ST_BLEEDN], 1u, slot);
+        float local = 1.0;
+        if (slot < 8u)
+        {
+            float3 wp = WorldOf(i, j, k);
+            uint b = ST_BLEEDPTS + slot * 4u;
+            _State[b] = asuint(wp.x); _State[b + 1] = asuint(wp.y); _State[b + 2] = asuint(wp.z); _State[b + 3] = asuint(arterial ? q : -q);
+            local = 1.0 - jet;
+        }
+        float volUl = q * dt * 1000.0;                   // microlitres this frame
+        // column depth increment: ul -> mm3 over the column area (columns of one vessel end may share a column; the race
+        // on h is rare and small, the volume is accounted exactly)
+        AddBlood(ci, volUl * local / area);
+        AddBloodLost(volUl, idx, t);
         return;
     }
-    if ((c & (FLAG_SEALED | FLAG_COAPTED)) != 0u) return;
-    float endVoxels = max(1.0, 3.14159 * r * r / (HMM * HMM));
-    float q = VesselFlowMlS(r) / endVoxels;
-    bool arterial = false;
-    if (ty == T_ARTERY)
-    {
-        float ph = frac(t * 1.2);
-        q *= 0.35 + 1.3 * pow(max(sin(ph * 3.14159), 0.0), 3.0);
-        InterlockedAdd(_State[ST_EXPART], 1u, dummy);
-        arterial = true;
-    }
-    else { q *= 0.3; InterlockedAdd(_State[ST_EXPVEN], 1u, dummy); }
-    uint slot;
-    InterlockedAdd(_State[ST_BLEEDN], 1u, slot);
-    if (slot < 8u)
-    {
-        float3 wp = WorldOf(i, j, k);
-        uint b = ST_BLEEDPTS + slot * 4u;
-        _State[b] = asuint(wp.x); _State[b + 1] = asuint(wp.y); _State[b + 2] = asuint(wp.z); _State[b + 3] = asuint(arterial ? q : -q);
-    }
-    float volUl = q * dt * 1000.0;
-    uint ci = ColIdx(i, j);
-    float4 bc = _Blood[ci];
-    bc.x += volUl / (HMM * HMM);
-    _Blood[ci] = bc;
-    uint whole = (uint)floor(volUl);
-    uint extra = Hash13(float3(idx, t, 1.0)) < frac(volUl) ? 1u : 0u;
-    InterlockedAdd(_State[ST_BLOODLOST], whole + extra, dummy);
+    // capillary ooze from a raw, perfused, uncoagulated surface
+    TProp pr = Prop(ty);
+    if (pr.ooze <= 0.0 || clock >= CLOCK_MAX || CellState(c) != S_NORMAL || _Omega[idx] > 1.0) return;
+    float planeFactor = ex == 2u ? 0.3 : 1.0;          // a dissected plane weeps less than a cut surface
+    float qUl = pr.ooze * area * exp(-(float)clock / 7.0) * planeFactor; // ul/s from one exposed face
+    float volUlO = qUl * dt;
+    AddBlood(ci, volUlO / area);
+    AddBloodLost(volUlO, idx, t);
+    InterlockedAdd(_State[ST_OOZEUL], (uint)volUlO + (Hash13(float3(idx, t, 3.0)) < frac(volUlO) ? 1u : 0u), dummy);
+    InterlockedAdd(_State[ST_OOZEVOX], 1u, dummy);
+    // capillary hemostasis: the clock advances about once every 2 s; wiping (gauze) turns it back
+    if (Hash13(float3(idx, floor(t * 20.0), 5.0)) < dt / 2.0) _Cells[idx] = PackCellClock(c, clock + 1u);
 }
 
+/** Droplet landings, one thread per droplet. */
 [numthreads(16, 1, 1)]
 void BloodDrops(uint3 gid : SV_DispatchThreadID)
 {
     if ((int)gid.x >= _DropCount) return;
     float4 d = _Drops[gid.x];
+    // a droplet splats over a ~0.8 mm radius footprint
     int r = max((int)ceil(0.8 / HMM), 1);
     int vi = (int)round(d.x / HMM + NX * 0.5 - 0.5);
     int vj = (int)round(d.z / HMM + NY * 0.5 - 0.5);
@@ -483,57 +660,114 @@ void BloodDrops(uint3 gid : SV_DispatchThreadID)
             if (a2 * a2 + b2 * b2 > r * r) continue;
             int i = vi + a2, j = vj + b2;
             if (i < 0 || j < 0 || i >= NX || j >= NY) continue;
-            uint ci = ColIdx(i, j);
-            float4 bc = _Blood[ci]; bc.x += dh; _Blood[ci] = bc;
+            AddBlood(ColIdx(i, j), dh);
         }
 }
 
+/** Thin-film mobility: a deep pool runs, a film creeps, clotted blood stays. */
+float FlowRate(float h, float clot)
+{
+    float mobile = max(h - BLOOD_FILM, 0.0);
+    return BLOOD_VISC * clamp(mobile / 0.25, 0.15, 1.0) * (1.0 - clot);
+}
+/** Depth of a column that can flow: above the wetting film and not clotted. The same expression on both sides of a pair keeps the exchange conservative. */
+float MobileDepth(float h, float clot) { return max(min(h - BLOOD_FILM, h * (1.0 - clot)), 0.0); }
+
+/** Shallow flow of blood down the head gradient, suction and gauze; writes hNext (and clot/stain for suction and gauze). */
 [numthreads(8, 8, 1)]
 void BloodFlow(uint3 gid : SV_DispatchThreadID)
 {
     int i = _WBox0.x + (int)gid.x - 4, j = _WBox0.y + (int)gid.y - 4;
     if ((int)gid.x >= _WBox1.x + 8 || (int)gid.y >= _WBox1.y + 8 || i < 0 || j < 0 || i >= NX || j >= NY) return;
     uint ci = ColIdx(i, j);
-    float4 b0 = _Blood[ci];
-    float h0 = b0.x, s0 = b0.z;
+    BloodCol b0 = LoadBlood(ci);
+    float h0 = b0.h, s0 = b0.surf;
     float h = h0;
-    if (s0 < -500.0) { b0.w = 0.0; _Blood[ci] = b0; return; }
+    // the clot is carried as a mass (depth of clotted blood): only liquid flows, drains or soaks away, and the
+    // fraction is re-derived at the end, so neither suction nor inflow can ratchet it
+    float clot0 = b0.clot;
+    float clotMass = h0 * clot0;
+    if (s0 < -500.0) { b0.hNext = 0.0; StoreBlood(ci, b0); return; }
     float H0 = s0 + h0;
     static const int2 NB4[4] = { int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1) };
     for (int n = 0; n < 4; n++)
     {
         int ii = i + NB4[n].x, jj = j + NB4[n].y;
         if (ii < 0 || jj < 0 || ii >= NX || jj >= NY) continue;
-        float4 bj = _Blood[ColIdx(ii, jj)];
-        if (bj.z < -500.0) continue;
-        float Hj = bj.z + bj.x;
-        if (H0 > Hj)
-        {
-            float mobile = max(h0 - BLOOD_FILM, 0.0);
-            float clotF = b0.y > CLOT_AGE ? 0.0 : 1.0;
-            h -= min(BLOOD_VISC * 0.25 * (H0 - Hj), mobile * 0.25) * clotF;
-        }
-        else if (Hj > H0)
-        {
-            float mobileJ = max(bj.x - BLOOD_FILM, 0.0);
-            float clotJ = bj.y > CLOT_AGE ? 0.0 : 1.0;
-            h += min(BLOOD_VISC * 0.25 * (Hj - H0), mobileJ * 0.25) * clotJ;
-        }
+        BloodCol bj = LoadBlood(ColIdx(ii, jj));
+        if (bj.surf < -500.0) continue;
+        float Hj = bj.surf + bj.h;
+        // outflow to lower neighbours, limited by what is mobile above the wetting film (the same expression on both
+        // sides of a pair keeps the exchange conservative)
+        if (H0 > Hj) h -= min(FlowRate(h0, clot0) * 0.25 * (H0 - Hj), MobileDepth(h0, clot0) * 0.25);
+        else if (Hj > H0) h += min(FlowRate(bj.h, bj.clot) * 0.25 * (Hj - H0), MobileDepth(bj.h, bj.clot) * 0.25);
     }
-    if (_Tool2B.w > 1.5)
+    float dtf = _DT.x * _WBox0.w;
+    float mode = _Tool2B.w;
+    float3 w = VoxelToWorld(float3(i, j, 0));
+    float dxz = length(w.xz - _Tool2.xz);
+    if (mode > 1.5 && mode < 2.5)
     {
-        float3 w = VoxelToWorld(float3(i, j, 0));
-        float dxz = length(w.xz - _Tool2.xz);
-        if (dxz <= _Tool2.w && abs(s0 - _Tool2.y) < 4.0)
+        // suction lifts liquid blood only: clot stays until it is wiped away. The columns under the tip drain at the pump
+        // rate; a pool levels far faster than the creeping film model moves it, so the mobile blood of the same pool
+        // within a few tip radii runs toward the lowered surface and is taken too, at a rate falling off with distance.
+        // The wetting film and the stain stay (a sucker never leaves a dry field).
+        float rcap = SUCTION_CAPTURE * _Tool2.w;
+        if (dxz <= rcap && abs(s0 - _Tool2.y) < 4.0)
         {
-            float area = 3.14159 * _Tool2.w * _Tool2.w;
-            h = max(h - 2000.0 * _DT.x * _WBox0.w / area, 0.0);
+            float area = 3.14159 * _Tool2.w * _Tool2.w;          // mm2
+            float dhSuck = 2000.0 * dtf / area;                   // 2 ml/s over the tip area -> mm
+            float liquid = max(h - clotMass, 0.0);
+            float taken = min(liquid, dhSuck);
+            if (dxz > _Tool2.w)
+            {
+                float f = 1.0 - (dxz - _Tool2.w) / (rcap - _Tool2.w);
+                taken = min(max(liquid - BLOOD_FILM, 0.0), SUCTION_RUN * f * f * dtf);
+            }
+            h -= taken;
         }
     }
-    b0.w = max(h, 0.0);
-    _Blood[ci] = b0;
+    else if (mode > 2.5 && mode < 3.5)
+    {
+        // gauze: a dab soaks up liquid blood and tamponades the surface; a wipe also drags off clot and disturbs the
+        // capillaries, so a wiped surface starts oozing again (and so do small vessels that had spasmed shut)
+        float pressure = _Tool3.w;
+        if (dxz <= _Tool2.w && abs(s0 - _Tool2.y) < 3.0 && pressure > 0.05)
+        {
+            float speed = length(_Tool3.xyz);
+            bool wiping = speed > GAUZE_WIPE_SPEED;
+            float liquid = max(h - clotMass, 0.0);
+            float dLiquid = min(liquid, GAUZE_RATE * pressure * _Dis.z * dtf);   // _Dis.z = 0 once the gauze is saturated
+            float dClot = wiping ? min(clotMass, 4.0 * dtf) : 0.0;
+            h = max(h - dLiquid - dClot, 0.0); clotMass -= dClot;
+            uint dummy;
+            InterlockedAdd(_State[ST_GAUZESOAK], (uint)((dLiquid + dClot) * HMM * HMM * 1000.0), dummy);
+            int top = (int)b0.topK;
+            if (top >= 0)
+            {
+                uint tidx = Idx3(i, j, top);
+                uint c = _Cells[tidx];
+                uint clock = CellClock(c);
+                if (wiping)
+                {
+                    if (clock > 6u) _Cells[tidx] = PackCellClock(c, 6u);
+                    b0.stain = b0.stain * max(0.0, 1.0 - 2.0 * dtf);
+                }
+                else if (pressure > 0.3 && clock < CLOCK_MAX && Hash13(float3(tidx, floor(_DT.y * 20.0), 9.0)) < dtf / 0.4)
+                {
+                    // tamponade: pressure hastens capillary hemostasis about five-fold
+                    _Cells[tidx] = PackCellClock(c, clock + 1u);
+                }
+            }
+        }
+    }
+    h = max(h, clotMass);   // liquid may leave, the clot stays
+    b0.hNext = max(h, 0.0);
+    b0.clot = h > 1e-5 ? saturate(clotMass / h) : 0.0;
+    StoreBlood(ci, b0);
 }
 
+/** Commit the flow step, age static blood, heat, boil and clot it, soak the raw surface, and gather pool statistics. */
 [numthreads(8, 8, 1)]
 void BloodCommit(uint3 gid : SV_DispatchThreadID)
 {
@@ -541,19 +775,83 @@ void BloodCommit(uint3 gid : SV_DispatchThreadID)
     if ((int)gid.x >= _WBox1.x + 8 || (int)gid.y >= _WBox1.y + 8 || i < 0 || j < 0 || i >= NX || j >= NY) return;
     uint ci = ColIdx(i, j);
     float dtf = _DT.x * _WBox0.w;
-    float4 b = _Blood[ci];
-    float hNew = b.w;
-    bool moved = abs(hNew - b.x) > 1e-4;
-    b.x = hNew;
-    b.y = (moved || hNew < BLOOD_FILM) ? 0.0 : b.y + dtf;
-    _Blood[ci] = b;
-    if (hNew > 0.0)
+    BloodCol b = LoadBlood(ci);
+    float hNew = b.hNext;
+    bool moved = abs(hNew - b.h) > 1e-4;
+    float h = hNew;
+    b.age = (moved || hNew < BLOOD_FILM) ? 0.0 : b.age + dtf;
+    float clot = b.clot;
+    float temp = b.temp;
+    int top = (int)b.topK;
+    float3 w = VoxelToWorld(float3(i, j, 0));
+    float area = HMM * HMM;
+    uint dummy;
+    if (h > 1e-5 && b.surf > -500.0)
     {
-        uint dummy;
-        InterlockedAdd(_State[ST_POOL], (uint)(hNew * HMM * HMM * 1000.0), dummy);
-        float3 w = VoxelToWorld(float3(i, j, 0));
-        if (length(w.xz - _Tip.xz) < 1.5) InterlockedMax(_State[ST_POOLTIP], (uint)(hNew * 1000.0), dummy);
+        // blood temperature follows the tissue it lies on and cools toward body temperature
+        if (top >= 0) temp += (_Src[Idx3(i, j, top)] - temp) * min(1.0, 2.0 * dtf);
+        if (temp < 37.0) temp = 37.0;
+        temp += (37.0 - temp) * min(1.0, 0.1 * dtf);
+        // the electrode in a pool: a share of the delivered power boils and cooks the blood around it. The column's blood
+        // body runs from the tissue top to the pool surface; a submerged electrode heats every column it passes through.
+        if (_Gen2.y > 0.5 && LoadF(ST_P) > 0.0)
+        {
+            float d = min(ElectrodeDistance(float3(w.x, b.surf + h, w.z)), min(ElectrodeDistance(float3(w.x, b.surf + 0.5 * h, w.z)), ElectrodeDistance(float3(w.x, b.surf + 0.1 * min(h, 1.0), w.z))));
+            if (d < 0.8)
+            {
+                float nCols = max(1.0, 12.6 / area);                      // ~2 mm footprint
+                float e = LoadF(ST_P) * BLOOD_HEAT_FRAC * dtf / nCols;     // J into this column
+                float vol = h * area * 1e-9;                               // m3
+                temp += min(e / (BLOOD_RHO_C * max(vol, 1e-12)), 60.0);
+            }
+        }
+        if (temp > T_BOIL)
+        {
+            // boiling: the excess energy evaporates liquid blood and throws spatter
+            float vol = h * area * 1e-9;
+            float excess = (temp - T_BOIL) * BLOOD_RHO_C * vol;             // J
+            float dm = excess / L_VAP;                                       // kg
+            float dh = min(dm / 1050.0 / (area * 1e-6) * 1000.0, h * (1.0 - clot)); // mm of liquid
+            float clotMassB = h * clot;
+            h = h - dh;
+            clot = h > 1e-5 ? min(1.0, clotMassB / h) : 0.0;
+            temp = T_BOIL;
+            InterlockedAdd(_State[ST_BOILCOLS], 1u, dummy);
+            // part of what left the column is thrown as droplets (the particle system lands them back into the layer: blood
+            // is conserved, not conjured); the columns that get no slot this frame simply steam off
+            if (dh > 1e-4 && Hash13(float3(ci, floor(_DT.y * 30.0), 11.0)) < 0.25)
+            {
+                uint slot;
+                InterlockedAdd(_State[ST_SPATTERN], 1u, slot);
+                if (slot < 4u)
+                {
+                    uint sb = ST_SPATTERPTS + slot * 4u;
+                    _State[sb] = asuint(w.x); _State[sb + 1] = asuint(b.surf + h); _State[sb + 2] = asuint(w.z); _State[sb + 3] = asuint(SPATTER_FRAC * dh * area);
+                }
+            }
+        }
+        // coagulation: thermal (blood proteins denature in under a second at 70 C) and by standing
+        TProp bp = Prop(T_BLOOD);
+        float dClot = dtf * exp(bp.lnA - bp.eaR / (temp + 273.15));
+        if (b.age > CLOT_AGE) dClot += dtf / CLOT_TIME;
+        clot = min(1.0, clot + dClot);
+        // fresh raw tissue under the blood soaks it up (visible stain that suction does not remove)
+        if (top >= 0)
+        {
+            uint tidx = Idx3(i, j, top);
+            if (CellState(_Cells[tidx]) == S_NORMAL && AirKind(tidx) == 0u) b.stain = min(1.0, b.stain + 0.6 * dtf * min(h / 0.2, 1.0));
+        }
+        InterlockedAdd(_State[ST_POOL], (uint)(h * area * 1000.0), dummy);
+        InterlockedAdd(_State[ST_CLOTVOL], (uint)(h * clot * area * 1000.0), dummy);
+        if (length(w.xz - _Tip.xz) < 1.5) InterlockedMax(_State[ST_POOLTIP], (uint)(h * 1000.0), dummy);
     }
+    else
+    {
+        temp = 37.0;
+        if (h <= 1e-5) clot = 0.0;
+    }
+    b.h = h; b.clot = clot; b.temp = temp;
+    StoreBlood(ci, b);
 }
 
 // ------------------------------------------------------------------ forceps coaptation
@@ -568,9 +866,8 @@ void CoaptMark(uint3 gid : SV_DispatchThreadID)
     uint c = _Cells[idx];
     if (CellType(c) == T_AIR) return;
     float3 p = WorldOf(i, j, k);
-    float3 a = _Tool2.xyz, b = _Tool2B.xyz, ab = b - a;
-    float t = saturate(dot(p - a, ab) / max(dot(ab, ab), 1e-6));
-    float d = length(p - (a + ab * t));
+    float d = SegmentDistance(p, _Tool2.xyz, _Tool2B.xyz);
+    // a vessel held in the jaws is flattened as a whole: the coapted zone widens with the vessel radius
     float rad = _Tool2.w;
     uint ty = CellType(c);
     if (ty == T_ARTERY || ty == T_VEIN) rad = max(rad, 2.2 * CellAux(c) * 0.05 + 0.3);
@@ -579,24 +876,87 @@ void CoaptMark(uint3 gid : SV_DispatchThreadID)
     _Cells[idx] = c;
 }
 
+// ------------------------------------------------------------------ blunt dissection
+// The jaws enter the tissue at _Tool3.xyz and their tips (_Tool2 -> _Tool2B) spread or push. Voxels within the carve
+// radius of the two blades (entry to each tip) or of the span between the tips, that belong to a plane with cohesion at
+// or below the instrument's threshold and already touch air (the tips can only separate what they have reached), become
+// dissected air. Vessels and nerves are never divided: they stay as bridging strands across the opened plane until they
+// are torn or cut. Dispatched over the box around the three points (x, z, y) -> (i, j, k).
+[numthreads(4, 4, 4)]
+void Dissect(uint3 gid : SV_DispatchThreadID)
+{
+    float3 a = _Tool2.xyz, b = _Tool2B.xyz, e = _Tool3.xyz; float r = _Dis.y;
+    int3 lo = VoxelOfWorld(min(min(a, b), e) - r);
+    int i = lo.x + (int)gid.x, j = lo.y + (int)gid.y, k = lo.z + (int)gid.z;
+    if (!InVolume(i, j, k)) return;
+    uint idx = Idx3(i, j, k);
+    if (!IsTissue(idx)) return;
+    uint ty = CellType(_Cells[idx]);
+    if (IsBridging(ty) || Prop(ty).cohesion > _Dis.x) return;
+    float3 p = WorldOf(i, j, k);
+    if (min(SegmentDistance(p, a, b), min(SegmentDistance(p, e, a), SegmentDistance(p, e, b))) > r) return;
+    if (Exposure(i, j, k) == 0u) return;
+    _Occ[idx] = 0.0; _Water[idx] = 0.0;
+    _Cells[idx] = PackCellState(0u, S_DISSECT);
+    uint dummy; InterlockedAdd(_State[ST_DISSECTED], 1u, dummy);
+}
+
+// ------------------------------------------------------------------ mechanical tears
+// Each torn lattice link carves the middle of its path: the tissue the link ran through (any soft tissue for a
+// soft-tissue link; a vessel or nerve link carves only its own type). The carved voxels are cut air, so a torn vessel
+// bleeds and torn parenchyma oozes.
+[numthreads(16, 1, 1)]
+void TearCarve(uint3 gid : SV_DispatchThreadID)
+{
+    if ((int)gid.x >= _TearCount) return;
+    float4 A = _Tears[gid.x * 2], B = _Tears[gid.x * 2 + 1];
+    float r = A.w; uint linkTissue = (uint)B.w;
+    float3 a = lerp(A.xyz, B.xyz, 0.3), b = lerp(A.xyz, B.xyz, 0.7);
+    int3 lo = VoxelOfWorld(min(a, b) - r), hi = VoxelOfWorld(max(a, b) + r);
+    uint dummy;
+    for (int k = lo.z; k <= hi.z; k++) for (int j = lo.y; j <= hi.y; j++) for (int i = lo.x; i <= hi.x; i++)
+    {
+        if (!InVolume(i, j, k)) continue;
+        uint idx = Idx3(i, j, k);
+        if (!IsTissue(idx)) continue;
+        uint ty = CellType(_Cells[idx]);
+        bool allowed = ty == linkTissue || (!IsBridging(linkTissue) && !IsBridging(ty) && Prop(ty).cohesion < 0.95);
+        if (!allowed) continue;
+        if (SegmentDistance(WorldOf(i, j, k), a, b) > r) continue;
+        _Occ[idx] = 0.0; _Water[idx] = 0.0;
+        _Cells[idx] = PackCellState(0u, S_VAPOR);
+        InterlockedAdd(_State[ST_TORN], 1u, dummy);
+    }
+}
+
 // ------------------------------------------------------------------ mechanics constraint probe
+// For each lattice constraint segment (material mm endpoints) sample 5 points: severed if any sample is air where the
+// segment originally passed through tissue; omegaMax for shrinkage; max dryness (1 - water / water0) and whether any
+// sample is char for brittleness.
 [numthreads(64, 1, 1)]
 void ConstraintProbe(uint3 gid : SV_DispatchThreadID)
 {
     uint n = gid.x;
     if ((int)n >= _SegCount) return;
     float4 a = _Segs[n * 2], b = _Segs[n * 2 + 1];
-    uint severed = 0u, tissueSamples = 0u; float om = 0.0;
+    uint severed = 0u, tissueSamples = 0u, charred = 0u; float om = 0.0, dry = 0.0;
     for (int t = 0; t < 5; t++)
     {
         float3 p = lerp(a.xyz, b.xyz, (t + 0.5) / 5.0);
         int3 v = WorldToVoxelRound(p);
         if (!InVolume(v.x, v.y, v.z)) continue;
         uint idx = Idx3(v.x, v.y, v.z);
-        if (_Occ[idx] >= 0.5 && CellType(_Cells[idx]) != T_AIR) { tissueSamples++; om = max(om, _Omega[idx]); }
+        uint c = _Cells[idx];
+        if (_Occ[idx] >= 0.5 && CellType(c) != T_AIR)
+        {
+            tissueSamples++; om = max(om, _Omega[idx]);
+            float w0 = max(Prop(CellType(c)).water, 1e-3);
+            dry = max(dry, 1.0 - saturate(_Water[idx] / w0));
+            if (CellState(c) == S_CARBON) charred = 4u;
+        }
         else if (a.w > 0.5) severed = 1u;
     }
-    _Probes[n] = uint2(severed | (tissueSamples == 0u ? 2u : 0u), asuint(om));
+    _Probes[n] = uint4(severed | (tissueSamples == 0u ? 2u : 0u) | charred, asuint(om), asuint(dry), 0u);
 }
 
 // ------------------------------------------------------------------ pick
@@ -641,6 +1001,9 @@ float3 TissueColor(uint ty)
         case 11u: return float3(0.98, 0.86, 0.48); // lipoma
         case 12u: return float3(0.93, 0.88, 0.74); // capsule
         case 13u: return float3(0.32, 0.02, 0.02); // blood
+        case 14u: return float3(0.93, 0.82, 0.80); // areolar: wispy pale pink
+        case 15u: return float3(0.62, 0.30, 0.30); // viscera: dusky red
+        case 16u: return float3(0.90, 0.87, 0.85); // serosa: glistening pale membrane
         default: return float3(0.08, 0.09, 0.11);
     }
 }
@@ -653,7 +1016,7 @@ float3 CoagColor(uint ty)
         case 2u: return float3(0.86, 0.81, 0.74);
         case 3u: return float3(0.86, 0.70, 0.42);
         case 11u: return float3(0.88, 0.74, 0.48);
-        case 7u: return float3(0.66, 0.52, 0.46);
+        case 7u: case 15u: return float3(0.66, 0.52, 0.46);
         case 8u: case 13u: return float3(0.36, 0.18, 0.12);
         case 9u: return float3(0.30, 0.17, 0.16);
         default: return float3(0.84, 0.80, 0.70);
@@ -689,6 +1052,11 @@ float3 TissueStateColor(uint c, uint idx)
     if ((c & FLAG_SEALED) != 0u) col = lerp(col, float3(0.2, 0.9, 0.3), 0.5);
     if ((c & FLAG_CHARPLUG) != 0u) col = lerp(col, float3(0.1, 0.05, 0.0), 0.7);
     if ((c & FLAG_COAPTED) != 0u) col = lerp(col, float3(0.3, 0.6, 1.0), 0.4);
+    // a bleeding vessel end, an oozing raw surface: fresh red tint fading as the exposure clock runs
+    int i = (int)(idx % (uint)NX), j = (int)((idx / (uint)NX) % (uint)NY), k = (int)(idx / ((uint)NX * (uint)NY));
+    uint clock = CellClock(c);
+    if (st == S_NORMAL && clock < CLOCK_MAX && (ty == T_ARTERY || ty == T_VEIN || Prop(ty).ooze > 0.0) && Exposure(i, j, k) >= 2u)
+        col = lerp(col, float3(0.6, 0.05, 0.05), 0.35 * exp(-(float)clock / 7.0));
     return col;
 }
 
@@ -766,6 +1134,12 @@ void Slice(uint3 gid : SV_DispatchThreadID)
         }
     }
     col = lerp(bg, c0.rgb, smoothstep(0.35, 0.65, c0.a));
+    if (c0.a < 0.35 && mode == 0u)
+    {
+        // dissected plane: a faint haze marks where tissue was separated bluntly
+        int3 v = WorldToVoxelRound(p);
+        if (InVolume(v.x, v.y, v.z) && CellState(_Cells[Idx3(v.x, v.y, v.z)]) == S_DISSECT && _Occ[Idx3(v.x, v.y, v.z)] < 0.5) col = float3(0.14, 0.13, 0.12);
+    }
     // isotherms (45, 60, 100 C) and the irreversible-damage boundary (Omega = 1); temperature modes only
     if (mode <= 2u && c0.a > 0.5 && flags != 0u)
     {

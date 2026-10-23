@@ -17,11 +17,12 @@ namespace BovieSim
     public sealed class SimAssets : ScriptableObject
     {
         public const string ResourcePath = "BovieSim/SimAssets";
-        public const int TissueBuckets = 18;
+        public const int TissueBuckets = 20;
 
-        [Tooltip("HDRP Lit materials per surface bucket: 0-7 tissue classes (skin, dermis, fat, lipoma, fibrous, muscle, artery, vein), 8-15 the same coagulated, 16 desiccated, 17 carbonized")]
+        [Tooltip("HDRP Lit materials per surface bucket: 0-8 tissue classes (skin, dermis, fat, lipoma, fibrous, muscle, artery, vein, viscera), 9-17 the same coagulated, 18 desiccated, 19 carbonized")]
         public Material[] tissue = new Material[TissueBuckets];
         public Material blood;
+        [Tooltip("translucent pink-white connective strands drawn out by traction or blunt dissection")] public Material strand;
         [Tooltip("Loose blue drape (CC0 fabric or procedural weave), reinforcement pad and incise film around the fenestration")] public Material drape, drapePad, drapeFilm;
         [Tooltip("Cotton towels squaring the window on top of the drape")] public Material towel;
         [Tooltip("Emissive face of the operating-light heads, seen in reflections")] public Material lampDome;
@@ -40,7 +41,7 @@ namespace BovieSim
         [Tooltip("UI Toolkit runtime theme (Generated/BovieTheme.tss)")] public UnityEngine.UIElements.ThemeStyleSheet uiTheme;
         [Tooltip("Set Up Project version that produced these assets; older registries trigger a re-run")] public int setupVersion;
         /// <summary>bump when Set Up Project must be re-run after an update</summary>
-        public const int CurrentSetupVersion = 8;
+        public const int CurrentSetupVersion = 9;
 
         public static SimAssets Load()
         {

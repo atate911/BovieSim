@@ -16,7 +16,7 @@ namespace BovieSim
     /// </summary>
     public sealed class SimulationRunner : MonoBehaviour
     {
-        public static readonly string[] ScenarioIds = { "freeplay", "hemostasis", "lipoma" };
+        public static readonly string[] ScenarioIds = { "freeplay", "hemostasis", "lipoma", "viscera" };
         /// <summary>survives a scene reload so F6 can switch scenarios</summary>
         static string requestedScenario;
 
@@ -38,11 +38,15 @@ namespace BovieSim
         EventBus events; SimUI ui; SurfacePicker picker; readonly HudData hud = new HudData(); ActivationAudio audioOut; OrbitCamera orbit; readonly InputState input = new InputState();
         readonly ElectrodeTool tool = new ElectrodeTool(); readonly ForcepsTool forceps = new ForcepsTool();
         readonly SuctionTool suction = new SuctionTool(); readonly HookTool hook = new HookTool();
+        readonly HemostatTool hemostat = new HemostatTool(); readonly GauzeTool gauze = new GauzeTool();
+        readonly int[] hemoNodes = { -1, -1 }; StrandRenderer strands; MaterialPropertyBlock gauzeMpb; MeshRenderer gauzeRenderer;
         ToolKind activeTool = ToolKind.Pencil; ElectrodeType pencilElectrode = ElectrodeType.Blade;
         bool slicePerp, lesionFreedReported, lesionDelivered, lesionBreachReported, ready;
         float clusterRiseMm, liftMm; string status = "Building anatomy…";
         Vector4[] lastDisp; bool latticeMoved;
         float maxRimMm, maxCharMm3; int layerColumn = -1;
+        /// <summary>cumulative vaporised viscera, mm3 (scenario metric)</summary>
+        float visceraVapMm3;
         HDAdditionalCameraData hdCam; bool dofOn;
         readonly System.Diagnostics.Stopwatch frameWatch = new System.Diagnostics.Stopwatch();
         readonly FrameTiming[] frameTimings = new FrameTiming[1]; float cpuMs, gpuMs;
@@ -60,7 +64,7 @@ namespace BovieSim
 
         // ---- scene objects
         Transform field;
-        GameObject pencil, forcepsA, forcepsB, frazier, hookGo, drapes;
+        GameObject pencil, forcepsA, forcepsB, hemoA, hemoB, frazier, gauzeGo, hookGo, drapes;
         MeshFilter electrodeFilter; MeshRenderer electrodeRenderer; Mesh bladeMesh, needleMesh, ballMesh; Material[] bladeMats, needleMats, ballMats;
         MeshRenderer cutButton, coagButton; MaterialPropertyBlock buttonMpb;
         Light arcLight; DepthOfField dof;
@@ -143,6 +147,7 @@ namespace BovieSim
             surface = new SurfaceRenderer(surfCs, gpu, field, SkinCorrectedMaterials(), assets.blood);
             surface.maxBricksPerFrame = detail.bricksPerFrame;
             particles = new Particles(assets.particlesAlpha, assets.particlesAdditive);
+            strands = new StrandRenderer(field, assets.strand != null ? assets.strand : assets.blood);
             if (assets.teachingOverlay != null) { overlayMat = new Material(assets.teachingOverlay); surface.SetOverlay(overlayMat, false); }
             if (scenario.preCarve != null && scenario.preCarve.Count > 0) physics.MarkWound(new[] { 0, 0, 0 }, new[] { volume.nx, volume.ny, volume.nz });
             if (lattice != null)
@@ -269,9 +274,14 @@ namespace BovieSim
             bool packForceps = assets.forcepsArmA != null && assets.forcepsArmB != null && assets.packSteel != null;
             forcepsA = MakePart("Adson forceps A", packForceps ? assets.forcepsArmA : MeshFactory.ForcepsArm(forceps.armLength, false, 1), packForceps ? assets.packSteel : assets.steel, field);
             forcepsB = MakePart("Adson forceps B", packForceps ? assets.forcepsArmB : MeshFactory.ForcepsArm(forceps.armLength, true, 2), packForceps ? assets.packSteel : assets.steel, field);
+            var hArm = MeshFactory.HemostatArm(hemostat.armLength);
+            hemoA = MakePart("Kelly hemostat A", hArm, assets.steel, field);
+            hemoB = MakePart("Kelly hemostat B", hArm, assets.steel, field);
             frazier = assets.frazierModel != null && assets.frazierModel.IsSet ? MakePart("Frazier suction", assets.frazierModel.mesh, assets.frazierModel.materials, field) : MakePart("Frazier suction", MeshFactory.Frazier(), assets.steel, field);
+            gauzeGo = MakePart("Gauze", MeshFactory.Gauze(gauze.radius), assets.drape != null ? assets.drape : assets.pencilBody, field);
+            gauzeRenderer = gauzeGo.GetComponent<MeshRenderer>(); gauzeMpb = new MaterialPropertyBlock();
             hookGo = assets.skinHookModel != null && assets.skinHookModel.IsSet ? MakePart("Skin hook", assets.skinHookModel.mesh, assets.skinHookModel.materials, field) : MakePart("Skin hook", MeshFactory.SkinHook(), assets.steel, field);
-            foreach (var go in new[] { pencil, forcepsA, forcepsB, frazier, hookGo })
+            foreach (var go in new[] { pencil, forcepsA, forcepsB, hemoA, hemoB, frazier, gauzeGo, hookGo })
                 foreach (var r in go.GetComponentsInChildren<MeshRenderer>()) r.shadowCastingMode = ShadowCastingMode.On;
             buttonMpb = new MaterialPropertyBlock();
 
@@ -358,12 +368,15 @@ namespace BovieSim
             var camMm = orbit.PositionMm;
             bool tiltOn = input.HasTilt;
             bool suctionOn = false; Vector3 suctionAt = Vector3.zero;
-            events.buzzing = false; events.suctionOn = false;
+            events.buzzing = false; events.suctionOn = false; events.gauzeDab = false; events.gauzeWipe = false; events.gauzeSaturated = gauze.Saturated;
 
             // ---- tool placement (physics in material space; display shifted by the lattice displacement below)
             pencil.SetActive(activeTool == ToolKind.Pencil);
             forcepsA.SetActive(activeTool == ToolKind.Forceps); forcepsB.SetActive(activeTool == ToolKind.Forceps);
-            frazier.SetActive(activeTool == ToolKind.Suction); hookGo.SetActive(activeTool == ToolKind.Hook);
+            hemoA.SetActive(activeTool == ToolKind.Hemostat); hemoB.SetActive(activeTool == ToolKind.Hemostat);
+            frazier.SetActive(activeTool == ToolKind.Suction); gauzeGo.SetActive(activeTool == ToolKind.Gauze); hookGo.SetActive(activeTool == ToolKind.Hook);
+            if (activeTool != ToolKind.Hemostat && activeTool != ToolKind.Gauze) physics.SetSecondaryMotion(Vector3.zero, 0, 1);
+            if (activeTool != ToolKind.Hemostat) { hemoNodes[0] = -1; hemoNodes[1] = -1; }
             if (activeTool == ToolKind.Pencil)
             {
                 tool.type = pencilElectrode;
@@ -394,6 +407,63 @@ namespace BovieSim
                     }
                     else { hook.node = -1; lattice.attachments.Clear(); }
                 }
+            }
+            else if (activeTool == ToolKind.Hemostat)
+            {
+                // closed jaws grasp (and can be buzzed); held closed and moving, the tips push through a plane; closed and
+                // spread (Space), the jaws open inside the tissue and dissect it bluntly
+                hemostat.closed = pressed;
+                hemostat.Animate(Input.GetKey(KeyCode.Space), frameDt);
+                hemostat.Place(hasHit, hit, camMm, tiltOn, input.tiltDeg, input.pressure);
+                int mode2 = 0;
+                if (hemostat.visible && hemostat.closed)
+                {
+                    if (hemostat.spreading && hemostat.spread > 0.05f) { mode2 = 4; physics.SetDissect(true, hemostat.jawRadius); }
+                    else if (!hemostat.spreading && hemostat.spread < 0.05f && hemostat.Travel() > 0.08f) { mode2 = 5; physics.SetDissect(false, hemostat.jawRadius); }
+                    else mode2 = 1;
+                }
+                if (mode2 == 5) physics.SetSecondaryTool(hemostat.prevMid, hemostat.Mid, hemostat.jawRadius, 5);
+                else physics.SetSecondaryTool(hemostat.tipA, hemostat.tipB, hemostat.jawRadius, mode2);
+                // the jaws entered the tissue at the surface hit: the dissected sheet runs from there to the tips
+                physics.SetSecondaryMotion(hasHit ? hit : hemostat.Mid, 0, 1);
+                if (hemostat.visible && hemostat.closed && !hemostat.spreading && hemostat.spread < 0.05f) { tool.AsForceps(hemostat.tipA, hemostat.tipB, hemostat.jawRadius, hemostat.axis); events.buzzing = gen.activation != Activation.None; }
+                else { tool.visible = false; gen.activation = Activation.None; }
+                // spreading pushes the two sides of the plane apart; a grasp carries the nearest node
+                if (lattice != null)
+                {
+                    lattice.attachments.Clear();
+                    if (hemostat.closed && hemostat.visible)
+                    {
+                        if (hemoNodes[0] < 0) { hemoNodes[0] = lattice.NearestNode(hemostat.tipA, 3); hemoNodes[1] = lattice.NearestNode(hemostat.tipB, 3); }
+                        if (hemostat.spreading)
+                        {
+                            if (hemoNodes[0] >= 0) lattice.attachments.Add(new Attachment { node = hemoNodes[0], target = hemostat.tipA, strength = 0.3f });
+                            if (hemoNodes[1] >= 0 && hemoNodes[1] != hemoNodes[0]) lattice.attachments.Add(new Attachment { node = hemoNodes[1], target = hemostat.tipB, strength = 0.3f });
+                        }
+                        else if (hemoNodes[0] >= 0) lattice.attachments.Add(new Attachment { node = hemoNodes[0], target = hemostat.Mid + hemostat.axis * 0.5f, strength = 0.2f });
+                    }
+                    else { hemoNodes[0] = -1; hemoNodes[1] = -1; }
+                }
+                hook.node = -1;
+            }
+            else if (activeTool == ToolKind.Gauze)
+            {
+                gauze.Place(hasHit, hit, camMm, tiltOn, input.tiltDeg, pressed, input.pressure, frameDt);
+                bool on = gauze.visible && pressed;
+                physics.SetSecondaryTool(gauze.centre, gauze.centre, gauze.radius, on ? 3 : 0);
+                physics.SetSecondaryMotion(gauze.velocity, on ? gauze.pressure : 0, gauze.Absorb);
+                gauze.soakedUl = Mathf.Min(gauze.capacityUl, gauze.soakedUl + r.gauzeSoakUl);
+                float speed = gauze.velocity.magnitude;
+                events.gauzeDab = on && speed < 15; events.gauzeWipe = on && speed >= 15;
+                tool.visible = false; gen.activation = Activation.None;
+                // the pressed pad compresses the surface under it
+                if (lattice != null)
+                {
+                    lattice.attachments.Clear();
+                    if (on) foreach (int n in lattice.NodesWithin(gauze.centre, gauze.radius))
+                        lattice.attachments.Add(new Attachment { node = n, target = new Vector3(lattice.pos[n * 3], lattice.mat[n * 3 + 1] - 1.0f * gauze.pressure, lattice.pos[n * 3 + 2]), strength = 0.15f });
+                }
+                hook.node = -1;
             }
             else if (activeTool == ToolKind.Suction)
             {
@@ -432,6 +502,7 @@ namespace BovieSim
 
             // ---- bleeding droplets, steam, smoke and arcs from the last readout
             for (int n = 0; n < r.bleedCount; n++) { var bp = r.bleedPoints[n]; particles.Bleed(new Vector3(bp.x, bp.y, bp.z), bp.w, frameDt); }
+            for (int n = 0; n < r.spatterCount; n++) { var sp = r.spatterPoints[n]; particles.Spatter(new Vector3(sp.x, sp.y, sp.z), sp.w); }
             if (mode != null && r.hasHit && r.contactVoxels > 0 && tool.visible)
             {
                 var tip = tool.tip;
@@ -497,10 +568,13 @@ namespace BovieSim
 
         void StepMechanics(ModeSpec mode, SimReadout r, float frameDt)
         {
-            byte[] sev; float[] om;
-            if (physics.TakeProbe(out sev, out om)) lattice.ApplyProbe(sev, om);
+            byte[] flags; float[] om, dry;
+            if (physics.TakeProbe(out flags, out om, out dry)) lattice.ApplyProbe(flags, om, dry);
             if (mode != null && !mode.isCut && r.muscleHeatVoxels > 20 && tool.visible) lattice.Stimulate(tool.tip, Mathf.Min(2, 0.5f + r.iRms * 2), physics.simTime);
             lattice.Step(frameDt, physics.simTime);
+            // links torn by traction carve the tissue they ran through; yielded links show as strands
+            physics.pendingTears.AddRange(lattice.TakeTears());
+            strands.Update(lattice);
             // rebuild only the bricks around nodes that moved visibly since they were last extracted
             latticeMoved = false;
             for (int n = 0; n < lattice.count; n++)
@@ -568,6 +642,29 @@ namespace BovieSim
                     HandPose.Apply(forcepsB.transform, forceps.tipB + off, forceps.armBy, forceps.armBz);
                 }
             }
+            else if (activeTool == ToolKind.Hemostat)
+            {
+                hemoA.SetActive(hemostat.visible); hemoB.SetActive(hemostat.visible);
+                if (hemostat.visible)
+                {
+                    var off = DisplayOffset(hemostat.Mid);
+                    HandPose.Apply(hemoA.transform, hemostat.tipA + off, hemostat.armAy, hemostat.armAz);
+                    HandPose.Apply(hemoB.transform, hemostat.tipB + off, hemostat.armBy, hemostat.armBz);
+                }
+            }
+            else if (activeTool == ToolKind.Gauze)
+            {
+                gauzeGo.SetActive(gauze.visible);
+                if (gauze.visible)
+                {
+                    HandPose.Apply(gauzeGo.transform, gauze.centre + DisplayOffset(gauze.centre), gauze.axis, gauze.frameZ);
+                    // the pad reddens as it fills
+                    float sat = gauze.Saturation;
+                    gauzeRenderer.GetPropertyBlock(gauzeMpb);
+                    gauzeMpb.SetColor("_BaseColor", new Color(0.96f - 0.6f * sat, 0.96f - 0.9f * sat, 0.94f - 0.9f * sat));
+                    gauzeRenderer.SetPropertyBlock(gauzeMpb);
+                }
+            }
             else if (activeTool == ToolKind.Suction)
             {
                 frazier.SetActive(suction.visible);
@@ -626,6 +723,7 @@ namespace BovieSim
             if (Input.GetKeyDown(KeyCode.O)) pencilElectrode = ElectrodeType.Ball;
             if (Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.Q)) activeTool = HandPose.Order[(Array.IndexOf(HandPose.Order, activeTool) + 1) % HandPose.Order.Length];
             if (Input.GetKeyDown(KeyCode.T)) forceps.toothed = !forceps.toothed;
+            if (Input.GetKeyDown(KeyCode.U)) gauze.Fresh();
             if (Input.GetKeyDown(KeyCode.R)) tool.roll += Mathf.PI / 4;
             if (Input.GetKeyDown(KeyCode.C)) { if (shift) ui.largeSection = !ui.largeSection; else physics.sliceMode = (physics.sliceMode + 1) % 6; }
             if (Input.GetKeyDown(KeyCode.K)) { if (shift) peelSweep = !peelSweep; else SetPeelMode((peelMode + 1) % 3); }
@@ -870,7 +968,10 @@ namespace BovieSim
         {
             var d = hud;
             d.scenarioName = scenario.name;
-            d.toolText = HandPose.Label(activeTool) + (activeTool == ToolKind.Pencil ? " · " + pencilElectrode.ToString().ToLowerInvariant() : activeTool == ToolKind.Forceps ? (forceps.closed ? " · closed" : " · open") + (forceps.toothed ? ", toothed" : ", smooth") + (liftMm > 0 ? ", lifted " + liftMm.ToString("0") + " mm" : "") : "");
+            d.toolText = HandPose.Label(activeTool) + (activeTool == ToolKind.Pencil ? " · " + pencilElectrode.ToString().ToLowerInvariant()
+                : activeTool == ToolKind.Forceps ? (forceps.closed ? " · closed" : " · open") + (forceps.toothed ? ", toothed" : ", smooth") + (liftMm > 0 ? ", lifted " + liftMm.ToString("0") + " mm" : "")
+                : activeTool == ToolKind.Hemostat ? (hemostat.spreading ? " · spreading " + hemostat.Span.ToString("0.0") + " mm" : hemostat.closed ? (hemostat.Travel() > 0.08f ? " · pushing" : " · closed") : " · open")
+                : activeTool == ToolKind.Gauze ? " · " + (gauze.soakedUl / 1000).ToString("0.0") + " / " + (gauze.capacityUl / 1000).ToString("0") + " ml" + (gauze.Saturated ? " SATURATED" : "") + " (" + gauze.discarded + " used)" : "");
             d.activation = gen.activation; d.activeWatts = gen.ActiveWatts; d.remFault = gen.remFault;
             d.zOhm = r.zOhm; d.powerW = r.powerW; d.vRms = r.vRms; d.contact = r.contactVoxels;
             d.underTip = r.hasHit ? TissueTable.Name((int)Cell.Type(r.hitCell)) + " · " + TissueTable.StateNames[(int)Cell.State(r.hitCell)] : "—";
@@ -878,6 +979,9 @@ namespace BovieSim
             maxCharMm3 = Mathf.Max(maxCharMm3, r.carbonVoxels * volume.h * volume.h * volume.h); d.charMm3 = maxCharMm3;
             d.bloodLost = r.bloodLostMl; d.pooled = r.poolMl; d.exposedArt = r.exposedArterial; d.exposedVen = r.exposedVenous;
             d.sealedVx = r.sealedVoxels; d.charPlug = r.charPlugVoxels; d.rebleeds = r.rebleeds;
+            d.oozeMl = r.oozeMl; d.oozeVoxels = r.oozeVoxels; d.clotMl = r.clotMl; d.gauzeMl = physics.totalGauzeSoakUl / 1000;
+            d.strands = strands != null ? strands.count : 0; d.tornLinks = lattice != null ? lattice.tornLinks : 0; d.tornVoxels = physics.totalTornVoxels; d.dissectedVoxels = physics.totalDissectedVoxels;
+            visceraVapMm3 = r.visceraVapVoxels * volume.h * volume.h * volume.h;
             if (physics.rimSamples > 0) maxRimMm = Mathf.Max(maxRimMm, physics.rimMm);
             d.rimMm = maxRimMm;
             d.capsuleText = lattice != null && lattice.capsuleTotal > 0 ? lattice.capsuleAlive + " of " + lattice.capsuleTotal + " links attached" + (lattice.lipomaFree ? " · FREE, lifted " + clusterRiseMm.ToString("0.0") + " mm" : "") : "";
@@ -903,6 +1007,9 @@ namespace BovieSim
                 case "charPlugVoxels": return r.charPlugVoxels;
                 case "lesionDelivered": return lesionDelivered ? 1 : 0;
                 case "lesionBreaches": return lesionBreachReported ? 1 : 0;
+                case "visceraVaporisedMm3": return visceraVapMm3;
+                case "oozeMl": return r.oozeMl;
+                case "tornVoxels": return physics.totalTornVoxels;
                 default: return float.NaN;
             }
         }
@@ -930,6 +1037,7 @@ namespace BovieSim
                     case Tissue.DeepFascia: name = "Deep fascia"; break;
                     case Tissue.Muscle: name = "Muscle"; break;
                     case Tissue.Lipoma: name = "Lipoma"; break;
+                    case Tissue.Viscera: name = "Viscus"; break;
                     default: name = null; break; // air, septa, vessels, nerve, capsule: too thin or local to label
                 }
                 if (name == null || name == last) continue;
@@ -959,6 +1067,7 @@ namespace BovieSim
             if (physics != null) physics.Dispose();
             if (surface != null) surface.Dispose();
             if (particles != null) particles.Dispose();
+            if (strands != null) strands.Dispose();
             if (gpu != null) gpu.Dispose();
             if (ui != null) ui.Dispose();
             if (replay != null) replay.Dispose();

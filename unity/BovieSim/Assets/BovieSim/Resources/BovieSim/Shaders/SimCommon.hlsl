@@ -15,15 +15,22 @@ float4 _HInfo;  // x = voxel edge (mm), y = voxel edge (m)
 
 static const uint T_AIR = 0u, T_EPI = 1u, T_DERMIS = 2u, T_FAT = 3u, T_SEPTUM = 4u, T_SFASCIA = 5u, T_DFASCIA = 6u;
 static const uint T_MUSCLE = 7u, T_ARTERY = 8u, T_VEIN = 9u, T_NERVE = 10u, T_LIPOMA = 11u, T_CAPSULE = 12u, T_BLOOD = 13u;
-static const uint S_NORMAL = 0u, S_COAG = 1u, S_DESIC = 2u, S_CARBON = 3u, S_VAPOR = 4u;
-static const uint FLAG_COAPTED = 1u << 26, FLAG_SEALED = 1u << 27, FLAG_CHARPLUG = 1u << 28, FLAG_BLOODCOVER = 1u << 29, FLAG_REBLED = 1u << 30;
+static const uint T_AREOLAR = 14u, T_VISCERA = 15u, T_SEROSA = 16u;
+// cell state (3 bits): tissue Normal / Coagulated / Desiccated / Carbonized; air Normal = the original air above the
+// skin, S_VAPOR = cut, vaporised or torn (a raw wound surface), S_DISSECT = a bluntly separated plane
+static const uint S_NORMAL = 0u, S_COAG = 1u, S_DESIC = 2u, S_CARBON = 3u, S_VAPOR = 4u, S_DISSECT = 5u;
+static const uint FLAG_COAPTED = 1u << 26, FLAG_SEALED = 1u << 27, FLAG_CHARPLUG = 1u << 28, FLAG_BLOODCOVER = 1u << 29, FLAG_REBLED = 1u << 30, FLAG_CLOTCOVER = 1u << 31;
+static const uint CLOCK_MAX = 31u;
 
 static const int3 NB6[6] = { int3(1, 0, 0), int3(-1, 0, 0), int3(0, 1, 0), int3(0, -1, 0), int3(0, 0, 1), int3(0, 0, -1) };
 
+// cell word: bits 0-7 type, 8-10 state, 11-15 exposure clock, 16-23 aux (vessel radius / 0.05 mm), 24-31 flags
 uint CellType(uint c) { return c & 0xffu; }
-uint CellState(uint c) { return (c >> 8) & 0xffu; }
+uint CellState(uint c) { return (c >> 8) & 0x7u; }
+uint CellClock(uint c) { return (c >> 11) & 0x1fu; }
 uint CellAux(uint c) { return (c >> 16) & 0xffu; }
-uint PackCellState(uint c, uint s) { return (c & 0xffff00ffu) | ((s & 0xffu) << 8); }
+uint PackCellState(uint c, uint s) { return (c & 0xfffff8ffu) | ((s & 0x7u) << 8); }
+uint PackCellClock(uint c, uint k) { return (c & 0xffff07ffu) | ((min(k, CLOCK_MAX)) << 11); }
 
 bool InVolume(int i, int j, int k) { return i >= 0 && j >= 0 && k >= 0 && i < NX && j < NY && k < NZ; }
 uint Idx3(int i, int j, int k) { return (uint)i + (uint)NX * ((uint)j + (uint)NY * (uint)k); }

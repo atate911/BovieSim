@@ -28,7 +28,10 @@ namespace BovieSim
         int lastCarbon; int coagAccum; float lastCoagReport = -1e9f; string lastSettings = ""; string lastTool = "";
         int lastExposed, lastSealed, lastCharPlug, lastRebleeds; bool poolWarned, obscuredWarned, lastSuction, lastBuzz; float lastMuscle = -1e9f;
         /// <summary>set by the app each frame</summary>
-        public bool suctionOn, buzzing;
+        public bool suctionOn, buzzing, gauzeDab, gauzeWipe, gauzeSaturated;
+        float lastViscera = -1e9f, lastBoil = -1e9f, lastSuctionClot = -1e9f, lastTorn = -1e9f, lastDissect = -1e9f, lastWipe = -1e9f, lastSpasm = -1e9f;
+        bool clotWarned, oozeReported, lastGauzeDab, lastGauzeSat; int tornAccum, dissectAccum;
+        float lastExposedNonzero; int lastSealedAtBleed, lastPlugAtBleed;
 
         public EventBus(string teachingJson)
         {
@@ -72,6 +75,8 @@ namespace BovieSim
                     else if (tt == Tissue.Muscle) Emit(t, "tissue.muscleContact", name);
                     else if (tt == Tissue.Artery || tt == Tissue.Vein) Emit(t, "tissue.vesselContact", name, Severity.Warn);
                     else if (tt == Tissue.Nerve) Emit(t, "tissue.nerveContact", name, Severity.Bad);
+                    else if (tt == Tissue.Areolar) Emit(t, "tissue.areolarContact", name);
+                    else if (tt == Tissue.Viscera || tt == Tissue.Serosa) Emit(t, "tissue.visceraContact", name, Severity.Warn);
                 }
             }
             else if (!active) lastContactType = -1;
@@ -111,6 +116,29 @@ namespace BovieSim
             }
             lastBuzz = active && buzzing;
             if (active && mode != null && !mode.isCut && r.muscleHeatVoxels > 20 && t - lastMuscle > 1.5f) { Emit(t, "muscle.stimulated", r.muscleHeatVoxels + " muscle voxels in the current path", Severity.Warn); lastMuscle = t; }
+            if (active && r.visceraHeatVoxels > 40 && t - lastViscera > 2.0f) { Emit(t, "viscera.heated", r.visceraHeatVoxels + " viscera voxels above 45 °C", Severity.Bad); lastViscera = t; }
+            // blood under the electrode boils and coagulates; clot resists suction
+            if (active && r.boilColumns > 0 && t - lastBoil > 2.0f) { Emit(t, "blood.boiling", r.boilColumns + " columns of blood boiling under the electrode", Severity.Warn); lastBoil = t; }
+            if (r.clotMl > 0.3f && !clotWarned) { Emit(t, "blood.clotted", r.clotMl.ToString("0.0") + " ml of clot in the field"); clotWarned = true; }
+            if (r.clotMl < 0.1f) clotWarned = false;
+            if (suctionOn && r.clotMl > 0.2f && r.poolAtTipMm > 0.2f && t - lastSuctionClot > 4.0f) { Emit(t, "suction.clot", "clot under the suction tip", Severity.Warn); lastSuctionClot = t; }
+            // raw surfaces ooze, tissue tears, planes open
+            if (r.oozeVoxels > 10 && !oozeReported) { Emit(t, "tissue.oozing", r.oozeVoxels + " raw-surface voxels oozing"); oozeReported = true; }
+            if (r.oozeVoxels == 0) oozeReported = false;
+            tornAccum += r.tornVoxels;
+            if (tornAccum > 0 && t - lastTorn > 1.0f) { Emit(t, "tissue.torn", tornAccum + " voxels torn", Severity.Warn); tornAccum = 0; lastTorn = t; }
+            dissectAccum += r.dissectedVoxels;
+            if (dissectAccum > 150 && t - lastDissect > 2.0f) { Emit(t, "plane.dissected", dissectAccum + " voxels separated bluntly"); dissectAccum = 0; lastDissect = t; }
+            // gauze: dab vs wipe, saturation
+            if (gauzeDab && !lastGauzeDab) Emit(t, "gauze.dab", "pressure on the field");
+            lastGauzeDab = gauzeDab;
+            if (gauzeWipe && t - lastWipe > 3.0f) { Emit(t, "gauze.wipe", "wiping the raw surface", Severity.Warn); lastWipe = t; }
+            if (gauzeSaturated && !lastGauzeSat) Emit(t, "gauze.saturated", "gauze full", Severity.Warn);
+            lastGauzeSat = gauzeSaturated;
+            // a small vessel that was bleeding has stopped without being sealed: spasm / thrombosis
+            if (exposed == 0 && lastExposedNonzero > 0 && r.sealedVoxels == lastSealedAtBleed && r.charPlugVoxels == lastPlugAtBleed && !suctionOn && t - lastSpasm > 5.0f)
+            { Emit(t, "vessel.spasm", "bleeding stopped on its own"); lastSpasm = t; }
+            if (exposed > 0) { lastExposedNonzero = t; lastSealedAtBleed = r.sealedVoxels; lastPlugAtBleed = r.charPlugVoxels; } else lastExposedNonzero = 0;
 
             string settings = gen.SettingsKey;
             if (lastSettings.Length > 0 && settings != lastSettings) Emit(t, "generator.settingChanged", gen.cutMode + " " + gen.cutWatts + " W / " + gen.coagMode + " " + gen.coagWatts + " W");

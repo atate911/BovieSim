@@ -4,6 +4,29 @@ All notable changes. Versions follow `MAJOR.MINOR.PATCH`; each release is a git 
 (see [docs/upgrading.md](docs/upgrading.md)). "Setup" means *Bovie Sim > Set Up Project* must be re-run
 after updating (the editor offers it automatically).
 
+## 0.7.0: Tissue realism (mechanics, blunt dissection, tearing, bleeding, blood) · Setup required
+
+- **Every tissue behaves like itself.** Areolar tissue, viscera and serosa join the table (17 types); each
+  tissue carries compliance, a collagen J-curve knee, yield and tear strains, cohesion, coagulation shrink and
+  stiffening and a capillary ooze rate. Coagulated collagen firms and contracts, rendered fat softens,
+  desiccated and charred tissue turns brittle, muscle is tougher along its fibres, vessel ends recoil.
+- **Blunt dissection and tearing.** A Kelly hemostat (Tab) grasps, buzzes, pushes along the loosest planes
+  and, with Space, spreads inside the tissue: areolar tissue and fat lobules part, areolar strands draw out,
+  thin and snap, vessels and nerves bridge the plane until torn or cut. Links torn by traction carve the
+  tissue they ran through; torn vessels bleed.
+- **Bleeding that reads like bleeding.** Vessels bleed only from an open lumen; arterioles spasm and venules
+  clot within seconds while arteries keep going; every raw perfused surface oozes from its capillaries and
+  settles over about a minute unless wiped; char plugs can rebleed. Blood pools, runs downhill, soaks into
+  raw tissue, clots with time and heat, boils and spatters under the electrode and cooks into insulating
+  coagulum. Suction lifts liquid only and draws the pool toward the tip; a 4x4 gauze (Tab) dabs, tamponades
+  and wipes (U swaps a soaked pad). New events and teaching text for all of this.
+- New scenario `viscera` (serosal bleeder on an exposed viscus). Areolar planes in every scenario.
+- Fixed: the mechanics lattice carried its XPBD multipliers across substeps and could tear a resting lesion
+  bed apart; damping and anchoring are now frame-rate independent.
+- Unity: full port (kernels, instruments, strands, spatter, 20 material buckets with a viscera class, HUD
+  rows); compiled and unit-tested blind, not yet opened in an editor. Setup version 9 bakes the new buckets
+  and the strand material.
+
 ## 0.6.0: Surgical field (drapes, lights, colour, ray tracing) · Setup required
 
 - **Fenestrated drape with folds.** The flat frame is replaced by a draped sheet: an incise-film margin on the

@@ -13,7 +13,10 @@ namespace BovieSim.EditorTools
     public static class TissueTextures
     {
         public const float TileMm = 20f;
-        public static readonly string[] ClassNames = { "Skin", "Dermis", "Fat", "Lipoma", "Fibrous", "Muscle", "Artery", "Vein" };
+        public static readonly string[] ClassNames = { "Skin", "Dermis", "Fat", "Lipoma", "Fibrous", "Muscle", "Artery", "Vein", "Viscera" };
+        /// <summary>bucket of the desiccated and carbonized states (after the normal and coagulated class blocks)</summary>
+        public static int DesiccatedBucket { get { return ClassNames.Length * 2; } }
+        public static int CarbonizedBucket { get { return ClassNames.Length * 2 + 1; } }
 
         public sealed class Set
         {
@@ -26,13 +29,16 @@ namespace BovieSim.EditorTools
         static float F(double u, double v, int period, int oct, int seed) { return (float)Noise.Fbm2P(u, v, period, oct, seed); }
         static float Smooth(float a, float b, float x) { float t = Mathf.Clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); }
 
-        /// <summary>bucket 0..17: 0-7 normal classes, 8-15 coagulated, 16 desiccated, 17 carbonized</summary>
+        /// <summary>bucket 0..19: 0-8 normal classes, 9-17 coagulated, 18 desiccated, 19 carbonized</summary>
         public static Set Bake(int bucket, int size, float skinTone)
         {
             int n = size * size;
             var col = new Color[n]; var height = new float[n]; var smooth = new float[n]; var ao = new float[n];
-            int cls = bucket < 16 ? bucket % 8 : -1;
-            bool coag = bucket >= 8 && bucket < 16;
+            int nc = ClassNames.Length;
+            int cls = bucket < 2 * nc ? bucket % nc : -1;
+            bool coag = bucket >= nc && bucket < 2 * nc;
+            // the state textures are keyed 16 (desiccated) / 17 (carbonized) inside BakeClass
+            int classKey = bucket < 2 * nc ? cls : bucket == DesiccatedBucket ? 16 : 17;
             var set = new Set { size = size };
             for (int y = 0; y < size; y++)
                 for (int x = 0; x < size; x++)
@@ -40,7 +46,7 @@ namespace BovieSim.EditorTools
                     int i = x + y * size;
                     double u = (double)x / size, v = (double)y / size;
                     Color c; float h, s;
-                    BakeClass(bucket < 16 ? cls : bucket, u, v, skinTone, out c, out h, out s);
+                    BakeClass(classKey, u, v, skinTone, out c, out h, out s);
                     if (coag) Coagulate(cls, u, v, ref c, ref h, ref s);
                     col[i] = c; height[i] = h; smooth[i] = s;
                 }
@@ -57,12 +63,12 @@ namespace BovieSim.EditorTools
                     float cav = sum / 16f - hc;
                     ao[x + y * size] = Mathf.Clamp01(1f - cav * 6f);
                 }
-            float strength = bucket == 17 ? 3.5f : bucket == 16 ? 2.5f : 2.0f;
+            float strength = classKey == 17 ? 3.5f : classKey == 16 ? 2.5f : 2.0f;
             set.albedo = col;
             set.normal = HeightToNormal(height, size, strength);
             set.mask = new Color[n];
             for (int i = 0; i < n; i++) set.mask[i] = new Color(0, ao[i], 1, smooth[i]);
-            set.coat = bucket >= 16 ? 0 : coag ? 0.15f : cls == 0 ? 0.25f : 0.8f;
+            set.coat = bucket >= 2 * nc ? 0 : coag ? 0.15f : cls == 0 ? 0.25f : 0.8f;
             return set;
         }
 
@@ -161,6 +167,16 @@ namespace BovieSim.EditorTools
                     h = f * 0.2f; s = 0.84f;
                     break;
                 }
+                case 8: // viscera (bowel wall / solid organ): dusky red, smooth, wet, fine vascular arcades under a glistening serosa
+                {
+                    float f = F(u, v, 8, 4, 85);
+                    float arc = Smooth(0.66f, 0.78f, F(u * 2, v, 10, 3, 87));
+                    c = Color.Lerp(TissuePalette.Viscera * 0.9f, TissuePalette.Viscera * 1.08f, f);
+                    c = Color.Lerp(c, TissuePalette.Artery, arc * 0.45f);
+                    c = Color.Lerp(c, TissuePalette.Serosa, Smooth(0.7f, 0.9f, F(u, v, 5, 2, 89)) * 0.2f);
+                    h = f * 0.3f + arc * 0.15f; s = 0.88f;
+                    break;
+                }
                 case 16: // desiccated: dry tan-brown, cracked, matt
                 {
                     var cr = Noise.Voronoi2P(u, v, 10, 91);
@@ -198,6 +214,7 @@ namespace BovieSim.EditorTools
                 case 4: target = TissuePalette.CoagFibrous; break;
                 case 5: target = TissuePalette.CoagMuscle; break;   // "cooked" grey-brown muscle
                 case 6: target = TissuePalette.CoagBlood; break;   // coagulated blood: brown
+                case 8: target = TissuePalette.CoagViscera; break; // cooked viscus: grey-brown
                 default: target = TissuePalette.CoagVein; break;
             }
             float mott = F(u, v, 7, 4, 111);

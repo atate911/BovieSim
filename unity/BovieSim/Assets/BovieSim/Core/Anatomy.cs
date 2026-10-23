@@ -10,12 +10,18 @@ namespace BovieSim
     {
         public readonly List<VesselInfo> vessels = new List<VesselInfo>();
         public float fatMmActual, deepFasciaDepthMm;
+        /// <summary>depth (mm) of the serosal surface when the scenario has an organ (0 otherwise)</summary>
+        public float organDepthMm;
         public bool hasLesion;
         public float lesionX, lesionY, lesionZ;
         public double fillMs;
     }
 
-    /// <summary>Port of src/core/scenario/anatomy.ts. Same seed gives the same bed as the web client.</summary>
+    /// <summary>
+    /// Port of src/core/scenario/anatomy.ts. Same seed gives the same bed as the web client.
+    /// Planes: a loose areolar sheet on either face of Scarpa's fascia and above the deep fascia, and an areolar
+    /// sheath around a lipoma's capsule; an optional organ (muscle, serosa, viscera) below the deep fascia.
+    /// </summary>
     public static class Anatomy
     {
         public delegate float Sdf(float x, float y, float depth);
@@ -31,8 +37,10 @@ namespace BovieSim
             int seed = seedOverride != int.MinValue ? seedOverride : sc.vessels.seed;
             var rng = new Mulberry32(unchecked((uint)(seed * 7919 + 13)));
             var L = sc.layers;
+            float areolar = L.areolarMm >= 0 ? L.areolarMm : 0.5f;
             double fatScale = 1 + L.variation * (rng.Next() * 2 - 1);
             float fatMm = (float)(L.fatMm * fatScale);
+            var organ = sc.organ != null && sc.organ.IsPresent ? sc.organ : null;
             var cell = vol.cell; var occupancy = vol.occupancy; var water = vol.water;
             float sx = nx * h, sy = ny * h;
             int surfK = vol.SurfaceK;
@@ -71,8 +79,10 @@ namespace BovieSim
             // ---- layer fill -----------------------------------------------------------------------
             float wEpi = P[(int)Tissue.Epidermis].water, wDerm = P[(int)Tissue.Dermis].water, wFat = P[(int)Tissue.Fat].water;
             float wSept = P[(int)Tissue.Septum].water, wFasc = P[(int)Tissue.DeepFascia].water, wMus = P[(int)Tissue.Muscle].water;
+            float wAre = P[(int)Tissue.Areolar].water, wSer = P[(int)Tissue.Serosa].water, wVis = P[(int)Tissue.Viscera].water;
             uint cEpi = Cell.Pack(Tissue.Epidermis), cMus = Cell.Pack(Tissue.Muscle, 0, 0, Cell.FlagFibreX);
             uint cScarpa = Cell.Pack(Tissue.SuperficialFascia), cDeep = Cell.Pack(Tissue.DeepFascia);
+            uint cAre = Cell.Pack(Tissue.Areolar), cSer = Cell.Pack(Tissue.Serosa), cVis = Cell.Pack(Tissue.Viscera);
             uint cDermDeep = Cell.Pack(Tissue.Dermis, 0, 0, Cell.FlagDermalPlexus), cDerm = Cell.Pack(Tissue.Dermis);
             System.Threading.Tasks.Parallel.For(0, ny, j =>
             {
@@ -81,6 +91,8 @@ namespace BovieSim
                     int c = i + nx * j;
                     float surf = colSurf[c];
                     float dermBot = colDermis[c], sTop = colScarpaTop[c], sBot = colScarpaBot[c], dTop = colDeepTop[c], dBot = colDeepBot[c];
+                    float musBot = organ != null ? dBot + organ.muscleMm : 1e9f;
+                    float serBot = organ != null ? musBot + organ.serosaMm : 1e9f;
                     bool sept = colSeptum[c];
                     uint cFat = Cell.Pack(Tissue.Fat, 0, colLobule[c]), cSept = Cell.Pack(Tissue.Septum, 0, colLobule[c]);
                     int topK = (int)Math.Floor(surf - 0.5f);
@@ -92,19 +104,26 @@ namespace BovieSim
                         if (occ <= 0) { cell[idx] = 0; water[idx] = 0; continue; }
                         float depth = (surf - (k + 0.5f)) * h;
                         uint cc; float w;
+                        // septal attachments tether the areolar planes, so a septum column stays fibrous through them
                         if (k >= topK || depth < L.epidermisMm) { cc = cEpi; w = wEpi; }
                         else if (depth < dermBot) { cc = depth > dermBot - 0.6f ? cDermDeep : cDerm; w = wDerm; }
-                        else if (depth < sTop) { if (sept) { cc = cSept; w = wSept; } else { cc = cFat; w = wFat; } }
+                        else if (depth < sTop - areolar) { if (sept) { cc = cSept; w = wSept; } else { cc = cFat; w = wFat; } }
+                        else if (depth < sTop) { if (sept) { cc = cSept; w = wSept; } else { cc = cAre; w = wAre; } }
                         else if (depth < sBot) { cc = cScarpa; w = wFasc; }
-                        else if (depth < dTop) { if (sept) { cc = cSept; w = wSept; } else { cc = cFat; w = wFat; } }
+                        else if (depth < sBot + areolar) { if (sept) { cc = cSept; w = wSept; } else { cc = cAre; w = wAre; } }
+                        else if (depth < dTop - areolar) { if (sept) { cc = cSept; w = wSept; } else { cc = cFat; w = wFat; } }
+                        else if (depth < dTop) { if (sept) { cc = cSept; w = wSept; } else { cc = cAre; w = wAre; } }
                         else if (depth < dBot) { cc = cDeep; w = wFasc; }
-                        else { cc = cMus; w = wMus; }
+                        else if (depth < musBot) { cc = cMus; w = wMus; }
+                        else if (depth < serBot) { cc = cSer; w = wSer; }
+                        else { cc = cVis; w = wVis; }
                         cell[idx] = cc; water[idx] = w;
                     }
                 }
             });
 
             report = new AnatomyReport { fatMmActual = fatMm, deepFasciaDepthMm = L.epidermisMm + L.dermisMm + fatMm };
+            if (organ != null) report.organDepthMm = report.deepFasciaDepthMm + L.deepFasciaMm + organ.muscleMm;
             var rep = report;
 
             // ---- painters ---------------------------------------------------------------------------
@@ -187,6 +206,30 @@ namespace BovieSim
                 float r = (float)(rMin + (rMax - rMin) * Math.Pow(rng.Next(), 1.6));
                 placeVessel(x, y, r, rng.Next() < sc.vessels.arterialFraction);
             }
+            // subserosal vessels run a millimetre under the organ surface; an optional bleeder lies in the serosa itself
+            if (organ != null)
+            {
+                int nSer = (int)Math.Round(0.4 * areaCm2);
+                for (int n = 0; n < nSer; n++)
+                {
+                    float x = (float)((0.1 + 0.8 * rng.Next()) * sx), y = (float)((0.1 + 0.8 * rng.Next()) * sy);
+                    int c = (int)Math.Floor(x / h) + nx * (int)Math.Floor(y / h);
+                    float r = (float)(0.25 + 0.45 * rng.Next());
+                    float d0 = colDeepBot[c] + organ.muscleMm + organ.serosaMm + 1.0f + r;
+                    double ang = rng.Next() * 6.28, len = 8 + rng.Next() * 10;
+                    paintSegment(x, y, d0, x + (float)(Math.Cos(ang) * len), y + (float)(Math.Sin(ang) * len), d0 + 0.3f, r, rng.Next() < 0.5 ? Tissue.Artery : Tissue.Vein, (int)Math.Round(r / 0.05));
+                }
+                if (organ.HasBleeder)
+                {
+                    var bl = organ.bleeder;
+                    float x = bl.xMm + sx / 2, y = bl.yMm + sy / 2;
+                    int c = Math.Min(nc - 1, Math.Max(0, (int)Math.Floor(x / h) + nx * (int)Math.Floor(y / h)));
+                    float d0 = colDeepBot[c] + organ.muscleMm + 0.1f;
+                    double ang = bl.angleDeg * Math.PI / 180; float len = bl.lengthMm / 2;
+                    paintSegment(x - (float)Math.Cos(ang) * len, y - (float)Math.Sin(ang) * len, d0, x + (float)Math.Cos(ang) * len, y + (float)Math.Sin(ang) * len, d0, bl.rMm, bl.arterial ? Tissue.Artery : Tissue.Vein, (int)Math.Round(bl.rMm / 0.05));
+                    rep.vessels.Add(new VesselInfo { x = bl.xMm, y = bl.yMm, r = bl.rMm, arterial = bl.arterial });
+                }
+            }
 
             // ---- nerves ----------------------------------------------------------------------------------
             foreach (var nv in sc.nerves)
@@ -212,11 +255,13 @@ namespace BovieSim
                 if (le.plane == "subfascial") topDepth = colDeepBot[cc0] + 0.5f;
                 if (le.plane == "intramuscular") topDepth = colDeepBot[cc0] + 3f;
                 float cdz = topDepth + cz, cap = le.capsuleMm;
+                float sheath = le.areolarMm >= 0 ? le.areolarMm : 0.4f;
                 uint cLip = Cell.Pack(Tissue.Lipoma), cCap = Cell.Pack(Tissue.LipomaCapsule);
                 float wLip = P[(int)Tissue.Lipoma].water, wCap = P[(int)Tissue.LipomaCapsule].water;
-                int iMin = Math.Max(0, (int)Math.Floor((cx - a - cap) / h)), iMax = Math.Min(nx - 1, (int)Math.Ceiling((cx + a + cap) / h));
-                int jMin = Math.Max(0, (int)Math.Floor((cy - b - cap) / h)), jMax = Math.Min(ny - 1, (int)Math.Ceiling((cy + b + cap) / h));
-                float shell = cap / Math.Min(a, Math.Min(b, cz));
+                int iMin = Math.Max(0, (int)Math.Floor((cx - a - cap - sheath) / h)), iMax = Math.Min(nx - 1, (int)Math.Ceiling((cx + a + cap + sheath) / h));
+                int jMin = Math.Max(0, (int)Math.Floor((cy - b - cap - sheath) / h)), jMax = Math.Min(ny - 1, (int)Math.Ceiling((cy + b + cap + sheath) / h));
+                float minAxis = Math.Min(a, Math.Min(b, cz));
+                float shell = cap / minAxis, shellA = sheath / minAxis;
                 for (int j = jMin; j <= jMax; j++)
                     for (int i = iMin; i <= iMax; i++)
                     {
@@ -226,13 +271,19 @@ namespace BovieSim
                         for (int k = 0; k < nz; k++)
                         {
                             float pz = (surf - (k + 0.5f)) * h;
-                            if (pz < topDepth - cap - h || pz > cdz + cz + cap + h) continue;
+                            if (pz < topDepth - cap - sheath - h || pz > cdz + cz + cap + sheath + h) continue;
                             float ex = (px - cx) / a, ey = (py - cy) / b, ez = (pz - cdz) / cz;
                             double rr = Math.Sqrt(ex * ex + ey * ey + ez * ez) * lobN;
                             int idx = i + nx * (j + ny * k);
                             if (occupancy[idx] <= 0) continue;
                             if (rr <= 1 - shell) { cell[idx] = cLip; water[idx] = wLip; }
                             else if (rr <= 1) { cell[idx] = cCap; water[idx] = wCap; }
+                            else if (rr <= 1 + shellA)
+                            {
+                                // the areolar plane around the capsule, except where the host is already fibrous or a vessel
+                                var t = Cell.Type(cell[idx]);
+                                if (t == Tissue.Fat || t == Tissue.Lipoma) { cell[idx] = cAre; water[idx] = wAre; }
+                            }
                         }
                     }
                 paintSegment(cx + a * 0.3f, cy, colDeepTop[cc0] - 0.2f, cx + a * 0.2f, cy, cdz + cz * 0.9f, 0.5f, Tissue.Artery, (int)Math.Round(0.5 / 0.05));
@@ -240,21 +291,32 @@ namespace BovieSim
             }
 
             // ---- pre-existing wound -------------------------------------------------------------------
+            // the floor can follow a layer (the exposed deep fascia, muscle or serosa) instead of a fixed depth
+            Func<PreCarve, float, float, float> floorDepth = (pc, x, y) =>
+            {
+                if (string.IsNullOrEmpty(pc.floor)) return pc.depthMm;
+                int i = Math.Min(nx - 1, Math.Max(0, (int)Math.Floor((x + sx / 2) / h))), j = Math.Min(ny - 1, Math.Max(0, (int)Math.Floor((y + sy / 2) / h)));
+                int c = i + nx * j;
+                float fromSurface = pc.floor == "deepFascia" ? colDeepTop[c] : pc.floor == "muscle" ? colDeepBot[c] : colDeepBot[c] + (organ != null ? organ.muscleMm : 0f);
+                // layer depths are below the actual (undulating) surface; the carve works in nominal-surface depth
+                return fromSurface + 0.15f - (colSurf[c] - surfK) * h;
+            };
             foreach (var pc in sc.preCarve)
             {
                 var p = pc;
                 CarveSdf(vol, (x, y, d) =>
                 {
                     float cx = p.centerMm[0], cy = p.centerMm[1];
+                    float dd = d - floorDepth(p, x, y);
                     if (p.kind == "pit")
                     {
                         float sl = p.slope >= 0 ? p.slope : 0.4f;
-                        return Math.Max((float)Math.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) - (p.lengthMm - d * sl), d - p.depthMm);
+                        return Math.Max((float)Math.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) - (p.lengthMm - d * sl), dd);
                     }
                     double ang = p.angleDeg * Math.PI / 180; float ca = (float)Math.Cos(ang), sa = (float)Math.Sin(ang);
                     float u = (x - cx) * ca + (y - cy) * sa, vv = -(x - cx) * sa + (y - cy) * ca;
                     float slope = p.slope >= 0 ? p.slope : 0.3f;
-                    return Math.Max(Math.Max(Math.Abs(u) - p.lengthMm / 2, Math.Abs(vv) - (p.widthMm + d * slope)), d - p.depthMm);
+                    return Math.Max(Math.Max(Math.Abs(u) - p.lengthMm / 2, Math.Abs(vv) - (p.widthMm + d * slope)), dd);
                 });
             }
 
@@ -263,7 +325,7 @@ namespace BovieSim
         }
 
         /// <summary>Carves a region given by a signed distance (mm, negative inside) in bed coordinates
-        /// (x, y from the bed centre; depth below the nominal surface).</summary>
+        /// (x, y from the bed centre; depth below the nominal surface). Removed voxels become cut air.</summary>
         public static void CarveSdf(Volume v, Sdf sdf)
         {
             int surfK = v.SurfaceK; float h = v.h;
@@ -277,8 +339,9 @@ namespace BovieSim
                         {
                             int idx = v.Index(i, j, k);
                             float keep = Math.Min(1f, Math.Max(0f, 0.5f + d / h));
-                            v.occupancy[idx] = Math.Min(v.occupancy[idx], keep);
-                            if (v.occupancy[idx] < 0.5f) v.cell[idx] = 0;
+                            float before = v.occupancy[idx];
+                            v.occupancy[idx] = Math.Min(before, keep);
+                            if (v.occupancy[idx] < 0.5f && before >= 0.5f) { v.cell[idx] = Cell.CutAir; v.water[idx] = 0; }
                         }
                     }
         }

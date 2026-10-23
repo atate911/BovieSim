@@ -75,6 +75,58 @@
     {
       "type": "lesion.breached",
       "text": "You have entered the lipoma. Fat spills, the plane is lost and fragments left behind recur."
+    },
+    {
+      "type": "tissue.areolarContact",
+      "text": "Loose areolar tissue: the wispy plane that spreads apart bluntly. Energy here is rarely needed; push and spread with the hemostat."
+    },
+    {
+      "type": "tissue.visceraContact",
+      "text": "Viscera: thin wall, very vascular, low impedance. Current here cooks deep fast and a hole does not show until later. Lowest power, briefest touch, or no energy at all."
+    },
+    {
+      "type": "vessel.spasm",
+      "text": "A small vessel has stopped on its own: arterioles spasm and venules clot within seconds. Do not disturb the clot; pressure, not energy."
+    },
+    {
+      "type": "blood.boiling",
+      "text": "The electrode is boiling the blood: spatter, steam and a skin of coagulum that hides the bleeder and insulates it from the current. Clear the pool first."
+    },
+    {
+      "type": "blood.clotted",
+      "text": "Clotted blood does not flow and suction will not lift it. Wipe it off with gauze, or grasp and lift it with forceps, then find the vessel underneath."
+    },
+    {
+      "type": "suction.clot",
+      "text": "The suction is over clot: it takes the liquid and leaves the coagulum. Use gauze to wipe the clot away."
+    },
+    {
+      "type": "tissue.oozing",
+      "text": "The raw surface is weeping from its capillaries. Most ooze stops on its own in about a minute; a few seconds of gauze pressure speeds it up. Coag only what keeps bleeding."
+    },
+    {
+      "type": "tissue.torn",
+      "text": "Tissue tore under traction. Fat and areolar strands give way easily; fascia and dermis hold. Torn vessels bleed and torn parenchyma oozes."
+    },
+    {
+      "type": "plane.dissected",
+      "text": "The plane is opening bluntly: lobules part along their septa and areolar tissue strings out. Vessels crossing the plane stay as bridges until you cut or tear them."
+    },
+    {
+      "type": "gauze.dab",
+      "text": "Dabbing lifts liquid blood and presses the capillaries closed. Hold still for a few seconds for the ooze to settle."
+    },
+    {
+      "type": "gauze.wipe",
+      "text": "Wiping drags the clot off and restarts the ooze, and a small vessel that had spasmed shut can bleed again. Dab, do not wipe."
+    },
+    {
+      "type": "gauze.saturated",
+      "text": "The gauze is saturated and no longer absorbs. Discard it for a fresh one (U)."
+    },
+    {
+      "type": "viscera.heated",
+      "text": "Heat is spreading into the viscus. Full-thickness injury here means a delayed perforation."
     }
   ]
 }

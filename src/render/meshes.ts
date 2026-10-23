@@ -436,3 +436,56 @@ export function buildSkinHook(): MeshBuilder {
   mb.count += tine.count;
   return mb;
 }
+
+/** One hemostat arm along +Y from the curved jaw tip (origin) to the box lock, with ring handle beyond. */
+export function buildHemostatArm(length = 120): MeshBuilder {
+  const mb = new MeshBuilder();
+  // curved jaw: short boxes stepping forward, 1.4 mm wide, 0.9 mm thick, 14 mm long; transverse serrations
+  for (let s = 0; s < 7; s++) {
+    const t = s / 7;
+    mb.box(vec3.fromValues(0, 1 + s * 2, 0.9 * t * t), vec3.fromValues(0.7, 1.0, 0.45));
+  }
+  for (let i = 0; i < 9; i++) mb.box(vec3.fromValues(0, 0.8 + i * 1.5, 0.5 + 0.9 * (i / 9) ** 2), vec3.fromValues(0.7, 0.2, 0.12));
+  // shank to the box lock
+  mb.box(vec3.fromValues(0, 14 + (length * 0.55 - 14) * 0.5, 0), vec3.fromValues(1.9, (length * 0.55 - 14) * 0.5, 0.8));
+  // beyond the lock: shank to the ring handle
+  mb.box(vec3.fromValues(0, length * 0.55 + (length * 0.45) * 0.5, -0.6), vec3.fromValues(1.6, length * 0.45 * 0.5, 0.7));
+  // ring handle (torus approximated by a ring of small boxes)
+  const ring = new MeshBuilder();
+  for (let s = 0; s < 14; s++) {
+    const a = (s / 14) * Math.PI * 2;
+    ring.box(vec3.fromValues(Math.cos(a) * 9, Math.sin(a) * 9, 0), vec3.fromValues(1.2, 1.2, 0.8));
+  }
+  const m = mat4.create(); mat4.fromTranslation(m, [0, length + 9, -0.6]); ring.transform(m);
+  (mb as unknown as { data: number[] }).data.push(...(ring as unknown as { data: number[] }).data);
+  mb.count += ring.count;
+  // ratchet teeth near the rings
+  for (let i = 0; i < 3; i++) mb.box(vec3.fromValues(1.8 + i * 0.9, length * 0.86, -0.6), vec3.fromValues(0.4, 1.2, 0.5));
+  return mb;
+}
+
+/** Folded 4x4 gauze: a soft, slightly domed pad of radius ~6 mm with a crumpled rim, centred at the origin, +Y up. */
+export function buildGauze(radius = 6): MeshBuilder {
+  const mb = new MeshBuilder();
+  const seg = 28, rings = 4;
+  const r = (k: number) => radius * (k / rings);
+  const y = (k: number) => 2.6 * Math.cos((k / rings) * Math.PI * 0.5) + 0.2;
+  for (let k = 0; k < rings; k++) {
+    for (let s = 0; s < seg; s++) {
+      const a0 = (s / seg) * Math.PI * 2, a1 = ((s + 1) / seg) * Math.PI * 2;
+      const wob0 = 1 + 0.08 * Math.sin(a0 * 5), wob1 = 1 + 0.08 * Math.sin(a1 * 5);
+      const p00 = vec3.fromValues(Math.cos(a0) * r(k) * wob0, y(k), Math.sin(a0) * r(k) * wob0);
+      const p10 = vec3.fromValues(Math.cos(a1) * r(k) * wob1, y(k), Math.sin(a1) * r(k) * wob1);
+      const p01 = vec3.fromValues(Math.cos(a0) * r(k + 1) * wob0, y(k + 1), Math.sin(a0) * r(k + 1) * wob0);
+      const p11 = vec3.fromValues(Math.cos(a1) * r(k + 1) * wob1, y(k + 1), Math.sin(a1) * r(k + 1) * wob1);
+      mb.tri(p00, p11, p10); mb.tri(p00, p01, p11);
+    }
+  }
+  // skirt down to the surface
+  for (let s = 0; s < seg; s++) {
+    const a0 = (s / seg) * Math.PI * 2, a1 = ((s + 1) / seg) * Math.PI * 2;
+    const q = (a: number, yy: number, rr: number) => vec3.fromValues(Math.cos(a) * rr, yy, Math.sin(a) * rr);
+    mb.quad(q(a0, y(rings), radius), q(a1, y(rings), radius), q(a1, -0.2, radius * 1.02), q(a0, -0.2, radius * 1.02));
+  }
+  return mb;
+}

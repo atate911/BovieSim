@@ -279,6 +279,74 @@ namespace BovieSim
         /// Frazier suction: 10 Fr (3.3 mm) cannula, straight for 70 mm then angled ~30 degrees into the handle,
         /// which carries the thumb vent (a raised ring: cover it to suck) and the tubing barb.
         /// </summary>
+        /// <summary>Kelly hemostat arm: curved serrated jaw, shank to the box lock, shank to the ring handle, ratchet teeth (port of buildHemostatArm).</summary>
+        public static Mesh HemostatArm(float length = 120f)
+        {
+            var f = new MeshFactory();
+            // curved jaw: short boxes stepping forward, 1.4 mm wide, 0.9 mm thick, 14 mm long; transverse serrations
+            for (int s = 0; s < 7; s++) { float t = s / 7f; f.Box(new Vector3(0, 1 + s * 2, 0.9f * t * t), new Vector3(0.7f, 1.0f, 0.45f)); }
+            for (int i = 0; i < 9; i++) { float t = i / 9f; f.Box(new Vector3(0, 0.8f + i * 1.5f, 0.5f + 0.9f * t * t), new Vector3(0.7f, 0.2f, 0.12f)); }
+            // shank to the box lock, then on to the ring handle
+            f.Box(new Vector3(0, 14 + (length * 0.55f - 14) * 0.5f, 0), new Vector3(1.9f, (length * 0.55f - 14) * 0.5f, 0.8f));
+            f.Box(new Vector3(0, length * 0.55f + length * 0.45f * 0.5f, -0.6f), new Vector3(1.6f, length * 0.45f * 0.5f, 0.7f));
+            // ring handle (torus approximated by a ring of small boxes)
+            for (int s = 0; s < 14; s++)
+            {
+                float a = s / 14f * Mathf.PI * 2;
+                f.Box(new Vector3(Mathf.Cos(a) * 9, length + 9 + Mathf.Sin(a) * 9, -0.6f), new Vector3(1.2f, 1.2f, 0.8f));
+            }
+            // ratchet teeth near the rings
+            for (int i = 0; i < 3; i++) f.Box(new Vector3(1.8f + i * 0.9f, length * 0.86f, -0.6f), new Vector3(0.4f, 1.2f, 0.5f));
+            return f.Build("HemostatArm");
+        }
+
+        /// <summary>Folded 4x4 gauze: a soft, slightly domed pad of radius ~6 mm with a crumpled rim, centred at the origin, +Y up (port of buildGauze).</summary>
+        public static Mesh Gauze(float radius = 6f)
+        {
+            var f = new MeshFactory();
+            const int seg = 28, rings = 4;
+            System.Func<int, float> R = k => radius * (k / (float)rings);
+            System.Func<int, float> Y = k => 2.6f * Mathf.Cos(k / (float)rings * Mathf.PI * 0.5f) + 0.2f;
+            for (int k = 0; k < rings; k++)
+                for (int s = 0; s < seg; s++)
+                {
+                    float a0 = s / (float)seg * Mathf.PI * 2, a1 = (s + 1) / (float)seg * Mathf.PI * 2;
+                    float w0 = 1 + 0.08f * Mathf.Sin(a0 * 5), w1 = 1 + 0.08f * Mathf.Sin(a1 * 5);
+                    var p00 = new Vector3(Mathf.Cos(a0) * R(k) * w0, Y(k), Mathf.Sin(a0) * R(k) * w0);
+                    var p10 = new Vector3(Mathf.Cos(a1) * R(k) * w1, Y(k), Mathf.Sin(a1) * R(k) * w1);
+                    var p01 = new Vector3(Mathf.Cos(a0) * R(k + 1) * w0, Y(k + 1), Mathf.Sin(a0) * R(k + 1) * w0);
+                    var p11 = new Vector3(Mathf.Cos(a1) * R(k + 1) * w1, Y(k + 1), Mathf.Sin(a1) * R(k + 1) * w1);
+                    var up = new Vector3(0, 1, 0);
+                    if (k > 0) f.TriFacing(p00, p11, p10, up);   // the innermost ring is a fan from the apex
+                    f.TriFacing(p00, p01, p11, up);
+                }
+            // skirt down to the surface
+            for (int s = 0; s < seg; s++)
+            {
+                float a0 = s / (float)seg * Mathf.PI * 2, a1 = (s + 1) / (float)seg * Mathf.PI * 2;
+                var outward = new Vector3(Mathf.Cos((a0 + a1) * 0.5f), 0, Mathf.Sin((a0 + a1) * 0.5f));
+                System.Func<float, float, float, Vector3> Q = (a, yy, rr) => new Vector3(Mathf.Cos(a) * rr, yy, Mathf.Sin(a) * rr);
+                f.Quad(Q(a0, Y(rings), radius), Q(a1, Y(rings), radius), Q(a1, -0.2f, radius * 1.02f), Q(a0, -0.2f, radius * 1.02f), outward);
+            }
+            return f.Build("Gauze");
+        }
+
+        /// <summary>Thin triangular-prism ribbon between two points (a tissue strand), radius r mm.</summary>
+        public static void Strand(MeshFactory f, Vector3 a, Vector3 b, float r)
+        {
+            var d = b - a; if (d.sqrMagnitude < 1e-8f) return;
+            var ax = d.normalized;
+            var up = Mathf.Abs(ax.y) < 0.9f ? Vector3.up : Vector3.right;
+            Vector3 su = Vector3.Cross(ax, up).normalized * r;
+            Vector3 sv = Vector3.Cross(ax, su).normalized * r;
+            Vector3[] ring = { su, (-su * 0.5f + sv * 0.866f), (-su * 0.5f - sv * 0.866f) };
+            for (int i = 0; i < 3; i++)
+            {
+                var o0 = ring[i]; var o1 = ring[(i + 1) % 3];
+                f.Quad(a + o0, b + o0, b + o1, a + o1, (o0 + o1).normalized);
+            }
+        }
+
         public static Mesh Frazier()
         {
             var f = new MeshFactory();

@@ -4,8 +4,9 @@ import { Tissue, TissueState } from './tissueProperties';
  * Voxel volume. Axes: i -> world X (mm), j -> world Z (mm, toward viewer), k -> world Y (up).
  * World origin is the centre of the nominal skin surface; tissue lies at Y <= 0.
  *
- * `cell` packs: bits 0-7 tissue type, 8-15 state, 16-23 aux (vessel radius in 0.05 mm units,
- * or fat lobule id), 24-31 flags.
+ * `cell` packs: bits 0-7 tissue type, 8-10 state, 11-15 exposure clock (0..31: how long a raw
+ * surface or open vessel end has been exposed, drives capillary ooze decay and small-vessel spasm),
+ * 16-23 aux (vessel radius in 0.05 mm units, or fat lobule id), 24-31 flags.
  */
 export interface VolumeDims {
   nx: number; ny: number; nz: number;
@@ -16,14 +17,31 @@ export interface VolumeDims {
 }
 
 export const FLAG_DERMAL_PLEXUS = 1 << 24;
-export const FLAG_FIBRE_X = 1 << 25; // fibre direction hint for shading
+export const FLAG_FIBRE_X = 1 << 25; // fibre direction hint for shading and anisotropic mechanics
+export const FLAG_COAPTED = 1 << 26;
+export const FLAG_SEALED = 1 << 27;
+export const FLAG_CHARPLUG = 1 << 28;
+export const FLAG_BLOODCOVER = 1 << 29;
+export const FLAG_REBLED = 1 << 30;
+/** the blood covering this surface voxel has clotted into coagulum (conducts poorly, does not flow) */
+export const FLAG_CLOTCOVER = 1 << 31;
+
+export const STATE_MASK = 0x700, CLOCK_MASK = 0xf800;
+export const CLOCK_MAX = 31;
 
 export function packCell(type: Tissue, state: TissueState = TissueState.Normal, aux = 0, flags = 0): number {
-  return ((type & 0xff) | ((state & 0xff) << 8) | ((aux & 0xff) << 16) | flags) >>> 0;
+  return ((type & 0xff) | ((state & 0x7) << 8) | ((aux & 0xff) << 16) | flags) >>> 0;
 }
 export function cellType(c: number): Tissue { return (c & 0xff) as Tissue; }
-export function cellState(c: number): TissueState { return ((c >>> 8) & 0xff) as TissueState; }
+export function cellState(c: number): TissueState { return ((c >>> 8) & 0x7) as TissueState; }
+export function cellClock(c: number): number { return (c >>> 11) & 0x1f; }
 export function cellAux(c: number): number { return (c >>> 16) & 0xff; }
+export function withState(c: number, s: TissueState): number { return ((c & ~STATE_MASK) | ((s & 0x7) << 8)) >>> 0; }
+export function withClock(c: number, k: number): number { return ((c & ~CLOCK_MASK) | ((Math.min(Math.max(k, 0), 31) & 0x1f) << 11)) >>> 0; }
+/** air voxel made by cutting, vaporising or tearing: a raw wound surface */
+export const CUT_AIR = packCell(Tissue.Air, TissueState.Vaporized);
+/** air voxel made by blunt dissection: a separated plane (intact vessels crossing it do not bleed) */
+export const DISSECTED_AIR = packCell(Tissue.Air, TissueState.Dissected);
 
 export interface VolumeBuffers {
   cell: GPUBuffer;
@@ -133,9 +151,11 @@ struct VolumeInfo {
 };
 fn vidx(info: VolumeInfo, i: u32, j: u32, k: u32) -> u32 { return i + info.nx * (j + info.ny * k); }
 fn cellType(c: u32) -> u32 { return c & 0xffu; }
-fn cellState(c: u32) -> u32 { return (c >> 8u) & 0xffu; }
+fn cellState(c: u32) -> u32 { return (c >> 8u) & 0x7u; }
+fn cellClock(c: u32) -> u32 { return (c >> 11u) & 0x1fu; }
 fn cellAux(c: u32) -> u32 { return (c >> 16u) & 0xffu; }
-fn packCellState(c: u32, s: u32) -> u32 { return (c & 0xffff00ffu) | ((s & 0xffu) << 8u); }
+fn packCellState(c: u32, s: u32) -> u32 { return (c & 0xfffff8ffu) | ((s & 0x7u) << 8u); }
+fn packCellClock(c: u32, k: u32) -> u32 { return (c & 0xffff07ffu) | ((min(k, 31u) & 0x1fu) << 11u); }
 fn voxelToWorld(info: VolumeInfo, p: vec3f) -> vec3f {
   // p is fractional voxel coords (i, j, k) at voxel centre offsets; returns mm
   return vec3f((p.x + 0.5 - f32(info.nx) * 0.5) * info.hMm,

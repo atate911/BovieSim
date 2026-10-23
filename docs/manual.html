@@ -314,7 +314,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
       <h3>Choosing a scenario and quality</h3>
       <ul>
         <li><kbd>F6</kbd> moves to the next scenario; <kbd>F5</kbd> restarts the current one.</li>
-        <li>To start in a particular scenario or change detail, stop Play, select the <code>Bovie Sim</code> object in the Hierarchy and set <i>Scenario Id</i> (<code>freeplay</code>, <code>hemostasis</code> or <code>lipoma</code>) or <i>Voxel Override</i> (0 = full 0.25 mm detail; 0.4–0.5 runs faster).</li>
+        <li>To start in a particular scenario or change detail, stop Play, select the <code>Bovie Sim</code> object in the Hierarchy and set <i>Scenario Id</i> (<code>freeplay</code>, <code>hemostasis</code>, <code>lipoma</code> or <code>viscera</code>) or <i>Voxel Override</i> (0 = full 0.25 mm detail; 0.4–0.5 runs faster).</li>
       </ul>
       <h3>After updating the project</h3>
       <p>When you update (<code>maintain update</code>, see <a href="#updating">Updating</a>), Unity may say the project setup is out of date. Choose <b>Set up</b> in the dialog, or run <i>Bovie Sim → Set Up Project</i>, or with Unity closed run <code>maintain setup</code>; then open <code>Main</code> again. This rebuilds the generated materials, interface theme and scene.</p>
@@ -337,8 +337,8 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
       <h3>Control a bleeder</h3>
       <ol class="steps">
         <li><div><b>Find one.</b> If you cut across a perforator, the feed reports <code>bleed.start</code> and blood starts to pool. Bright red and pulsing is arterial.</div></li>
-        <li><div><b>Clear the field.</b> Press <kbd>Tab</kbd> twice for the suction. Hold the left mouse button over the pool until you can see the vessel end.</div></li>
-        <li><div><b>Grasp.</b> Press <kbd>Tab</kbd> three times to get back round to the forceps. Hold the left mouse button with the jaws on the vessel end.</div></li>
+        <li><div><b>Clear the field.</b> Press <kbd>Tab</kbd> three times for the suction. Hold the left mouse button over the pool until you can see the vessel end.</div></li>
+        <li><div><b>Grasp.</b> Press <kbd>Tab</kbd> four times to get back round to the forceps. Hold the left mouse button with the jaws on the vessel end.</div></li>
         <li><div><b>Buzz.</b> Keep holding and press <kbd>X</kbd> (coag pedal) for about a second. The feed reports <code>forceps.buzzed</code> and then <code>bleed.sealed</code>. Release.</div></li>
       </ol>
       <h3>Make the classic mistakes</h3>
@@ -348,7 +348,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
       </ul>
       <p>Press <kbd>F5</kbd> to start again, or <kbd>F6</kbd> to move on to the hemostasis drill.</p>
       <h3>Delivering the lipoma</h3>
-      <p>In the lipoma scenario, incise the skin over the lump, deepen to the shiny capsule, then cut around it, staying on the capsule surface and going deeper each pass. A needle (<kbd>N</kbd>) at lower power gives more control. The status readout counts the capsule links still attached. When it shows <i>FREE</i>, change to the forceps, grasp the lipoma and hold <kbd>Space</kbd> to lift it. It is delivered once it rises 4 mm out of its bed.</p>
+      <p>In the lipoma scenario, incise the skin over the lump, deepen to the shiny capsule, then cut around it, staying on the capsule surface and going deeper each pass, or push and spread the hemostat along the loose areolar plane around the capsule to shell it out bluntly. A needle (<kbd>N</kbd>) at lower power gives more control. The status readout counts the capsule links still attached. When it shows <i>FREE</i>, change to the forceps, grasp the lipoma and hold <kbd>Space</kbd> to lift it. It is delivered once it rises 4 mm out of its bed.</p>
     </section>
 
     <section id="screen">
@@ -388,12 +388,13 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>Cut watts −5 / +5 (hold <kbd>Shift</kbd> for 1 W)</td></tr>
           <tr><td><kbd>;</kbd> <kbd>'</kbd></td><td>Coag watts −5 / +5 (hold <kbd>Shift</kbd> for 1 W)</td></tr>
           <tr class="grp"><td colspan="2">Instruments</td></tr>
-          <tr><td><kbd>Tab</kbd> or <kbd>Q</kbd></td><td>Next instrument: Bovie pencil → Adson forceps → Frazier suction → skin hook</td></tr>
+          <tr><td><kbd>Tab</kbd> or <kbd>Q</kbd></td><td>Next instrument: Bovie pencil → Adson forceps → Kelly hemostat → Frazier suction → 4x4 gauze → skin hook</td></tr>
           <tr><td><kbd>B</kbd> <kbd>N</kbd> <kbd>O</kbd></td><td>Pencil electrode: blade, needle, ball</td></tr>
           <tr><td><kbd>R</kbd></td><td>Roll the blade 45°</td></tr>
           <tr><td><kbd>T</kbd></td><td>Toothed / smooth forceps</td></tr>
-          <tr><td><kbd>Space</kbd></td><td>With the forceps closed: lift (traction on a grasped edge, delivering a freed lipoma). Opening the jaws lowers them again.</td></tr>
-          <tr><td>Left mouse</td><td>Forceps: close jaws (grasp). Suction: on. Hook: catch the skin and drag to retract.</td></tr>
+          <tr><td><kbd>Space</kbd></td><td>Forceps closed: lift (traction on a grasped edge, delivering a freed lipoma); opening the jaws lowers them again. Hemostat closed: spread the jaws inside the tissue to dissect bluntly.</td></tr>
+          <tr><td>Left mouse</td><td>Forceps: close jaws (grasp). Hemostat: close jaws and push the tips in (pen pressure sets depth); moving closed tips pushes along a plane. Suction: on. Gauze: press the pad (dab to soak and tamponade; drag to wipe). Hook: catch the skin and drag to retract.</td></tr>
+          <tr><td><kbd>U</kbd></td><td>Discard the soaked gauze for a fresh one</td></tr>
           <tr><td>Pen</td><td>Pressure sets depth; tilt sets angle; <kbd>Y</kbd> flips the tilt direction</td></tr>
           <tr class="grp"><td colspan="2">View</td></tr>
           <tr><td>Right mouse drag, or <kbd>Alt</kbd> + left drag</td><td>Orbit around the field</td></tr>
@@ -412,7 +413,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           <tr><td><kbd>F9</kbd></td><td>Settings: detail level, display and teaching options</td></tr>
           <tr><td><kbd>F7</kbd> / <kbd>F8</kbd></td><td>Depth of field on or off (off by default) / anti-aliasing: SMAA (default), TAA, FXAA, off</td></tr>
           <tr><td><kbd>F5</kbd></td><td>Restart the scenario from the beginning</td></tr>
-          <tr><td><kbd>F6</kbd></td><td>Next scenario: Free play → Hemostasis drill → Lipoma excision</td></tr>
+          <tr><td><kbd>F6</kbd></td><td>Next scenario: Free play → Hemostasis drill → Lipoma excision → Visceral surface</td></tr>
           <tr><td><kbd>F11</kbd> / <kbd>Esc</kbd></td><td>Fullscreen on or off / quit (built app only)</td></tr>
         </tbody>
       </table></div>
@@ -464,11 +465,14 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           <h3>Adson forceps</h3>
           <p>Hold the left mouse button to close the jaws. Closed jaws can:</p>
           <ul><li><b>Grasp</b> a vessel and press its walls together.</li><li><b>Buzz</b>: press a pedal while grasping and the jaws become the electrode. This is how you seal a vessel.</li><li><b>Lift</b> tissue: hold <kbd>Space</kbd> while the jaws are closed. A freed lipoma comes up with them.</li></ul>
+          <p><b>Kelly hemostat.</b> Close the jaws on the left button and the curved tips push into the tissue; the harder you press the pen, the deeper (up to 3.4 mm). Moving the closed tips pushes them along the loosest planes (areolar tissue, fat, the lipoma capsule plane). Hold <kbd>Space</kbd> with the jaws closed and they open inside the tissue: fat lobules part along their septa, areolar tissue draws out into strands that thin and snap, and vessels crossing the plane stay as bridges until you tear or cut them. A torn vessel bleeds. Closed jaws can be buzzed like the forceps.</p>
+          <p><b>4x4 gauze.</b> Press the pad with the left button. Held still it soaks up liquid blood, presses the capillaries closed and stops any vessel end under it while you hold; after a few seconds the ooze settles. Dragged with pressure it wipes: clot and stain come off, but the raw surface starts oozing again and a small vessel that had stopped on its own can rebleed. The pad reddens as it fills (8 ml); <kbd>U</kbd> swaps in a fresh one.</p>
+          <p><b>Suction</b> lifts liquid blood only. Clotted blood stays: wipe it off with gauze, then find the vessel under it.</p>
           <p>Open jaws cannot be activated. <kbd>T</kbd> switches toothed and smooth.</p>
         </div>
         <div>
           <h3>Frazier suction</h3>
-          <p>Hold the left mouse button to suck. It drains blood within about 2.5 mm of the tip and pulls in smoke. Clear the pool before you look for the bleeder.</p>
+          <p>Hold the left mouse button to suck. It drains the blood under the tip and draws the rest of the pool toward it from a few millimetres around, and pulls in smoke. It lifts liquid only: clot, and the stain on raw tissue, stay. Clear the pool before you look for the bleeder.</p>
         </div>
         <div>
           <h3>Skin hook</h3>

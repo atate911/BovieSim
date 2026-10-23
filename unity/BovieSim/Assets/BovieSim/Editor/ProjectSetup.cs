@@ -92,6 +92,7 @@ namespace BovieSim.EditorTools
 
                 Progress("Instrument and field materials", 0.62f);
                 assets.blood = LitMaterial("Blood", TissuePalette.BloodPooled, 0, 0.92f, 1f);
+                assets.strand = LitMaterial("Strand", TissuePalette.Strand, 0, 0.75f, 0.3f);
                 Progress("Instrument textures (your files in Downloads, else ambientCG, CC0)", 0.63f);
                 // satin-finish (bead-blasted) surgical stainless: a brushed-metal set gives the fine lines, normalised to stainless grey
                 assets.steel = LitMaterial("Steel", new Color(0.80f, 0.80f, 0.81f), 1, 0.52f, 0);
@@ -219,9 +220,10 @@ namespace BovieSim.EditorTools
 
         static string BucketName(int b)
         {
-            if (b == 16) return "Desiccated";
-            if (b == 17) return "Carbonized";
-            return TissueTextures.ClassNames[b % 8] + (b >= 8 ? "Coag" : "");
+            int nc = TissueTextures.ClassNames.Length;
+            if (b == 2 * nc) return "Desiccated";
+            if (b == 2 * nc + 1) return "Carbonized";
+            return TissueTextures.ClassNames[b % nc] + (b >= nc ? "Coag" : "");
         }
 
         static Material OverlayMaterial()
@@ -325,8 +327,9 @@ namespace BovieSim.EditorTools
             m.SetFloat("_UVBase", 5);
             m.SetFloat("_TexWorldScale", 1000f / TissueTextures.TileMm);
             m.SetFloat("_CoatMask", set.coat);
-            int cls = bucket < 16 ? bucket % 8 : -1;
-            bool coag = bucket >= 8 && bucket < 16;
+            int nc = TissueTextures.ClassNames.Length;
+            int cls = bucket < 2 * nc ? bucket % nc : -1;
+            bool coag = bucket >= nc && bucket < 2 * nc;
             DiffusionProfileSettings prof = cls == 0 || cls == 1 ? skin : cls == 2 || cls == 3 || cls == 4 ? fat : cls >= 5 ? muscle : null;
             if (prof != null)
             {
