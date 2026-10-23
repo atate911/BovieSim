@@ -47,7 +47,9 @@ The full instruction manual (installation and operation, with a guided first ses
 4. If `Window > Rendering > HDRP Wizard` lists problems, press **Fix All**, then re-run Set Up Project.
 5. Open `Assets/BovieSim/Generated/Main.unity` and press **Play**.
 
-Everything in `Assets/BovieSim/Generated` is rebuilt by Set Up Project and is not committed.
+Everything in `Assets/BovieSim/Generated` is rebuilt by Set Up Project and is not committed. After an
+update that changes generated assets, the editor offers to re-run Set Up Project (the registry carries a
+setup version); accept it.
 
 After the first successful open, commit the `.meta` files Unity generates next to every asset and
 folder (`git add unity/BovieSim/Assets`). Unity uses them as stable IDs; they must not be written by hand.
@@ -67,8 +69,10 @@ from the repo root to copy it into `Assets/BovieSim/Resources/BovieSim/Scenarios
 | T | Toothed / smooth forceps |
 | Space (forceps closed) | Lift the jaws (traction on a grasped edge, delivering a freed lipoma) |
 | C / J / H | Cross-section mode / orientation (across view or across the blade) / hide |
+| - / = | Section zoom out / in (16 × 10 mm up to the full 56 × 35 mm) |
 | RMB or Alt+LMB, MMB or Shift+LMB, wheel | Orbit, pan, zoom |
-| F1 / F2 | Scenario brief (goal, success, failure points, decisions, uncertainties) / controls |
+| F1 / F2 / F3 | Scenario brief / controls / timing readout (frame, CPU, GPU ms; result ages) |
+| F7 / F8 | Depth of field on/off (off by default) / anti-aliasing SMAA, TAA, FXAA, off |
 | F5 / F6 | Restart / next scenario (freeplay, hemostasis, lipoma) |
 | F11 / Esc | Toggle fullscreen / quit (built app only) |
 | Pen (Wacom) | Pressure sets electrode depth; tilt sets the instrument angle; Y flips tilt direction |

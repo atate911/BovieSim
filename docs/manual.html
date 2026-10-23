@@ -306,6 +306,8 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
         <li><kbd>F6</kbd> moves to the next scenario; <kbd>F5</kbd> restarts the current one.</li>
         <li>To start in a particular scenario or change detail, stop Play, select the <code>Bovie Sim</code> object in the Hierarchy and set <i>Scenario Id</i> (<code>freeplay</code>, <code>hemostasis</code> or <code>lipoma</code>) or <i>Voxel Override</i> (0 = full 0.25 mm detail; 0.4–0.5 runs faster).</li>
       </ul>
+      <h3>After updating the project</h3>
+      <p>When you update (for example with <code>git pull</code>), Unity may say the project setup is out of date. Choose <b>Set up</b> in the dialog, or run <i>Bovie Sim → Set Up Project</i>, then open <code>Main</code> again. This rebuilds the generated materials, interface theme and scene.</p>
       <div class="callout caution"><span class="tag">Caution</span><p>Unity discards changes made to objects while Play is running. Change <i>Scenario Id</i> and <i>Voxel Override</i> only while stopped.</p></div>
     </section>
 
@@ -319,7 +321,7 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
         <li><div><b>Check the generator.</b> The FT10 panel (bottom right) should read <span class="mode-cut">PURE 30</span> and <span class="mode-coag">FULGURATE 30</span>.</div></li>
         <li><div><b>Touch the skin.</b> Move the cursor onto the skin. The pencil appears with the blade on the surface, and the status readout shows <i>under tip: Epidermis</i>.</div></li>
         <li><div><b>Cut.</b> Hold <kbd>Z</kbd> (cut pedal) and draw the cursor across the skin at a steady pace, about 3 cm in 3 seconds. Release <kbd>Z</kbd> at the end. While cutting, the readout shows impedance <b>Z</b> and delivered power <b>P</b> close to 30 W.</div></li>
-        <li><div><b>Measure the edge.</b> Press <kbd>C</kbd> twice so the section view shows <i>damage</i>. Hover over the incision: the pale band beside the cut is the thermal rim. The goal is under 0.5 mm.</div></li>
+        <li><div><b>Measure the edge.</b> Click <b>Damage</b> on the section panel (or press <kbd>C</kbd> twice). Hover over the incision: the red-to-white band beside the cut, inside the dashed line, is irreversibly damaged tissue. The status panel and the objectives list show the measured skin-edge rim; the goal is under 0.5 mm.</div></li>
         <li><div><b>Go deeper.</b> Cut along the same line again until the yellow fat shows. The event feed reports <code>tissue.fatContact</code>: cut mode sputters in fat, so move faster or switch to Blend (<kbd>2</kbd>).</div></li>
       </ol>
       <h3>Control a bleeder</h3>
@@ -341,23 +343,26 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
 
     <section id="screen">
       <h2>The screen</h2>
-      <div class="screen" role="img" aria-label="Screen layout: status readout top left, scenario brief top right, section view right, FT10 panel bottom right, event feed bottom left, tissue bed in the centre">
+      <div class="screen" role="img" aria-label="Screen layout: status top left, scenario brief below it, event feed bottom left, objectives top right, section view right, FT10 panel bottom right, tissue field in the centre">
         <div class="bed"></div>
-        <div class="z" style="left:1.5%;top:3%;width:52%;height:24%"><span>1</span></div>
-        <div class="z" style="left:43%;top:3%;width:33%;height:44%"><span>2</span></div>
-        <div class="z" style="left:76.5%;top:34%;width:22%;height:31%"><span>3</span></div>
-        <div class="z" style="left:76.5%;top:68%;width:22%;height:29%"><span>4</span></div>
-        <div class="z" style="left:1.5%;top:62%;width:31%;height:35%"><span>5</span></div>
-        <div class="z" style="left:44%;top:72%;width:16%;height:12%;border-style:dotted"><span>6</span></div>
+        <div class="z" style="left:1%;top:2%;width:24%;height:30%"><span>1</span></div>
+        <div class="z" style="left:1%;top:35%;width:24%;height:30%"><span>2</span></div>
+        <div class="z" style="left:1%;top:69%;width:29%;height:27%"><span>3</span></div>
+        <div class="z" style="left:69%;top:2%;width:30%;height:12%"><span>4</span></div>
+        <div class="z" style="left:69%;top:16%;width:30%;height:52%"><span>5</span></div>
+        <div class="z" style="left:69%;top:71%;width:30%;height:27%"><span>6</span></div>
+        <div class="z" style="left:40%;top:45%;width:18%;height:14%;border-style:dotted"><span>7</span></div>
       </div>
       <ol class="legend">
-        <li><b class="n">1</b><span><b>Status readout.</b> Scenario, generator settings, the active instrument, live impedance, power and voltage, temperatures, blood loss and what is under the tip. Details in <a href="#feedback">Reading the feedback</a>.</span></li>
-        <li><b class="n">2</b><span><b>Scenario brief.</b> Goal, success criteria, failure points, decisions and uncertainties. <kbd>F1</kbd> shows or hides it.</span></li>
-        <li><b class="n">3</b><span><b>Section view.</b> A live 16 × 10 mm cross-section through the tip. <kbd>C</kbd> changes what it shows, <kbd>J</kbd> turns it across the blade, <kbd>H</kbd> hides it.</span></li>
-        <li><b class="n">4</b><span><b>FT10 panel.</b> Cut and coag blocks with mode and watts, activation lamps, REM status, impedance, and on-screen CUT and COAG pedals.</span></li>
-        <li><b class="n">5</b><span><b>Event feed.</b> What just happened, with the teaching point. Colour shows severity.</span></li>
-        <li><b class="n">6</b><span><b>The field.</b> Tissue under a two-head surgical light, with the instrument in your hand.</span></li>
+        <li><b class="n">1</b><span><b>Status.</b> Activation (CUT or COAG and watts) with live impedance <b>Z</b>, delivered power <b>P</b> and voltage <b>V</b>; the instrument; what is under the tip; hottest tissue, char, blood lost, bleeding ends and the skin-edge thermal rim. Values turn amber or red when they matter.</span></li>
+        <li><b class="n">2</b><span><b>Scenario brief.</b> Goal, failure points, decisions and what is not known in advance. <kbd>F1</kbd> shows or hides it.</span></li>
+        <li><b class="n">3</b><span><b>Event feed.</b> The last four events with their teaching points. The colour bar shows severity.</span></li>
+        <li><b class="n">4</b><span><b>Objectives.</b> The scenario's success criteria, live: each shows its current value and an OK, NEAR, FAIL or DONE badge.</span></li>
+        <li><b class="n">5</b><span><b>Section view.</b> A live cross-section through the tip with display buttons, zoom up to the full 35 mm depth, depth scale, layer labels, a colour legend, isotherms and the damage outline.</span></li>
+        <li><b class="n">6</b><span><b>FT10 panel.</b> Laid out like the generator's touchscreen: yellow CUT and blue COAG tiles with the power and up/down arrows, a row of mode buttons under each, REM status, impedance, and on-screen footswitch pedals.</span></li>
+        <li><b class="n">7</b><span><b>The field.</b> Tissue under a two-head surgical light, with the instrument in your hand.</span></li>
       </ol>
+      <p>Press <kbd>F3</kbd> for a timing readout: frame time, CPU and GPU time, and how many frames old each result is. The instrument itself follows the cursor in the same frame.</p>
     </section>
 
     <section id="controls">
@@ -384,9 +389,11 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
           <tr><td>Right mouse drag, or <kbd>Alt</kbd> + left drag</td><td>Orbit around the field</td></tr>
           <tr><td>Middle mouse drag, or <kbd>Shift</kbd> + left drag</td><td>Pan</td></tr>
           <tr><td>Mouse wheel</td><td>Zoom</td></tr>
-          <tr><td><kbd>C</kbd> / <kbd>J</kbd> / <kbd>H</kbd></td><td>Section view: next display / across the view or across the blade / hide</td></tr>
+          <tr><td><kbd>C</kbd> / <kbd>J</kbd> / <kbd>H</kbd></td><td>Section view: next display / across the view or across the blade / hide (or use the buttons on the section panel)</td></tr>
+          <tr><td><kbd>-</kbd> / <kbd>=</kbd></td><td>Section zoom out / in: 16 × 10 mm up to the full 56 × 35 mm</td></tr>
           <tr class="grp"><td colspan="2">Session</td></tr>
-          <tr><td><kbd>F1</kbd> / <kbd>F2</kbd></td><td>Scenario brief / list of controls on screen</td></tr>
+          <tr><td><kbd>F1</kbd> / <kbd>F2</kbd> / <kbd>F3</kbd></td><td>Scenario brief / list of controls on screen / timing readout</td></tr>
+          <tr><td><kbd>F7</kbd> / <kbd>F8</kbd></td><td>Depth of field on or off (off by default) / anti-aliasing: SMAA (default), TAA, FXAA, off</td></tr>
           <tr><td><kbd>F5</kbd></td><td>Restart the scenario from the beginning</td></tr>
           <tr><td><kbd>F6</kbd></td><td>Next scenario: Free play → Hemostasis drill → Lipoma excision</td></tr>
           <tr><td><kbd>F11</kbd> / <kbd>Esc</kbd></td><td>Fullscreen on or off / quit (built app only)</td></tr>
@@ -500,21 +507,35 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
 
     <section id="feedback">
       <h2>Reading the feedback</h2>
-      <h3>Status readout</h3>
+      <h3>Status</h3>
       <div class="table-wrap"><table>
-        <thead><tr><th>Line</th><th>Meaning</th></tr></thead>
+        <thead><tr><th>Item</th><th>Meaning</th></tr></thead>
         <tbody>
-          <tr><td>FT10 … tool</td><td>Cut and coag mode and watts; the instrument in hand and its state</td></tr>
-          <tr><td>CUT 30 W · Z · P · V · contact</td><td>While active: tissue impedance (Ω), power actually delivered (W), RMS voltage, and how many voxels the electrode touches. "open" means no circuit.</td></tr>
-          <tr><td>max T · char · vaporised · sim t</td><td>Hottest tissue (°C), charred voxels, total tissue removed, simulated time</td></tr>
-          <tr><td>blood lost · pooled · bleeding ends</td><td>Cumulative loss (ml), blood lying in the field, open arterial / venous ends, sealed voxels, char-plugged voxels, rebleeds</td></tr>
-          <tr><td>under tip</td><td>Tissue and its state at the cursor, with position in mm</td></tr>
-          <tr><td>capsule</td><td>Lipoma case only: intact capsule links, FREE and lift height</td></tr>
-          <tr><td>volume · tris · fps</td><td>Grid size and voxel size, surface triangle count (CAPPED means the surface hit its limit), frame rate</td></tr>
+          <tr><td>CUT 30 W · Z · P · V</td><td>While active: tissue impedance (Ω), power actually delivered (W, amber when well below the setting because the tissue has dried) and RMS voltage. "open" means no circuit.</td></tr>
+          <tr><td>Instrument</td><td>The instrument in hand and its state (electrode, jaws open or closed, toothed, lift height)</td></tr>
+          <tr><td>Under the tip</td><td>Tissue and its state at the cursor</td></tr>
+          <tr><td>Hottest tissue</td><td>°C; amber from 60 °C (protein denaturation), red from 100 °C (boiling)</td></tr>
+          <tr><td>Char / vaporised</td><td>Carbonized volume (mm³) and tissue removed by cutting (voxels)</td></tr>
+          <tr><td>Blood lost / pooled</td><td>Cumulative loss and blood lying in the field (ml)</td></tr>
+          <tr><td>Bleeding ends</td><td>Open arterial and venous ends right now</td></tr>
+          <tr><td>Sealed / char plug / rebleeds</td><td>Vessel voxels sealed by coaptation, covered only by a char plug, and plug failures</td></tr>
+          <tr><td>Skin edge thermal rim</td><td>Width of irreversibly damaged skin beside the incision walls (95th percentile, mm)</td></tr>
+          <tr><td>Lipoma capsule</td><td>Lipoma case: capsule links still attached, FREE and lift height</td></tr>
+          <tr><td>Footer</td><td>Voxel grid and size, surface triangles (CAPPED means the limit was hit), fps, simulated time</td></tr>
         </tbody>
       </table></div>
-      <h3>Section view displays</h3>
-      <p>Press <kbd>C</kbd> to cycle: <b>tissue</b> (layers and states), <b>temperature</b>, <b>damage</b> (protein denaturation; blanching starts above 0.53), <b>water</b> (drying), <b>potential</b> (the electrical field) and <b>current density</b>. Use damage to measure the thermal rim beside an incision.</p>
+      <h3>Objectives</h3>
+      <p>Each success criterion of the scenario is shown with its live value. <b>OK</b> is within the limit, <b>NEAR</b> is past 80 % of it, <b>FAIL</b> means the limit was crossed (blood loss, char, rim and capsule breaches stay failed once crossed), and <b>DONE</b> marks an achievement such as delivering the lipoma. An item shows … until it can be measured, for example the rim before any incision.</p>
+      <h3>Section view</h3>
+      <p>The section runs through the tip, across the view (or across the blade with <kbd>J</kbd>), starting 1.5 mm above the skin. Use the buttons or <kbd>C</kbd> to choose the display:</p>
+      <ul>
+        <li><b>Tissue:</b> layers and states (coagulated, desiccated, char, sealed vessel), with a swatch legend.</li>
+        <li><b>Temperature:</b> 37–300 °C colour scale.</li>
+        <li><b>Damage:</b> protein denaturation Ω on a log scale; amber at blanching (0.53), red at irreversible damage (1), white beyond.</li>
+        <li><b>Water:</b> drying of the tissue.</li>
+        <li><b>Potential</b> and <b>Current:</b> the electrical field from the electrode and where the current flows.</li>
+      </ul>
+      <p>In the tissue, temperature and damage displays, <b>isotherms</b> mark 45, 60 and 100 °C and a <b>dashed line</b> marks Ω = 1, the edge of irreversible damage; toggle them with the buttons under the image. The left edge shows depth below the skin in mm, labels on the right name the layers at the centre of the section, and the bar at the bottom right gives the scale. Zoom with <kbd>-</kbd> and <kbd>=</kbd> or the − + buttons, up to the full bed depth.</p>
       <h3>Events and what they teach</h3>
       <div class="table-wrap"><table>
         <thead><tr><th>Event</th><th>Level</th><th>Teaching point</th></tr></thead>
@@ -552,12 +573,13 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
         <thead><tr><th>Symptom</th><th>What to do</th></tr></thead>
         <tbody>
           <tr><td>Red errors in the Console after opening</td><td>Copy the first few exactly and send them (see <a href="#report">Reporting a problem</a>).</td></tr>
+          <tr><td>"The project setup is out of date"</td><td>Stop Play, run <i>Bovie Sim → Set Up Project</i>, open <code>Main</code> again.</td></tr>
           <tr><td>"SimAssets not found", pink or missing tissue</td><td>Run <i>Bovie Sim → Set Up Project</i>.</td></tr>
           <tr><td>Scene black or very dark</td><td>Check the two <i>Surgical light</i> objects exist. Exposure is fixed for an operating light; adjust <i>Exposure</i> in <code>Generated/BovieVolume.asset</code>.</td></tr>
           <tr><td>Keys and mouse do nothing, or an <code>InvalidOperationException</code> about the Input class</td><td><i>Project Settings → Player → Active Input Handling</i> must be <b>Both</b>. Set it and restart the editor.</td></tr>
           <tr><td>Pen moves the cursor but pressure and tilt do nothing</td><td>Tick <i>Use Windows Ink</i> in the Wacom settings. Check <code>com.unity.inputsystem</code> is installed in <i>Window → Package Manager</i>.</td></tr>
           <tr><td>Package import errors mentioning long paths</td><td>Move the project to a short path such as <code>E:\claude\bovie-sim</code>, outside OneDrive.</td></tr>
-          <tr><td>Slow or stuttering</td><td>Select the <code>Bovie Sim</code> object and set <i>Voxel Override</i> to 0.4 or 0.5. You can also turn off depth of field and ambient occlusion in the volume.</td></tr>
+          <tr><td>Slow or stuttering</td><td>Press <kbd>F3</kbd> and note the frame, CPU and GPU times. Select the <code>Bovie Sim</code> object and set <i>Voxel Override</i> to 0.4 or 0.5; keep depth of field off (<kbd>F7</kbd>).</td></tr>
           <tr><td>No sky image or drape texture</td><td>The downloads were blocked; the sim falls back to built-in ones. Put any <code>.hdr</code> file into <code>Assets/BovieSim/Generated/Downloads</code> and run Set Up Project again.</td></tr>
           <tr><td>Instrument tilts the wrong way with the pen</td><td>Press <kbd>Y</kbd>.</td></tr>
           <tr><td>Keys do nothing in the editor while playing</td><td>Click inside the Game view to give it keyboard focus.</td></tr>

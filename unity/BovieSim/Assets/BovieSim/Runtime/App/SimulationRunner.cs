@@ -35,13 +35,19 @@ namespace BovieSim
         Scenario scenario; BovieSim.Volume volume; AnatomyReport report; Lattice lattice;
         GpuVolume gpu; PhysicsPipeline physics; SurfaceRenderer surface; Particles particles;
         readonly FT10 gen = new FT10();
-        EventBus events; SimHud hud; ActivationAudio audioOut; OrbitCamera orbit; readonly InputState input = new InputState();
+        EventBus events; SimUI ui; SurfacePicker picker; readonly HudData hud = new HudData(); ActivationAudio audioOut; OrbitCamera orbit; readonly InputState input = new InputState();
         readonly ElectrodeTool tool = new ElectrodeTool(); readonly ForcepsTool forceps = new ForcepsTool();
         readonly SuctionTool suction = new SuctionTool(); readonly HookTool hook = new HookTool();
         ToolKind activeTool = ToolKind.Pencil; ElectrodeType pencilElectrode = ElectrodeType.Blade;
         bool slicePerp, lesionFreedReported, lesionDelivered, lesionBreachReported, ready;
         float clusterRiseMm, liftMm; string status = "Building anatomy…";
         Vector4[] lastDisp; bool latticeMoved;
+        float maxRimMm, maxCharMm3; int layerColumn = -1;
+        HDAdditionalCameraData hdCam; bool dofOn;
+        readonly System.Diagnostics.Stopwatch frameWatch = new System.Diagnostics.Stopwatch();
+        readonly FrameTiming[] frameTimings = new FrameTiming[1]; float cpuMs, gpuMs;
+        static readonly HDAdditionalCameraData.AntialiasingMode[] AaModes = { HDAdditionalCameraData.AntialiasingMode.SubpixelMorphologicalAntiAliasing, HDAdditionalCameraData.AntialiasingMode.TemporalAntialiasing, HDAdditionalCameraData.AntialiasingMode.FastApproximateAntialiasing, HDAdditionalCameraData.AntialiasingMode.None };
+        int aaIndex;
 
         // ---- scene objects
         Transform field;
@@ -61,6 +67,12 @@ namespace BovieSim
             var surfCs = Resources.Load<ComputeShader>("BovieSim/Shaders/Surface");
             var scJson = Resources.Load<TextAsset>("BovieSim/Scenarios/" + scenarioId);
             var teach = Resources.Load<TextAsset>("BovieSim/Scenarios/teaching");
+            if (assets != null && (assets.uiTheme == null || assets.setupVersion < SimAssets.CurrentSetupVersion))
+            {
+                status = "Cannot start: the project setup is out of date. Stop Play and run Bovie Sim > Set Up Project.";
+                Debug.LogError("[Bovie Sim] " + status);
+                yield break;
+            }
             if (assets == null || simCs == null || surfCs == null || scJson == null || viewCamera == null)
             {
                 status = "Cannot start: " + (assets == null ? "SimAssets missing (run Bovie Sim > Set Up Project). " : "") + (simCs == null || surfCs == null ? "compute shaders missing. " : "") + (scJson == null ? "scenario '" + scenarioId + "' not found. " : "") + (viewCamera == null ? "no camera. " : "");
@@ -76,8 +88,6 @@ namespace BovieSim
 
             scenario = Scenario.FromJson(scJson.text);
             events = new EventBus(teach != null ? teach.text : null);
-            hud = new SimHud();
-            events.OnEvent += hud.Push;
             gen.cutMode = FT10.Parse(scenario.generator.cutMode, ModeId.Pure); gen.coagMode = FT10.Parse(scenario.generator.coagMode, ModeId.Fulgurate);
             gen.cutWatts = scenario.generator.cutWatts; gen.coagWatts = scenario.generator.coagWatts;
             gen.Adjust(true, 0); gen.Adjust(false, 0);
@@ -90,7 +100,8 @@ namespace BovieSim
                 AnatomyReport rep;
                 var v = Anatomy.Build(sc, out rep, vo);
                 var lat = mech ? new Lattice(v, 3f, sc.skin.langerDeg * Mathf.Deg2Rad) : null;
-                return new Tuple<BovieSim.Volume, AnatomyReport, Lattice>(v, rep, lat);
+                var pk = new SurfacePicker(v);
+                return new Tuple<BovieSim.Volume, AnatomyReport, Lattice, SurfacePicker>(v, rep, lat, pk);
             });
             while (!build.IsCompleted) yield return null;
             if (build.IsFaulted)
@@ -99,7 +110,7 @@ namespace BovieSim
                 Debug.LogException(build.Exception.GetBaseException());
                 yield break;
             }
-            volume = build.Result.Item1; report = build.Result.Item2; lattice = build.Result.Item3;
+            volume = build.Result.Item1; report = build.Result.Item2; lattice = build.Result.Item3; picker = build.Result.Item4;
 
             // field root: millimetres to metres
             field = new GameObject("Field (mm)").transform;
@@ -108,7 +119,7 @@ namespace BovieSim
 
             gpu = new GpuVolume(volume);
             physics = new PhysicsPipeline(simCs, gpu);
-            surface = new SurfaceRenderer(surfCs, gpu, field, assets.tissue, assets.blood);
+            surface = new SurfaceRenderer(surfCs, gpu, field, SkinCorrectedMaterials(), assets.blood);
             particles = new Particles(assets.particlesAlpha, assets.particlesAdditive);
             if (scenario.preCarve != null && scenario.preCarve.Count > 0) physics.MarkWound(new[] { 0, 0, 0 }, new[] { volume.nx, volume.ny, volume.nz });
             if (lattice != null)
@@ -119,15 +130,46 @@ namespace BovieSim
                 surface.UploadLattice(lattice.disp);
                 lastDisp = (Vector4[])lattice.disp.Clone();
             }
-            physics.sliceWidthMm = 16; physics.sliceDepthMm = 10;
+            ui = new SimUI(transform, assets.uiTheme, gen, physics);
+            ui.SetScenario(scenario);
+            ui.ToggleOrientation += () => slicePerp = !slicePerp;
+            events.OnEvent += ui.Push;
+
+            // latency: one queued frame instead of two; SMAA instead of TAA (no ghosting behind moving instruments)
+            QualitySettings.maxQueuedFrames = 1;
+            hdCam = viewCamera.GetComponent<HDAdditionalCameraData>();
+            if (hdCam != null) hdCam.antialiasing = AaModes[aaIndex];
 
             BuildInstruments();
             orbit = new OrbitCamera(viewCamera, field);
             audioOut = gameObject.AddComponent<ActivationAudio>();
             if (postVolume == null) postVolume = FindAnyObjectByType<UnityEngine.Rendering.Volume>();
             if (postVolume != null && postVolume.sharedProfile != null) postVolume.sharedProfile.TryGet(out dof);
+            if (dof != null) dof.active = dofOn; // off by default: blur reads as lag when the view moves
             status = "";
             ready = true;
+        }
+
+        /// <summary>
+        /// Epidermis textures are baked for one skin tone and prep; tint runtime copies of those materials so the
+        /// skin matches this scenario's tone and prep (chlorhexidine, povidone-iodine or none). The ratio is taken in
+        /// linear space because HDRP multiplies the base map by _BaseColor there.
+        /// </summary>
+        Material[] SkinCorrectedMaterials()
+        {
+            var mats = (Material[])assets.tissue.Clone();
+            Color want = TissuePalette.Skin(scenario.skin.tone) * TissuePalette.Prep(scenario.skin.prep);
+            Color baked = TissuePalette.Skin(TissuePalette.BakedTone) * TissuePalette.Prep(TissuePalette.BakedPrep);
+            Color w = want.linear, b = baked.linear;
+            var k = new Color(Mathf.Clamp(w.r / Mathf.Max(b.r, 1e-3f), 0, 2), Mathf.Clamp(w.g / Mathf.Max(b.g, 1e-3f), 0, 2), Mathf.Clamp(w.b / Mathf.Max(b.b, 1e-3f), 0, 2), 1);
+            foreach (int bucket in new[] { 0, 8 }) // epidermis, and coagulated epidermis (half strength: blanching hides the stain)
+            {
+                if (mats[bucket] == null) continue;
+                var m = new Material(mats[bucket]) { name = mats[bucket].name + " (scenario skin)" };
+                m.SetColor("_BaseColor", bucket == 0 ? k : Color.Lerp(Color.white, k, 0.5f));
+                mats[bucket] = m;
+            }
+            return mats;
         }
 
         GameObject MakePart(string name, Mesh mesh, Material mat, Transform parent)
@@ -178,9 +220,10 @@ namespace BovieSim
             if (Input.GetKeyDown(KeyCode.F5)) { Reload(scenarioId); return; }
             if (Input.GetKeyDown(KeyCode.F6)) { Reload(ScenarioIds[(Array.IndexOf(ScenarioIds, scenarioId) + 1) % ScenarioIds.Length]); return; }
             if (!ready) return;
+            frameWatch.Reset(); frameWatch.Start();
             float frameDt = Mathf.Min(0.05f, Time.deltaTime);
             input.Update();
-            bool overUi = hud.PointerOverUi(input.mouse);
+            bool overUi = ui.PointerOverUi(input.mouse);
             orbit.HandleInput(overUi);
             HandleKeys();
 
@@ -188,11 +231,13 @@ namespace BovieSim
             bool lmb = input.leftHeld && !overUi && !orbit.Dragging;
             bool handCut = activeTool == ToolKind.Pencil && lmb && !input.ctrl;
             bool handCoag = activeTool == ToolKind.Pencil && lmb && input.ctrl;
-            gen.activation = input.pedalCut || hud.pedalCut || handCut ? Activation.Cut : input.pedalCoag || hud.pedalCoag || handCoag ? Activation.Coag : Activation.None;
+            gen.activation = input.pedalCut || ui.pedalCut || handCut ? Activation.Cut : input.pedalCoag || ui.pedalCoag || handCoag ? Activation.Coag : Activation.None;
 
             var r = physics.readout;
-            bool hasHit = input.inside && r.hasHit;
-            Vector3 hit = r.hit;
+            // same-frame pick on the CPU height map (the GPU pick answers a few frames late)
+            Vector3 rayO, rayD; PickRay(out rayO, out rayD);
+            Vector3 hit = Vector3.zero;
+            bool hasHit = input.inside && picker.Raycast(rayO, rayD, out hit);
             bool pressed = lmb;
             tool.pressure = input.pressure; tool.tilt = input.tiltDeg;
             var camMm = orbit.PositionMm;
@@ -300,19 +345,20 @@ namespace BovieSim
             // ---- physics, then surface extraction when tissue or deformation changed
             bool hot = physics.Step(tool, gen, frameDt);
             if (hot || latticeMoved || surface.dirty) surface.Extract();
+            picker.Refresh(physics, hot || latticeMoved);
             surface.UpdateBlood();
 
             // ---- pick ray for the next frame and cross-section plane through the tip
-            Vector3 o, d; PickRay(out o, out d);
-            physics.SetPickRay(o, d);
+            physics.SetPickRay(rayO, rayD);
             var right = new Vector3(Mathf.Cos(orbit.azimuth), 0, -Mathf.Sin(orbit.azimuth));
             if (slicePerp && tool.visible)
             {
                 var ax = new Vector3(tool.axis.x, 0, tool.axis.z);
                 if (ax.magnitude > 1e-3f) { ax.Normalize(); right = new Vector3(-ax.z, 0, ax.x); }
             }
-            var anchor = r.hasHit ? r.hit : Vector3.zero;
-            physics.sliceOrigin = new Vector3(anchor.x, (r.hasHit ? anchor.y : 0) + 1.5f, anchor.z);
+            var anchor = hasHit ? hit : Vector3.zero;
+            // the view starts 1.5 mm above the higher of the tip and the original skin, so the skin is always in view
+            physics.sliceOrigin = new Vector3(anchor.x, Mathf.Max(hasHit ? anchor.y : 0, 0) + 1.5f, anchor.z);
             physics.sliceU = right;
 
             PoseInstruments(mode);
@@ -322,7 +368,11 @@ namespace BovieSim
 
             frames++; fpsT += Time.unscaledDeltaTime;
             if (fpsT > 0.5f) { fps = frames / fpsT; frames = 0; fpsT = 0; }
-            hud.hudText = BuildHud(r);
+            FillHud(r);
+            ui.Refresh(hud, Metric);
+            frameWatch.Stop(); cpuMs = Mathf.Lerp(cpuMs, (float)frameWatch.Elapsed.TotalMilliseconds, 0.1f);
+            FrameTimingManager.CaptureFrameTimings();
+            if (FrameTimingManager.GetLatestTimings(1, frameTimings) > 0 && frameTimings[0].gpuFrameTime > 0) gpuMs = Mathf.Lerp(gpuMs, (float)frameTimings[0].gpuFrameTime, 0.1f);
         }
 
         void StepMechanics(ModeSpec mode, SimReadout r, float frameDt)
@@ -455,32 +505,85 @@ namespace BovieSim
             if (Input.GetKeyDown(KeyCode.H)) physics.sliceEnabled = !physics.sliceEnabled;
             if (Input.GetKeyDown(KeyCode.J)) slicePerp = !slicePerp;
             if (Input.GetKeyDown(KeyCode.Y)) InputState.invertTiltY = !InputState.invertTiltY;
-            if (Input.GetKeyDown(KeyCode.F1)) hud.showBrief = !hud.showBrief;
-            if (Input.GetKeyDown(KeyCode.F2)) hud.showHelp = !hud.showHelp;
+            if (Input.GetKeyDown(KeyCode.F1)) ui.showBrief = !ui.showBrief;
+            if (Input.GetKeyDown(KeyCode.F2)) ui.showHelp = !ui.showHelp;
+            if (Input.GetKeyDown(KeyCode.F3)) ui.showPerf = !ui.showPerf;
+            if (Input.GetKeyDown(KeyCode.Minus) || Input.GetKeyDown(KeyCode.KeypadMinus)) ui.ZoomStep(1);
+            if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadPlus)) ui.ZoomStep(-1);
+            if (Input.GetKeyDown(KeyCode.F7)) { dofOn = !dofOn; if (dof != null) dof.active = dofOn; }
+            if (Input.GetKeyDown(KeyCode.F8) && hdCam != null) { aaIndex = (aaIndex + 1) % AaModes.Length; hdCam.antialiasing = AaModes[aaIndex]; }
         }
 
-        string BuildHud(SimReadout r)
+        void FillHud(SimReadout r)
         {
-            var cutM = FT10.Mode(gen.cutMode); var coagM = FT10.Mode(gen.coagMode);
-            string toolTxt = HandPose.Label(activeTool) + (activeTool == ToolKind.Pencil ? " (" + pencilElectrode.ToString().ToLowerInvariant() + ")" : activeTool == ToolKind.Forceps ? (forceps.closed ? " closed" : " open") + (forceps.toothed ? ", toothed" : ", smooth") : "");
-            string act = gen.activation == Activation.None ? "idle" : "<b>" + gen.activation.ToString().ToUpperInvariant() + " " + gen.ActiveWatts + " W</b>  Z " + (r.zOhm < 1e8f ? r.zOhm.ToString("0") + " Ω" : "open") + "  P " + r.powerW.ToString("0.0") + " W  V " + r.vRms.ToString("0") + " V  contact " + r.contactVoxels + " vx";
-            if (gen.remFault && gen.activation != Activation.None) act = "<b>REM FAULT: generator will not activate</b>";
-            string under = r.hasHit ? TissueTable.Name((int)Cell.Type(r.hitCell)) + " (" + TissueTable.StateNames[(int)Cell.State(r.hitCell)] + ")  " + r.hit.x.ToString("0.0") + ", " + r.hit.y.ToString("0.0") + ", " + r.hit.z.ToString("0.0") + " mm" : "—";
-            string s = "<b>Bovie Sim</b> · " + scenario.name + "\n" +
-                "FT10  cut: " + cutM.label + " " + gen.cutWatts + " W   coag: " + coagM.label + " " + gen.coagWatts + " W   tool: <b>" + toolTxt + "</b>\n" +
-                act + "\n" +
-                "max T " + r.maxTempC.ToString("0") + " °C · char " + r.carbonVoxels + " vx · vaporised " + physics.totalVapVoxels.ToString("0") + " vx · sim t " + physics.simTime.ToString("0.0") + " s\n" +
-                "blood lost " + r.bloodLostMl.ToString("0.00") + " ml · pooled " + r.poolMl.ToString("0.00") + " ml · bleeding ends: " + r.exposedArterial + " art / " + r.exposedVenous + " ven · sealed " + r.sealedVoxels + " · char plug " + r.charPlugVoxels + " · rebleeds " + r.rebleeds + "\n" +
-                "under tip: " + under + "\n" +
-                (lattice != null && lattice.capsuleTotal > 0 ? "capsule " + lattice.capsuleAlive + "/" + lattice.capsuleTotal + " links" + (lattice.lipomaFree ? " · FREE, rise " + clusterRiseMm.ToString("0.0") + " mm" : "") + "\n" : "") +
-                "volume " + volume.nx + "×" + volume.ny + "×" + volume.nz + " @ " + volume.h + " mm · tris " + (surface.lastVertexCount / 3).ToString("N0") + (surface.capped ? " (CAPPED)" : "") + " · " + fps.ToString("0") + " fps";
-            if (hud.showHelp)
-                s += "\n\nZ/X pedal cut/coag · LMB hand-switch cut (Ctrl+LMB coag) on the pencil / grasp (forceps) / suck (suction) / hook\n" +
-                     "Tab or Q tool · 1-4 cut mode · 5-6 coag mode · [ ] ; ' watts (Shift = 1 W) · B/N/O blade/needle/ball · R roll · T toothed\n" +
-                     "Space lift (forceps closed) · C section mode · J section orientation · H hide section · RMB or Alt+LMB orbit · MMB or Shift+LMB pan · wheel zoom\n" +
-                     "F1 brief · F11 fullscreen · Esc quit (built app) · F5 restart · F6 next scenario (" + string.Join(", ", ScenarioIds) + ") · pen pressure sets depth, pen tilt sets the angle (Y flips tilt)";
-            else s += "\nF2 controls";
-            return s;
+            var d = hud;
+            d.scenarioName = scenario.name;
+            d.toolText = HandPose.Label(activeTool) + (activeTool == ToolKind.Pencil ? " · " + pencilElectrode.ToString().ToLowerInvariant() : activeTool == ToolKind.Forceps ? (forceps.closed ? " · closed" : " · open") + (forceps.toothed ? ", toothed" : ", smooth") + (liftMm > 0 ? ", lifted " + liftMm.ToString("0") + " mm" : "") : "");
+            d.activation = gen.activation; d.activeWatts = gen.ActiveWatts; d.remFault = gen.remFault;
+            d.zOhm = r.zOhm; d.powerW = r.powerW; d.vRms = r.vRms; d.contact = r.contactVoxels;
+            d.underTip = r.hasHit ? TissueTable.Name((int)Cell.Type(r.hitCell)) + " · " + TissueTable.StateNames[(int)Cell.State(r.hitCell)] : "—";
+            d.maxT = r.maxTempC; d.carbon = r.carbonVoxels; d.vaporised = physics.totalVapVoxels; d.simTime = physics.simTime;
+            maxCharMm3 = Mathf.Max(maxCharMm3, r.carbonVoxels * volume.h * volume.h * volume.h); d.charMm3 = maxCharMm3;
+            d.bloodLost = r.bloodLostMl; d.pooled = r.poolMl; d.exposedArt = r.exposedArterial; d.exposedVen = r.exposedVenous;
+            d.sealedVx = r.sealedVoxels; d.charPlug = r.charPlugVoxels; d.rebleeds = r.rebleeds;
+            if (physics.rimSamples > 0) maxRimMm = Mathf.Max(maxRimMm, physics.rimMm);
+            d.rimMm = maxRimMm;
+            d.capsuleText = lattice != null && lattice.capsuleTotal > 0 ? lattice.capsuleAlive + " of " + lattice.capsuleTotal + " links attached" + (lattice.lipomaFree ? " · FREE, lifted " + clusterRiseMm.ToString("0.0") + " mm" : "") : "";
+            d.volumeText = volume.nx + "×" + volume.ny + "×" + volume.nz + " voxels at " + volume.h + " mm";
+            d.tris = surface.lastVertexCount / 3; d.capped = surface.capped; d.fps = fps;
+            d.frameMs = fps > 0 ? 1000f / fps : 0; d.cpuMs = cpuMs; d.gpuMs = gpuMs;
+            d.stateAge = physics.stateAgeFrames; d.heightsAge = picker.heightsAgeFrames; d.surfaceAge = surface.lastAgeFrames;
+            d.sliceTopY = physics.sliceOrigin.y; d.slicePerp = slicePerp;
+            UpdateLayerLabels(physics.sliceOrigin.x, physics.sliceOrigin.z);
+        }
+
+        /// <summary>Values for the scenario's success criteria (education.success metrics); NaN = not available yet.</summary>
+        float Metric(string m)
+        {
+            var r = physics.readout;
+            switch (m)
+            {
+                case "bloodLostMl": return r.bloodLostMl;
+                case "charVolumeMm3": return maxCharMm3;
+                case "dermalEdgeDamageMm": return maxRimMm > 0 ? maxRimMm : float.NaN;
+                case "exposedBleeding": return r.exposedArterial + r.exposedVenous;
+                case "charPlugVoxels": return r.charPlugVoxels;
+                case "lesionDelivered": return lesionDelivered ? 1 : 0;
+                case "lesionBreaches": return lesionBreachReported ? 1 : 0;
+                default: return float.NaN;
+            }
+        }
+
+        /// <summary>Layer names and their depth below the original skin surface, down the section's centre column (pre-cut anatomy).</summary>
+        void UpdateLayerLabels(float x, float z)
+        {
+            float vi, vj, vk; volume.WorldToVoxel(x, 0, z, out vi, out vj, out vk);
+            int i = Mathf.Clamp(Mathf.RoundToInt(vi), 0, volume.nx - 1), j = Mathf.Clamp(Mathf.RoundToInt(vj), 0, volume.ny - 1);
+            int col = i + volume.nx * j;
+            if (col == layerColumn) return;
+            layerColumn = col;
+            hud.layers.Clear();
+            string last = null;
+            for (int k = volume.nz - 1; k >= 0; k--)
+            {
+                var t = Cell.Type(volume.cell[volume.Index(i, j, k)]);
+                string name;
+                switch (t)
+                {
+                    case Tissue.Epidermis: name = "Epidermis"; break;
+                    case Tissue.Dermis: name = "Dermis"; break;
+                    case Tissue.Fat: name = "Subcutaneous fat"; break;
+                    case Tissue.SuperficialFascia: name = "Scarpa's fascia"; break;
+                    case Tissue.DeepFascia: name = "Deep fascia"; break;
+                    case Tissue.Muscle: name = "Muscle"; break;
+                    case Tissue.Lipoma: name = "Lipoma"; break;
+                    default: name = null; break; // air, septa, vessels, nerve, capsule: too thin or local to label
+                }
+                if (name == null || name == last) continue;
+                float wx, wy, wz; volume.VoxelToWorld(i, j, k, out wx, out wy, out wz);
+                hud.layers.Add(new System.Collections.Generic.KeyValuePair<string, float>(name, -(wy + 0.5f * volume.h)));
+                last = name;
+            }
         }
 
         void Reload(string id)
@@ -491,12 +594,11 @@ namespace BovieSim
 
         void OnGUI()
         {
-            if (!ready)
+            if (!ready || ui == null)
             {
                 GUI.Label(new Rect(20, 20, Screen.width - 40, 60), "<b>Bovie Sim</b>\n" + status, new GUIStyle(GUI.skin.label) { richText = true, fontSize = 16 });
                 return;
             }
-            hud.Draw(gen, physics.readout, physics, scenario);
         }
 
         void OnDestroy()
@@ -505,7 +607,7 @@ namespace BovieSim
             if (surface != null) surface.Dispose();
             if (particles != null) particles.Dispose();
             if (gpu != null) gpu.Dispose();
-            if (hud != null) hud.Dispose();
+            if (ui != null) ui.Dispose();
         }
     }
 }

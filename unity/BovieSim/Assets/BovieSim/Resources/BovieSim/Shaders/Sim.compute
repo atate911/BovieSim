@@ -14,6 +14,7 @@
 #pragma kernel ConstraintProbe
 #pragma kernel Pick
 #pragma kernel Slice
+#pragma kernel RimMeasure
 
 #include "SimCommon.hlsl"
 
@@ -34,7 +35,7 @@ float4 _RayDir;    // pick ray direction, w = max distance (mm)
 float4 _SliceO;    // slice origin (mm), w = width (mm)
 float4 _SliceU;    // slice horizontal axis, w = pixel width
 float4 _SliceV;    // slice vertical axis, w = pixel height
-float4 _SliceParams; // depth (mm), mode
+float4 _SliceParams; // depth (mm), mode, flags (1 isotherms, 2 damage outline), unused
 int4 _WBox0;       // wound box origin, w = substeps this frame
 int4 _WBox1;       // wound box size
 float4 _Tool2;     // secondary tool point A (mm), w = radius (mm)
@@ -57,6 +58,7 @@ StructuredBuffer<float4> _Drops;        // droplet landings: xyz (mm), w = micro
 StructuredBuffer<float4> _Segs;         // 2 per lattice constraint: a.xyz + throughTissue, b.xyz
 RWStructuredBuffer<uint2> _Probes;      // per constraint: flags (1 severed, 2 no tissue), asuint(omegaMax)
 RWTexture2D<float4> _SliceTex;
+RWStructuredBuffer<uint> _RimHist;     // 16 bins: distance (voxels) from a damaged skin voxel to the nearest cut wall
 
 // state slots (uint indices into _State)
 #define ST_PSUM 0
@@ -621,24 +623,40 @@ void Pick(uint3 gid : SV_DispatchThreadID)
 }
 
 // ------------------------------------------------------------------ cross-section inspector
+// Reference tissue colours: keep in step with Core/TissuePalette.cs (also used by the 3D textures and the legend).
 float3 TissueColor(uint ty)
 {
     switch (ty)
     {
-        case 1u: return float3(0.80, 0.55, 0.45);
-        case 2u: return float3(0.85, 0.60, 0.55);
-        case 3u: return float3(0.95, 0.80, 0.35);
-        case 4u: return float3(0.92, 0.88, 0.80);
-        case 5u: return float3(0.95, 0.88, 0.65);
-        case 6u: return float3(0.93, 0.92, 0.86);
-        case 7u: return float3(0.55, 0.12, 0.12);
-        case 8u: return float3(0.80, 0.10, 0.08);
-        case 9u: return float3(0.30, 0.18, 0.40);
-        case 10u: return float3(0.92, 0.88, 0.72);
-        case 11u: return float3(0.98, 0.88, 0.48);
-        case 12u: return float3(0.90, 0.85, 0.70);
-        case 13u: return float3(0.35, 0.02, 0.02);
+        case 1u: return float3(0.76, 0.52, 0.36);  // epidermis: baked tone 0.3 with chlorhexidine tint
+        case 2u: return float3(0.93, 0.84, 0.80);  // dermis
+        case 3u: return float3(0.96, 0.79, 0.33);  // fat
+        case 4u: return float3(0.94, 0.91, 0.84);  // septum
+        case 5u: return float3(0.90, 0.89, 0.86);  // Scarpa's fascia
+        case 6u: return float3(0.90, 0.89, 0.86);  // deep fascia
+        case 7u: return float3(0.56, 0.13, 0.11);  // muscle
+        case 8u: return float3(0.66, 0.08, 0.07);  // artery
+        case 9u: return float3(0.33, 0.17, 0.30);  // vein
+        case 10u: return float3(0.94, 0.91, 0.78); // nerve
+        case 11u: return float3(0.98, 0.86, 0.48); // lipoma
+        case 12u: return float3(0.93, 0.88, 0.74); // capsule
+        case 13u: return float3(0.32, 0.02, 0.02); // blood
         default: return float3(0.08, 0.09, 0.11);
+    }
+}
+// Colour each tissue turns when coagulated (blanched skin, white dermis, rendered fat, cooked muscle, brown coagulum).
+float3 CoagColor(uint ty)
+{
+    switch (ty)
+    {
+        case 1u: return float3(0.80, 0.70, 0.58);
+        case 2u: return float3(0.86, 0.81, 0.74);
+        case 3u: return float3(0.86, 0.70, 0.42);
+        case 11u: return float3(0.88, 0.74, 0.48);
+        case 7u: return float3(0.66, 0.52, 0.46);
+        case 8u: case 13u: return float3(0.36, 0.18, 0.12);
+        case 9u: return float3(0.30, 0.17, 0.16);
+        default: return float3(0.84, 0.80, 0.70);
     }
 }
 float3 TempRamp(float t)
@@ -651,54 +669,146 @@ float3 TempRamp(float t)
     return lerp(c4, float3(1, 1, 1), smoothstep(0.85, 1.0, x));
 }
 
+/** Thermal damage colour: log scale on Omega; amber at blanching (0.53), red at irreversible (1), white beyond. Mirrored in SimUI legend. */
+float3 DamageRamp(float om)
+{
+    float x = saturate((log10(max(om, 1e-3)) + 2.0) / 3.0); // 0.01 -> 0, 10 -> 1
+    float3 c = lerp(float3(0.08, 0.12, 0.35), float3(0.10, 0.45, 0.60), smoothstep(0.0, 0.45, x));
+    c = lerp(c, float3(0.95, 0.70, 0.15), smoothstep(0.45, 0.57, x));
+    c = lerp(c, float3(0.90, 0.15, 0.10), smoothstep(0.57, 0.667, x));
+    return lerp(c, float3(1.0, 0.95, 0.90), smoothstep(0.667, 1.0, x));
+}
+
+float3 TissueStateColor(uint c, uint idx)
+{
+    uint ty = CellType(c), st = CellState(c);
+    float3 col = TissueColor(ty);
+    col = lerp(col, CoagColor(ty), smoothstep(0.25, 1.0, _Omega[idx]) * 0.9);
+    if (st == S_DESIC) col = float3(0.62, 0.48, 0.32);
+    if (st == S_CARBON) col = float3(0.04, 0.035, 0.03);
+    if ((c & FLAG_SEALED) != 0u) col = lerp(col, float3(0.2, 0.9, 0.3), 0.5);
+    if ((c & FLAG_CHARPLUG) != 0u) col = lerp(col, float3(0.1, 0.05, 0.0), 0.7);
+    if ((c & FLAG_COAPTED) != 0u) col = lerp(col, float3(0.3, 0.6, 1.0), 0.4);
+    return col;
+}
+
+/** Display colour of one voxel in section mode 0-4 (mode 5 needs neighbour differences; see Slice). */
+float3 CellModeColor(uint idx, uint mode)
+{
+    uint c = _Cells[idx]; uint ty = CellType(c), st = CellState(c);
+    if (mode == 4u) return TempRamp(37.0 + 263.0 * saturate(_Src[idx]));
+    if (mode == 1u) return TempRamp(_Src[idx]);
+    if (mode == 2u) return st == S_CARBON ? float3(0, 0, 0) : DamageRamp(_Omega[idx]);
+    if (mode == 3u) return lerp(float3(0.5, 0.3, 0.15), float3(0.2, 0.5, 1.0), saturate(_Water[idx] / max(Prop(ty).water, 1e-3)));
+    return TissueStateColor(c, idx);
+}
+
+/** fractional voxel coordinates of a point in mm (inverse of VoxelToWorld) */
+float3 VoxelFrac(float3 p) { return float3(p.x / HMM + NX * 0.5 - 0.5, p.z / HMM + NY * 0.5 - 0.5, p.y / HMM + (NZ - AIR) - 0.5); }
+
+/** Trilinear, occupancy-weighted sample: rgb colour, a = tissue coverage; scal = (temperature, Omega). */
+float4 SampleSection(float3 p, uint mode, bool wantColor, out float2 scal)
+{
+    float3 f = VoxelFrac(p);
+    int3 b = (int3)floor(f); float3 t = f - b;
+    float3 acc = 0; float wsum = 0, cov = 0; float2 sc = 0;
+    for (uint n = 0u; n < 8u; n++)
+    {
+        int3 o = int3(n & 1u, (n >> 1) & 1u, (n >> 2) & 1u);
+        int3 v = b + o;
+        if (!InVolume(v.x, v.y, v.z)) continue;
+        float w = (o.x ? t.x : 1 - t.x) * (o.y ? t.y : 1 - t.y) * (o.z ? t.z : 1 - t.z);
+        uint idx = Idx3(v.x, v.y, v.z);
+        if (CellType(_Cells[idx]) == T_AIR) continue;
+        float wo = w * saturate(_Occ[idx]);
+        if (wo <= 0.0) continue;
+        cov += wo; wsum += wo;
+        if (wantColor) acc += CellModeColor(idx, mode) * wo;
+        sc += float2(_Src[idx], _Omega[idx]) * wo;
+    }
+    scal = wsum > 0.0 ? sc / wsum : float2(37.0, 0.0);
+    return float4(wsum > 0.0 ? acc / wsum : float3(0, 0, 0), cov);
+}
+
+bool Crosses(float a, float b, float c, float level) { return (a - level) * (b - level) < 0.0 || (a - level) * (c - level) < 0.0; }
+
 [numthreads(8, 8, 1)]
 void Slice(uint3 gid : SV_DispatchThreadID)
 {
     uint W = (uint)_SliceU.w, H = (uint)_SliceV.w;
     if (gid.x >= W || gid.y >= H) return;
+    uint mode = (uint)_SliceParams.y, flags = (uint)_SliceParams.z;
     float fu = (gid.x + 0.5) / W - 0.5, fv = (gid.y + 0.5) / H;
+    float3 du = _SliceU.xyz * (_SliceO.w / W), dv = _SliceV.xyz * (_SliceParams.x / H);
     float3 p = _SliceO.xyz + _SliceU.xyz * (fu * _SliceO.w) + _SliceV.xyz * (fv * _SliceParams.x);
-    int3 v = WorldToVoxelRound(p);
-    float3 col = float3(0.06, 0.07, 0.09);
-    if (InVolume(v.x, v.y, v.z))
+    float3 bg = float3(0.06, 0.07, 0.09);
+    float3 col = bg;
+    float2 s0, s1, s2;
+    float4 c0 = SampleSection(p, mode, mode != 5u, s0);
+    if (mode == 5u)
     {
-        uint idx = Idx3(v.x, v.y, v.z);
-        uint c = _Cells[idx];
-        uint ty = CellType(c), st = CellState(c);
-        if (_Occ[idx] >= 0.5 && ty != T_AIR)
+        // current density stays per voxel (it is a difference of neighbouring potentials)
+        int3 v = WorldToVoxelRound(p);
+        if (InVolume(v.x, v.y, v.z))
         {
-            uint mode = (uint)_SliceParams.y;
-            if (mode == 4u) col = TempRamp(37.0 + 263.0 * saturate(_Src[idx]));
-            else if (mode == 5u)
+            uint idx = Idx3(v.x, v.y, v.z);
+            float sg = SigmaOfPot(idx), q = 0.0;
+            for (int n = 0; n < 6; n++)
             {
-                float s0 = SigmaOfPot(idx), q = 0.0;
-                for (int n = 0; n < 6; n++)
-                {
-                    int3 o = NB6[n];
-                    int ii = v.x + o.x, jj = v.y + o.y, kk = v.z + o.z;
-                    if (!InVolume(ii, jj, kk)) continue;
-                    uint nidx = Idx3(ii, jj, kk);
-                    float dphi = _Src[nidx] - _Src[idx];
-                    q += 0.5 * Harmonic(s0, SigmaOfPot(nidx)) * dphi * dphi / (HM * HM);
-                }
-                col = TempRamp(37.0 + 263.0 * saturate((log10(max(q, 1.0)) - 3.0) / 6.0));
+                int3 o = NB6[n];
+                int ii = v.x + o.x, jj = v.y + o.y, kk = v.z + o.z;
+                if (!InVolume(ii, jj, kk)) continue;
+                uint nidx = Idx3(ii, jj, kk);
+                float dphi = _Src[nidx] - _Src[idx];
+                q += 0.5 * Harmonic(sg, SigmaOfPot(nidx)) * dphi * dphi / (HM * HM);
             }
-            else if (mode == 1u) col = TempRamp(_Src[idx]);
-            else if (mode == 2u) { col = lerp(float3(0.1, 0.2, 0.6), float3(1.0, 0.95, 0.9), saturate(_Omega[idx])); if (st == S_CARBON) col = float3(0, 0, 0); }
-            else if (mode == 3u) col = lerp(float3(0.5, 0.3, 0.15), float3(0.2, 0.5, 1.0), saturate(_Water[idx] / max(Prop(ty).water, 1e-3)));
-            else
-            {
-                col = TissueColor(ty);
-                col = lerp(col, float3(0.88, 0.85, 0.82), smoothstep(0.25, 1.0, _Omega[idx]) * 0.85);
-                if (st == S_DESIC) col = lerp(col, float3(0.45, 0.33, 0.22), 0.7);
-                if (st == S_CARBON) col = float3(0.03, 0.025, 0.02);
-                if ((c & FLAG_SEALED) != 0u) col = lerp(col, float3(0.2, 0.9, 0.3), 0.5);
-                if ((c & FLAG_CHARPLUG) != 0u) col = lerp(col, float3(0.1, 0.05, 0.0), 0.7);
-                if ((c & FLAG_COAPTED) != 0u) col = lerp(col, float3(0.3, 0.6, 1.0), 0.4);
-            }
+            c0.rgb = TempRamp(37.0 + 263.0 * saturate((log10(max(q, 1.0)) - 3.0) / 6.0));
         }
+    }
+    col = lerp(bg, c0.rgb, smoothstep(0.35, 0.65, c0.a));
+    // isotherms (45, 60, 100 C) and the irreversible-damage boundary (Omega = 1); temperature modes only
+    if (mode <= 2u && c0.a > 0.5 && flags != 0u)
+    {
+        float4 c1 = SampleSection(p + du, mode, false, s1);
+        float4 c2 = SampleSection(p + dv, mode, false, s2);
+        if ((flags & 1u) != 0u)
+        {
+            bool tempMode = mode == 1u;
+            if (Crosses(s0.x, s1.x, s2.x, 45.0)) col = tempMode ? float3(0, 0, 0) : float3(0.30, 0.90, 1.00);
+            if (Crosses(s0.x, s1.x, s2.x, 60.0)) col = tempMode ? float3(0, 0, 0) : float3(1.00, 0.85, 0.20);
+            if (Crosses(s0.x, s1.x, s2.x, 100.0)) col = tempMode ? float3(1, 1, 1) : float3(1.00, 0.30, 0.20);
+        }
+        if ((flags & 2u) != 0u && Crosses(s0.y, s1.y, s2.y, 1.0) && ((gid.x + gid.y) / 4u) % 2u == 0u)
+            col = mode == 2u ? float3(0, 0, 0) : float3(1, 1, 1);
     }
     if (ElectrodeDistance(p) <= 0.0 && _Gen2.w > 0.0) col = float3(0.75, 0.75, 0.78);
     // texture row 0 is the bottom in Unity; flip so depth increases downward on screen
     _SliceTex[uint2(gid.x, H - 1u - gid.y)] = float4(col, 1.0);
+}
+
+// ------------------------------------------------------------------ skin-edge thermal rim
+// For each irreversibly damaged epidermis/dermis voxel in the wound box, the horizontal distance (voxels)
+// to the nearest removed voxel (an incision wall). Histogram -> the CPU takes a high percentile as the rim.
+[numthreads(4, 4, 4)]
+void RimMeasure(uint3 gid : SV_DispatchThreadID)
+{
+    int i = _WBox0.x + (int)gid.x, j = _WBox0.y + (int)gid.y, k = _WBox0.z + (int)gid.z;
+    if ((int)gid.x >= _WBox1.x || (int)gid.y >= _WBox1.y || (int)gid.z >= _WBox1.z || !InVolume(i, j, k)) return;
+    uint idx = Idx3(i, j, k);
+    uint c = _Cells[idx]; uint ty = CellType(c);
+    if ((ty != T_EPI && ty != T_DERMIS) || _Occ[idx] < 0.5 || _Omega[idx] < 1.0) return;
+    int R = 15;
+    int best = R;
+    for (int d = 1; d < R && d < best; d++)
+    {
+        int2 offs[4] = { int2(d, 0), int2(-d, 0), int2(0, d), int2(0, -d) };
+        for (int q = 0; q < 4; q++)
+        {
+            int ii = i + offs[q].x, jj = j + offs[q].y;
+            if (!InVolume(ii, jj, k)) continue;
+            uint nidx = Idx3(ii, jj, k);
+            if (_Occ[nidx] < 0.5) { best = d; break; }
+        }
+    }
+    uint dummy; InterlockedAdd(_RimHist[(uint)best], 1u, dummy);
 }

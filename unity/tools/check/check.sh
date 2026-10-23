@@ -12,7 +12,7 @@ report() { # $1 label, $2 log
   errs=$(grep -Ev "$FILTER" "$2" | grep -E "error|warning CS0618" || true)
   if [ -n "$errs" ]; then echo "$errs"; echo "== $1: FAILED"; status=1; else echo "== $1: ok"; fi
 }
-R="$UNITY_REFS"; REFS=""; for m in CoreModule IMGUIModule InputLegacyModule AudioModule JSONSerializeModule TextRenderingModule; do REFS="$REFS -r:$R/UnityEngine.$m.dll"; done
+R="$UNITY_REFS"; REFS=""; for m in CoreModule IMGUIModule InputLegacyModule AudioModule JSONSerializeModule TextRenderingModule UIElementsModule; do REFS="$REFS -r:$R/UnityEngine.$m.dll"; done
 mcs -target:library -out:"$OUT/rt.dll" -define:BOVIE_INPUTSYSTEM $REFS "$HERE/stubs_inputsystem.cs" "$HERE/stubs_unity6_hdrp.cs" \
   $(find "$B/Core" "$B/Runtime" -name "*.cs") > "$OUT/rt.log" 2>&1
 report "runtime (module refs)" "$OUT/rt.log"

@@ -57,6 +57,19 @@
   passes under Mono. **Not yet verified: the first real Unity import, HDRP rendering, GPU parity
   with the WebGPU build and performance**; those need the project opened on the user's machine.
 
+## Unity client, round 1 (interface, latency, section, colour)
+- UI Toolkit interface replaces IMGUI: status with live Z/P/V, live objectives checklist (OK/NEAR/FAIL/DONE,
+  `Core/Objectives.cs`), FT10 touchscreen-style panel, event feed, scenario brief, controls, F3 timing readout.
+- Latency: same-frame CPU pick on a GPU-refreshed height map (`SurfacePicker`), one queued frame, SMAA
+  instead of TAA, depth of field off by default.
+- Section view: 640 × 400, trilinear sampling, zoom to the full bed depth, isotherms (45/60/100 °C),
+  dashed Ω = 1 outline, depth scale, layer labels, per-mode legend.
+- Skin-edge thermal rim measured on the GPU (`RimMeasure`, 95th percentile) for the rim objectives.
+- Tissue surface extracted from a smoothed occupancy field (no voxel stair-steps).
+- Colour: one reference palette (`Core/TissuePalette.cs`) for textures, section and legend; scenario skin
+  tone and prep applied at runtime; Neutral tonemapping and white balance for the 4300 K light.
+- Not yet verified in Unity: all of the above (compiled and unit-tested here only).
+
 ## Known gaps (next)
 - Picking and tool placement use material coordinates: with large deformation the instrument
   draws slightly off the displaced surface.

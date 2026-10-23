@@ -21,6 +21,10 @@ namespace BovieSim
         public Material pencilCoagButton;
         public Material particlesAlpha;
         public Material particlesAdditive;
+        [Tooltip("UI Toolkit runtime theme (Generated/BovieTheme.tss)")] public UnityEngine.UIElements.ThemeStyleSheet uiTheme;
+        [Tooltip("Set Up Project version that produced these assets; older registries trigger a re-run")] public int setupVersion;
+        /// <summary>bump when Set Up Project must be re-run after an update</summary>
+        public const int CurrentSetupVersion = 2;
 
         public static SimAssets Load()
         {

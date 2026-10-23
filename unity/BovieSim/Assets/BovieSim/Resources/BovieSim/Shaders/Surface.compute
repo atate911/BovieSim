@@ -4,7 +4,10 @@
 //   CountTris   : triangles per bucket
 //   ScanBuckets : prefix sum -> per-bucket vertex ranges and indexed indirect draw args
 //   EmitTris    : write vertices (position deformed by the mechanics lattice, normal, tangent)
+// SmoothOcc runs first: a binomial 3x3x3 filter of the occupancy field, so the isosurface follows a
+// smooth boundary instead of voxel steps (cut walls, craters, the lipoma).
 // BloodMesh builds the blood-pool surface (one vertex per surface column).
+#pragma kernel SmoothOcc
 #pragma kernel CountTris
 #pragma kernel ScanBuckets
 #pragma kernel EmitTris
@@ -16,6 +19,7 @@
 #define VERTEX_STRIDE 48
 
 StructuredBuffer<float> _Occ;
+RWStructuredBuffer<float> _OccS;         // smoothed occupancy (written by SmoothOcc, read by the marching passes)
 StructuredBuffer<uint> _Cells;
 StructuredBuffer<float4> _BloodCols;     // per column: h, age, surfY, hNext
 RWStructuredBuffer<uint> _BucketCount;   // NUM_BUCKETS
@@ -51,13 +55,30 @@ float OccAt(int i, int j, int k)
 {
     return _Occ[Idx3(clamp(i, 0, NX - 1), clamp(j, 0, NY - 1), clamp(k, 0, NZ - 1))];
 }
-float OccSmooth(int i, int j, int k)
+float OccS(int i, int j, int k)
 {
-    return (OccAt(i, j, k) * 2.0 + OccAt(i + 1, j, k) + OccAt(i - 1, j, k) + OccAt(i, j + 1, k) + OccAt(i, j - 1, k) + OccAt(i, j, k + 1) + OccAt(i, j, k - 1)) / 8.0;
+    return _OccS[Idx3(clamp(i, 0, NX - 1), clamp(j, 0, NY - 1), clamp(k, 0, NZ - 1))];
 }
 float3 GradAt(int i, int j, int k)
 {
-    return float3(OccSmooth(i + 1, j, k) - OccSmooth(i - 1, j, k), OccSmooth(i, j + 1, k) - OccSmooth(i, j - 1, k), OccSmooth(i, j, k + 1) - OccSmooth(i, j, k - 1)) * 0.5;
+    return float3(OccS(i + 1, j, k) - OccS(i - 1, j, k), OccS(i, j + 1, k) - OccS(i, j - 1, k), OccS(i, j, k + 1) - OccS(i, j, k - 1)) * 0.5;
+}
+
+[numthreads(4, 4, 4)]
+void SmoothOcc(uint3 gid : SV_DispatchThreadID)
+{
+    int i = (int)gid.x, j = (int)gid.y, k = (int)gid.z;
+    if (i >= NX || j >= NY || k >= NZ) return;
+    float sum = 0.0;
+    for (int dk = -1; dk <= 1; dk++)
+        for (int dj = -1; dj <= 1; dj++)
+            for (int di = -1; di <= 1; di++)
+            {
+                // binomial weights 1-2-1 per axis (sum 64)
+                float w = (di == 0 ? 2.0 : 1.0) * (dj == 0 ? 2.0 : 1.0) * (dk == 0 ? 2.0 : 1.0);
+                sum += w * OccAt(i + di, j + dj, k + dk);
+            }
+    _OccS[Idx3(i, j, k)] = sum / 64.0;
 }
 
 static float cF[8];
@@ -77,7 +98,11 @@ V EdgeVertex(uint a, uint b)
     v.p = VoxelToWorld(p);
     // index-space gradient -> world axes (i->x, j->z, k->y); normal points toward air
     v.n = normalize(-float3(g.x, g.z, g.y) + float3(1e-6, 0, 0));
-    v.cell = _Cells[cF[a] >= ISO ? cIdx[a] : cIdx[b]];
+    // material from the more solid of the two raw corners (the smoothed field can mark an air voxel inside)
+    uint ia = cIdx[a], ib = cIdx[b];
+    uint ca = _Cells[ia], cb = _Cells[ib];
+    bool pickA = CellType(cb) == T_AIR || (CellType(ca) != T_AIR && _Occ[ia] >= _Occ[ib]);
+    v.cell = pickA ? ca : cb;
     return v;
 }
 
@@ -139,7 +164,7 @@ void March(uint3 gid, uint mode)
     {
         int3 o = OFFS[c];
         uint idx = Idx3(i + o.x, j + o.y, k + o.z);
-        float f = _Occ[idx];
+        float f = _OccS[idx];
         cF[c] = f; cIdx[c] = idx; cP[c] = float3(i + o.x, j + o.y, k + o.z);
         allIn = allIn && (f >= ISO); allOut = allOut && (f < ISO);
     }

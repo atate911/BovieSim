@@ -30,6 +30,14 @@ namespace UnityEngine {
     public static Vector3 Cross(Vector3 a, Vector3 b) { return new Vector3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x); }
     public static implicit operator Vector3(Vector4 v) { return new Vector3(v.x, v.y, v.z); }
   }
+  public struct Color {
+    public float r, g, b, a;
+    public Color(float r, float g, float b, float a = 1f) { this.r = r; this.g = g; this.b = b; this.a = a; }
+    public static Color white { get { return new Color(1, 1, 1, 1); } }
+    public static Color Lerp(Color x, Color y, float t) { t = Mathf.Clamp01(t); return new Color(x.r + (y.r - x.r) * t, x.g + (y.g - x.g) * t, x.b + (y.b - x.b) * t, x.a + (y.a - x.a) * t); }
+    public static Color operator *(Color x, Color y) { return new Color(x.r * y.r, x.g * y.g, x.b * y.b, x.a * y.a); }
+    public static Color operator *(Color x, float s) { return new Color(x.r * s, x.g * s, x.b * s, x.a * s); }
+  }
   public struct Vector4 { public float x, y, z, w; public Vector4(float x, float y, float z, float w) { this.x = x; this.y = y; this.z = z; this.w = w; } }
   public static class JsonUtility { public static T FromJson<T>(string s) { throw new NotSupportedException("JsonUtility needs the Unity runtime"); } }
 }

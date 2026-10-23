@@ -339,4 +339,46 @@ namespace BovieSim.Tests
                 Assert.IsFalse(string.IsNullOrEmpty(bus.Teaching(t)), "no teaching text for " + t);
         }
     }
+
+    public class ObjectivesTests
+    {
+        static Objectives Make(params Criterion[] cs) { var ed = new EducationSpec(); ed.success.AddRange(cs); return new Objectives(ed); }
+
+        [Test]
+        public void LimitWarnsAt80PercentAndFailsAtTheLimit()
+        {
+            var c = new Criterion { metric = "bloodLostMl", op = "<", value = 5 };
+            Assert.AreEqual((double)(int)ObjectiveState.Ok, (double)(int)Objectives.Evaluate(c, 1f, true), 0);
+            Assert.AreEqual((double)(int)ObjectiveState.Warning, (double)(int)Objectives.Evaluate(c, 4.2f, true), 0);
+            Assert.AreEqual((double)(int)ObjectiveState.Failed, (double)(int)Objectives.Evaluate(c, 5f, true), 0);
+        }
+
+        [Test]
+        public void CumulativeFailureIsStickyButCurrentStateIsNot()
+        {
+            var o = Make(new Criterion { metric = "bloodLostMl", op = "<", value = 5 }, new Criterion { metric = "exposedBleeding", op = "==", value = 0 });
+            float blood = 6, open = 1;
+            o.Update(m => m == "bloodLostMl" ? blood : open);
+            Assert.AreEqual((double)(int)ObjectiveState.Failed, (double)(int)o.items[0].state, 0);
+            Assert.AreEqual((double)(int)ObjectiveState.Warning, (double)(int)o.items[1].state, 0);
+            blood = 1; open = 0;
+            o.Update(m => m == "bloodLostMl" ? blood : open);
+            Assert.AreEqual((double)(int)ObjectiveState.Failed, (double)(int)o.items[0].state, 0);
+            Assert.AreEqual((double)(int)ObjectiveState.Ok, (double)(int)o.items[1].state, 0);
+        }
+
+        [Test]
+        public void AchievementStaysMetAndUnavailableMetricsStayPending()
+        {
+            var o = Make(new Criterion { metric = "lesionDelivered", op = "==", value = 1 }, new Criterion { metric = "dermalEdgeDamageMm", op = "<", value = 0.5f });
+            float delivered = 0;
+            o.Update(m => m == "lesionDelivered" ? delivered : float.NaN);
+            Assert.AreEqual((double)(int)ObjectiveState.Pending, (double)(int)o.items[0].state, 0);
+            Assert.AreEqual((double)(int)ObjectiveState.Pending, (double)(int)o.items[1].state, 0);
+            delivered = 1; o.Update(m => m == "lesionDelivered" ? delivered : float.NaN);
+            delivered = 0; o.Update(m => m == "lesionDelivered" ? delivered : float.NaN);
+            Assert.AreEqual((double)(int)ObjectiveState.Met, (double)(int)o.items[0].state, 0);
+            Assert.IsFalse(o.AllMet);
+        }
+    }
 }

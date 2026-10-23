@@ -40,10 +40,14 @@ namespace BovieSim.EditorTools
         {
             EditorApplication.delayCall += () =>
             {
-                if (File.Exists(RegistryPath) || SessionState.GetBool("BovieSim.SetupOffered", false)) return;
+                if (SessionState.GetBool("BovieSim.SetupOffered", false)) return;
+                var existing = AssetDatabase.LoadAssetAtPath<SimAssets>(RegistryPath);
+                if (existing != null && existing.setupVersion >= SimAssets.CurrentSetupVersion) return;
                 SessionState.SetBool("BovieSim.SetupOffered", true);
-                if (EditorUtility.DisplayDialog("Bovie Sim", "Set up the project now? This configures HDRP, bakes tissue textures and materials, downloads a CC0 HDRI and drape fabric (optional), and creates the Main scene. It takes a minute or two.", "Set up", "Later"))
-                    Run();
+                string msg = existing == null
+                    ? "Set up the project now? This configures HDRP, bakes tissue textures and materials, downloads a CC0 HDRI and drape fabric (optional), and creates the Main scene. It takes a minute or two."
+                    : "Bovie Sim was updated and its generated assets (materials, interface theme, scene) need rebuilding. Run Set Up Project now?";
+                if (EditorUtility.DisplayDialog("Bovie Sim", msg, "Set up", "Later")) Run();
             };
         }
 
@@ -81,7 +85,7 @@ namespace BovieSim.EditorTools
                 }
 
                 Progress("Instrument and field materials", 0.62f);
-                assets.blood = LitMaterial("Blood", new Color(0.28f, 0.015f, 0.012f), 0, 0.92f, 1f);
+                assets.blood = LitMaterial("Blood", TissuePalette.BloodPooled, 0, 0.92f, 1f);
                 assets.steel = LitMaterial("Steel", new Color(0.78f, 0.78f, 0.80f), 1, 0.82f, 0);
                 assets.pencilBody = LitMaterial("PencilBody", new Color(0.90f, 0.87f, 0.78f), 0, 0.5f, 0);
                 assets.pencilCutButton = LitMaterial("PencilCut", new Color(0.92f, 0.78f, 0.12f), 0, 0.55f, 0);
@@ -91,6 +95,8 @@ namespace BovieSim.EditorTools
                 assets.drape = DrapeMaterial();
                 assets.particlesAlpha = ParticleMaterial("ParticlesAlpha", BlendMode.SrcAlpha, BlendMode.OneMinusSrcAlpha);
                 assets.particlesAdditive = ParticleMaterial("ParticlesAdditive", BlendMode.One, BlendMode.One);
+                assets.uiTheme = RuntimeTheme();
+                assets.setupVersion = SimAssets.CurrentSetupVersion;
                 EditorUtility.SetDirty(assets);
 
                 Progress("Downloading HDRI (Poly Haven, CC0)", 0.75f);
@@ -126,6 +132,8 @@ namespace BovieSim.EditorTools
         static void ConfigurePlayer()
         {
             PlayerSettings.colorSpace = ColorSpace.Linear;
+            // CPU/GPU frame times for the F3 timing readout
+            PlayerSettings.enableFrameTimingStats = true;
             // the sim reads the legacy Input class (mouse, keys) and the Input System (pen): needs "Both"
             var ps = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset");
             if (ps != null && ps.Length > 0)
@@ -141,6 +149,17 @@ namespace BovieSim.EditorTools
             if (b == 16) return "Desiccated";
             if (b == 17) return "Carbonized";
             return TissueTextures.ClassNames[b % 8] + (b >= 8 ? "Coag" : "");
+        }
+
+        /// <summary>UI Toolkit runtime theme: the stock default theme, imported from a one-line .tss file.</summary>
+        static UnityEngine.UIElements.ThemeStyleSheet RuntimeTheme()
+        {
+            string path = Root + "/BovieTheme.tss";
+            File.WriteAllText(path, "@import url(\"unity-theme://default\");\n");
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            var theme = AssetDatabase.LoadAssetAtPath<UnityEngine.UIElements.ThemeStyleSheet>(path);
+            if (theme == null) Debug.LogWarning("[Bovie Sim] Could not import the UI theme at " + path + "; the interface may render without fonts.");
+            return theme;
         }
 
         // ---- diffusion profiles ----------------------------------------------------------------------
@@ -201,7 +220,7 @@ namespace BovieSim.EditorTools
         static Material TissueMaterial(int bucket, DiffusionProfileSettings skin, DiffusionProfileSettings fat, DiffusionProfileSettings muscle)
         {
             string name = "Tissue_" + bucket.ToString("00") + "_" + BucketName(bucket);
-            var set = TissueTextures.Bake(bucket, TexSize, 0.3f);
+            var set = TissueTextures.Bake(bucket, TexSize, TissuePalette.BakedTone);
             var albedo = SaveTexture(name + "_Albedo", set.albedo, TexSize, false, false);
             var normal = SaveTexture(name + "_Normal", set.normal, TexSize, true, true);
             var mask = SaveTexture(name + "_Mask", set.mask, TexSize, true, false);
@@ -384,7 +403,10 @@ namespace BovieSim.EditorTools
             var exp = Override<Exposure>(p);
             exp.mode.Override(ExposureMode.Fixed);
             exp.fixedExposure.Override(15f);
-            Override<Tonemapping>(p).mode.Override(TonemappingMode.ACES);
+            // Neutral keeps tissue hues (ACES shifts saturated reds and yellows toward orange)
+            Override<Tonemapping>(p).mode.Override(TonemappingMode.Neutral);
+            // the eye adapts to the 4300 K operating light: cool the image so white fascia reads white
+            Override<WhiteBalance>(p).temperature.Override(-18f);
             Override<Bloom>(p).intensity.Override(0.12f);
             var ao = Override<ScreenSpaceAmbientOcclusion>(p);
             ao.intensity.Override(0.6f); ao.radius.Override(0.25f);
@@ -410,7 +432,7 @@ namespace BovieSim.EditorTools
             cam.nearClipPlane = 0.005f; cam.farClipPlane = 50f; cam.fieldOfView = 35f;
             camGo.AddComponent<AudioListener>();
             var hdCam = camGo.AddComponent<HDAdditionalCameraData>();
-            hdCam.antialiasing = HDAdditionalCameraData.AntialiasingMode.TemporalAntialiasing;
+            hdCam.antialiasing = HDAdditionalCameraData.AntialiasingMode.SubpixelMorphologicalAntiAliasing;
             camGo.transform.position = new Vector3(0.04f, 0.12f, 0.1f);
             camGo.transform.LookAt(Vector3.zero);
 

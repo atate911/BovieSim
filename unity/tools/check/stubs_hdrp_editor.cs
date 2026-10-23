@@ -23,6 +23,7 @@ namespace UnityEngine.Rendering.HighDefinition
     public class ExposureModeParameter : VolumeParameter<ExposureMode> { }
     public class Exposure : VolumeComponent { public ExposureModeParameter mode = new ExposureModeParameter(); public FloatParameter fixedExposure = new FloatParameter(0); }
     public enum TonemappingMode { None, Neutral, ACES }
+    public class WhiteBalance : VolumeComponent { public ClampedFloatParameter temperature = new ClampedFloatParameter(0, -100, 100), tint = new ClampedFloatParameter(0, -100, 100); }
     public class TonemappingModeParameter : VolumeParameter<TonemappingMode> { }
     public class Tonemapping : VolumeComponent { public TonemappingModeParameter mode = new TonemappingModeParameter(); }
     public class Bloom : VolumeComponent { public ClampedFloatParameter intensity = new ClampedFloatParameter(0, 0, 1); }
@@ -32,5 +33,4 @@ namespace UnityEngine.Rendering.HighDefinition
     public class HDShadowSettings : VolumeComponent { public NoInterpMinFloatParameter maxShadowDistance = new NoInterpMinFloatParameter(); }
     public class DiffusionProfileSettingsParameter : VolumeParameter<DiffusionProfileSettings[]> { }
     public class DiffusionProfileList : VolumeComponent { public DiffusionProfileSettingsParameter diffusionProfiles = new DiffusionProfileSettingsParameter(); }
-    public class HDAdditionalCameraData : MonoBehaviour { public enum AntialiasingMode { None, FastApproximateAntialiasing, TemporalAntialiasing } public AntialiasingMode antialiasing; }
 }

@@ -77,11 +77,10 @@ namespace BovieSim.EditorTools
                     float crease = Mathf.Abs(F(u, v * 0.35, 6, 4, 21) - 0.5f) * 2; crease = 1 - Smooth(0.0f, 0.06f, crease);
                     float crease2 = Mathf.Abs(F(u * 0.4, v, 9, 3, 23) - 0.5f) * 2; crease2 = 1 - Smooth(0.0f, 0.05f, crease2);
                     float mott = F(u, v, 4, 4, 31);
-                    var light = new Color(0.86f, 0.68f, 0.58f); var dark = new Color(0.38f, 0.24f, 0.17f);
-                    c = Color.Lerp(light, dark, tone);
+                    c = TissuePalette.Skin(tone);
                     c = Color.Lerp(c, c * new Color(1.05f, 0.86f, 0.84f), (mott - 0.4f) * 0.8f);
                     c *= 1 - pores * 0.12f - (crease + crease2 * 0.6f) * 0.08f;
-                    c *= new Color(1.0f, 0.93f, 0.86f); // tinted chlorhexidine-alcohol prep
+                    c *= TissuePalette.Prep(TissuePalette.BakedPrep); // the runtime corrects to the scenario prep and tone
                     h = -pores * 0.35f - crease * 0.5f - crease2 * 0.3f + F(u, v, 24, 3, 37) * 0.25f;
                     s = 0.42f + mott * 0.1f - pores * 0.1f;
                     break;
@@ -92,8 +91,8 @@ namespace BovieSim.EditorTools
                     float dot = 1 - Smooth(0.04f, 0.11f, (float)pt.f1);
                     bool bleeds = pt.id % 3 == 0;
                     float fib = F(u * 3, v * 0.6, 10, 4, 43);
-                    c = Color.Lerp(new Color(0.86f, 0.70f, 0.66f), new Color(0.93f, 0.82f, 0.78f), fib);
-                    if (bleeds) c = Color.Lerp(c, new Color(0.55f, 0.06f, 0.05f), dot * 0.9f);
+                    c = Color.Lerp(TissuePalette.Dermis * new Color(0.93f, 0.85f, 0.84f), TissuePalette.Dermis, fib);
+                    if (bleeds) c = Color.Lerp(c, TissuePalette.BloodFresh, dot * 0.9f);
                     h = fib * 0.3f + (bleeds ? -dot * 0.15f : 0);
                     s = 0.58f + (bleeds ? dot * 0.3f : 0);
                     break;
@@ -106,13 +105,13 @@ namespace BovieSim.EditorTools
                     float edge = (float)(lob.f2 - lob.f1);
                     float septum = 1 - Smooth(0.02f, lip ? 0.05f : 0.08f, edge);
                     float tint = (lob.id % 17) / 17f;
-                    var fat = lip ? new Color(0.98f, 0.88f, 0.55f) : new Color(0.96f, 0.80f, 0.38f);
+                    var fat = lip ? TissuePalette.Lipoma : TissuePalette.Fat;
                     c = Color.Lerp(fat, fat * new Color(1.02f, 0.94f, 0.85f), tint);
                     c *= 0.92f + 0.1f * F(u, v, 32, 3, 57);
-                    c = Color.Lerp(c, new Color(0.95f, 0.90f, 0.82f), septum * 0.75f);
+                    c = Color.Lerp(c, TissuePalette.Septum, septum * 0.75f);
                     // fine vessels running in the septa
                     float vessel = septum * Smooth(0.62f, 0.75f, F(u, v, 12, 3, 59));
-                    if (!lip) c = Color.Lerp(c, new Color(0.62f, 0.10f, 0.08f), vessel * 0.8f);
+                    if (!lip) c = Color.Lerp(c, TissuePalette.Artery, vessel * 0.8f);
                     float bulge = Mathf.Sqrt(Mathf.Clamp01(1 - (float)lob.f1 * 1.1f));
                     h = bulge * 0.8f - septum * 0.4f;
                     s = 0.74f + bulge * 0.12f;
@@ -122,7 +121,7 @@ namespace BovieSim.EditorTools
                 {
                     float str = F(u * 0.5, v * 8, 4, 4, 61);
                     float sheen = F(u, v, 6, 3, 63);
-                    c = Color.Lerp(new Color(0.82f, 0.80f, 0.76f), new Color(0.93f, 0.92f, 0.89f), str);
+                    c = Color.Lerp(TissuePalette.Fascia * 0.91f, TissuePalette.Fascia * 1.03f, str);
                     c = Color.Lerp(c, new Color(0.85f, 0.74f, 0.70f), Smooth(0.6f, 0.8f, sheen) * 0.3f);
                     h = str * 0.5f;
                     s = 0.72f + str * 0.12f;
@@ -133,7 +132,7 @@ namespace BovieSim.EditorTools
                     var fasc = Noise.Voronoi2P(u * 0.25, v, 14, 71);
                     float peri = 1 - Smooth(0.02f, 0.07f, (float)(fasc.f2 - fasc.f1));
                     float fib = F(u * 0.15, v * 6, 12, 3, 73);
-                    c = Color.Lerp(new Color(0.42f, 0.07f, 0.06f), new Color(0.60f, 0.14f, 0.11f), fib);
+                    c = Color.Lerp(TissuePalette.Muscle * new Color(0.75f, 0.55f, 0.55f), TissuePalette.Muscle * 1.07f, fib);
                     c *= 0.9f + 0.15f * ((fasc.id % 11) / 11f);
                     c = Color.Lerp(c, new Color(0.78f, 0.62f, 0.58f), peri * 0.5f);
                     h = fib * 0.4f - peri * 0.4f;
@@ -143,14 +142,14 @@ namespace BovieSim.EditorTools
                 case 6: // artery / extravasated blood: glossy red
                 {
                     float f = F(u, v, 6, 4, 81);
-                    c = Color.Lerp(new Color(0.38f, 0.04f, 0.03f), new Color(0.62f, 0.10f, 0.08f), f);
+                    c = Color.Lerp(TissuePalette.Artery * 0.6f, TissuePalette.Artery * 0.95f, f);
                     h = f * 0.2f; s = 0.86f;
                     break;
                 }
                 case 7: // vein: dark blue-purple through a thin wall
                 {
                     float f = F(u, v, 6, 4, 83);
-                    c = Color.Lerp(new Color(0.20f, 0.08f, 0.16f), new Color(0.34f, 0.14f, 0.26f), f);
+                    c = Color.Lerp(TissuePalette.Vein * 0.62f, TissuePalette.Vein, f);
                     h = f * 0.2f; s = 0.84f;
                     break;
                 }
@@ -159,7 +158,7 @@ namespace BovieSim.EditorTools
                     var cr = Noise.Voronoi2P(u, v, 10, 91);
                     float crack = 1 - Smooth(0.01f, 0.04f, (float)(cr.f2 - cr.f1));
                     float f = F(u, v, 8, 4, 93);
-                    c = Color.Lerp(new Color(0.58f, 0.44f, 0.30f), new Color(0.74f, 0.62f, 0.46f), f);
+                    c = Color.Lerp(TissuePalette.Desiccated * 0.92f, TissuePalette.Desiccated * 1.18f, f);
                     c = Color.Lerp(c, new Color(0.22f, 0.14f, 0.09f), crack * 0.8f);
                     h = f * 0.4f - crack * 0.8f; s = 0.18f + f * 0.08f;
                     break;
@@ -169,7 +168,7 @@ namespace BovieSim.EditorTools
                     var cr = Noise.Voronoi2P(u, v, 16, 101);
                     float f = F(u, v, 10, 5, 103);
                     float crust = Mathf.Sqrt(Mathf.Clamp01(1 - (float)cr.f1 * 1.2f));
-                    c = Color.Lerp(new Color(0.025f, 0.02f, 0.018f), new Color(0.10f, 0.075f, 0.06f), f * 0.7f + crust * 0.3f);
+                    c = Color.Lerp(TissuePalette.Char * 0.6f, TissuePalette.Char * 2.6f, f * 0.7f + crust * 0.3f);
                     float ember = Smooth(0.78f, 0.9f, F(u, v, 5, 2, 107));
                     c = Color.Lerp(c, new Color(0.22f, 0.12f, 0.06f), ember * 0.3f);
                     h = crust * 0.9f + f * 0.4f; s = 0.30f + f * 0.15f;
@@ -184,14 +183,14 @@ namespace BovieSim.EditorTools
             Color target;
             switch (cls)
             {
-                case 0: target = new Color(0.80f, 0.70f, 0.58f); break;   // blanched epidermis, faintly tan
-                case 1: target = new Color(0.86f, 0.80f, 0.74f); break;   // white coagulated dermis
-                case 2: target = new Color(0.86f, 0.70f, 0.42f); break;   // rendered fat: darker, translucent-yellow, oily
-                case 3: target = new Color(0.88f, 0.74f, 0.48f); break;
-                case 4: target = new Color(0.84f, 0.80f, 0.70f); break;
-                case 5: target = new Color(0.66f, 0.52f, 0.46f); break;   // "cooked" grey-brown muscle
-                case 6: target = new Color(0.36f, 0.18f, 0.12f); break;   // coagulated blood: brown
-                default: target = new Color(0.30f, 0.17f, 0.16f); break;
+                case 0: target = TissuePalette.CoagSkin; break;   // blanched epidermis, faintly tan
+                case 1: target = TissuePalette.CoagDermis; break;   // white coagulated dermis
+                case 2: target = TissuePalette.CoagFat; break;   // rendered fat: darker, translucent-yellow, oily
+                case 3: target = TissuePalette.CoagLipoma; break;
+                case 4: target = TissuePalette.CoagFibrous; break;
+                case 5: target = TissuePalette.CoagMuscle; break;   // "cooked" grey-brown muscle
+                case 6: target = TissuePalette.CoagBlood; break;   // coagulated blood: brown
+                default: target = TissuePalette.CoagVein; break;
             }
             float mott = F(u, v, 7, 4, 111);
             c = Color.Lerp(c, target * (0.92f + 0.16f * mott), 0.8f);

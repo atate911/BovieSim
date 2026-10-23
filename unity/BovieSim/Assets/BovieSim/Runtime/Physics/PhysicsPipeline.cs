@@ -12,19 +12,19 @@ namespace BovieSim
     /// </summary>
     public sealed class PhysicsPipeline : IDisposable
     {
-        public const int SliceW = 320, SliceH = 200;
+        public const int SliceW = 640, SliceH = 400;
         const int StateWords = 64;
         const int MaxDrops = 16;
 
         readonly ComputeShader cs;
         readonly GpuVolume vol;
-        readonly ComputeBuffer props, state, drops, dummyF4, dummyU2;
+        readonly ComputeBuffer props, state, drops, dummyF4, dummyU2, rimHist;
         ComputeBuffer segs, probes, latDisp;
         int segCount;
         public readonly RenderTexture sliceTex;
         readonly uint[] zeros = new uint[StateWords];
 
-        readonly int kSeed, kRed, kBlack, kHeating, kGenerator, kBioheat, kSurfaceHeight, kBloodSource, kBloodDrops, kBloodFlow, kBloodCommit, kCoapt, kProbe, kPick, kSlice;
+        readonly int kSeed, kRed, kBlack, kHeating, kGenerator, kBioheat, kSurfaceHeight, kBloodSource, kBloodDrops, kBloodFlow, kBloodCommit, kCoapt, kProbe, kPick, kSlice, kRim;
         readonly int[] allKernels;
 
         public readonly SimReadout readout = new SimReadout();
@@ -36,7 +36,15 @@ namespace BovieSim
         public float totalVapVoxels, activeSeconds;
 
         // slice plane
-        public Vector3 sliceOrigin; public Vector3 sliceU = Vector3.right; public float sliceWidthMm = 16, sliceDepthMm = 10; public int sliceMode; public bool sliceEnabled = true;
+        public Vector3 sliceOrigin; public Vector3 sliceU = Vector3.right; public float sliceWidthMm = 32, sliceDepthMm = 20; public int sliceMode; public bool sliceEnabled = true;
+        /// <summary>section overlays: 1 isotherms (45/60/100 C), 2 irreversible-damage outline (Omega = 1)</summary>
+        public int sliceFlags = 3;
+
+        /// <summary>skin-edge thermal rim (mm): high percentile of the distance from damaged skin to the nearest incision wall</summary>
+        public float rimMm; public int rimSamples;
+        bool rimInFlight; int rimEvery; readonly uint[] zeros16 = new uint[16];
+        /// <summary>frames between requesting the state readback and receiving it (latency of the HUD numbers and GPU pick)</summary>
+        public int stateAgeFrames; int stateRequestFrame;
 
         Vector3 rayO, rayD = Vector3.down;
         readonly int[] tbMin = { int.MaxValue, int.MaxValue, int.MaxValue }, tbMax = { -1, -1, -1 };
@@ -66,6 +74,7 @@ namespace BovieSim
             drops = new ComputeBuffer(MaxDrops, 16);
             dummyF4 = new ComputeBuffer(2, 16);
             dummyU2 = new ComputeBuffer(1, 8);
+            rimHist = new ComputeBuffer(16, 4);
             latDisp = new ComputeBuffer(1, 16);
             sliceTex = new RenderTexture(SliceW, SliceH, 0, RenderTextureFormat.ARGB32) { enableRandomWrite = true, filterMode = FilterMode.Point, name = "BovieSlice" };
             sliceTex.Create();
@@ -74,8 +83,8 @@ namespace BovieSim
             kHeating = cs.FindKernel("Heating"); kGenerator = cs.FindKernel("Generator"); kBioheat = cs.FindKernel("Bioheat");
             kSurfaceHeight = cs.FindKernel("SurfaceHeight"); kBloodSource = cs.FindKernel("BloodSource"); kBloodDrops = cs.FindKernel("BloodDrops");
             kBloodFlow = cs.FindKernel("BloodFlow"); kBloodCommit = cs.FindKernel("BloodCommit"); kCoapt = cs.FindKernel("CoaptMark");
-            kProbe = cs.FindKernel("ConstraintProbe"); kPick = cs.FindKernel("Pick"); kSlice = cs.FindKernel("Slice");
-            allKernels = new[] { kSeed, kRed, kBlack, kHeating, kGenerator, kBioheat, kSurfaceHeight, kBloodSource, kBloodDrops, kBloodFlow, kBloodCommit, kCoapt, kProbe, kPick, kSlice };
+            kProbe = cs.FindKernel("ConstraintProbe"); kPick = cs.FindKernel("Pick"); kSlice = cs.FindKernel("Slice"); kRim = cs.FindKernel("RimMeasure");
+            allKernels = new[] { kSeed, kRed, kBlack, kHeating, kGenerator, kBioheat, kSurfaceHeight, kBloodSource, kBloodDrops, kBloodFlow, kBloodCommit, kCoapt, kProbe, kPick, kSlice, kRim };
 
             vol.SetVolumeInfo(cs);
             cs.SetInts("_LatDims", 2, 2, 2, 0);
@@ -88,6 +97,7 @@ namespace BovieSim
                 cs.SetBuffer(k, "_Src", vol.temp); cs.SetBuffer(k, "_Dst", vol.tempNext);
                 cs.SetBuffer(k, "_LatDisp", latDisp);
                 cs.SetTexture(k, "_SliceTex", sliceTex);
+                cs.SetBuffer(k, "_RimHist", rimHist);
             }
             // tissue top heights for every column once (blood mesh and droplet landings need them everywhere)
             SetBox("_WBox0", 0, 0, 0, 1); SetBox("_WBox1", vol.cpu.nx, vol.cpu.ny, vol.cpu.nz, 0);
@@ -191,7 +201,7 @@ namespace BovieSim
             cs.SetVector("_SliceO", new Vector4(sliceOrigin.x, sliceOrigin.y, sliceOrigin.z, sliceWidthMm));
             cs.SetVector("_SliceU", new Vector4(sliceU.x, sliceU.y, sliceU.z, SliceW));
             cs.SetVector("_SliceV", new Vector4(0, -1, 0, SliceH));
-            cs.SetVector("_SliceParams", new Vector4(sliceDepthMm, sliceMode, 0, 0));
+            cs.SetVector("_SliceParams", new Vector4(sliceDepthMm, sliceMode, sliceFlags, 0));
             int[] wo, ws; WoundBox(out wo, out ws);
             SetBox("_WBox0", wo[0], wo[1], wo[2], substeps);
             SetBox("_WBox1", ws[0], ws[1], ws[2], 0);
@@ -249,7 +259,14 @@ namespace BovieSim
                 if (sliceMode >= 4) Bind(kSlice, vol.potential, vol.potentialNext); else Bind(kSlice, vol.temp, vol.tempNext);
                 cs.Dispatch(kSlice, Ceil(SliceW, 8), Ceil(SliceH, 8), 1);
             }
-            if (!stateInFlight) { stateInFlight = true; AsyncGPUReadback.Request(state, OnState); }
+            if (ws[0] > 0 && ws[1] > 0 && ws[2] > 0 && !rimInFlight && rimEvery++ % 15 == 0)
+            {
+                rimHist.SetData(zeros16);
+                cs.Dispatch(kRim, Ceil(ws[0], 4), Ceil(ws[1], 4), Ceil(ws[2], 4));
+                rimInFlight = true;
+                AsyncGPUReadback.Request(rimHist, OnRim);
+            }
+            if (!stateInFlight) { stateInFlight = true; stateRequestFrame = Time.frameCount; AsyncGPUReadback.Request(state, OnState); }
             simTime += dtFrame;
             return hot;
         }
@@ -262,9 +279,29 @@ namespace BovieSim
             state.SetData(zeros, 0, 0, 4); state.SetData(zeros, 0, 16, 4); state.SetData(zeros, 0, 21, 2); state.SetData(zeros, 0, 26, 3);
         }
 
+        void OnRim(AsyncGPUReadbackRequest req)
+        {
+            rimInFlight = false;
+            if (req.hasError) return;
+            var h = req.GetData<uint>();
+            // bin 15 = no incision wall within reach (a surface burn, not an edge rim)
+            long total = 0; for (int b = 1; b < 15; b++) total += h[b];
+            rimSamples = (int)total;
+            if (total < 4) { rimMm = 0; return; }
+            long target = (long)Math.Ceiling(total * 0.95), cum = 0;
+            for (int b = 1; b < 15; b++) { cum += h[b]; if (cum >= target) { rimMm = (b - 0.5f) * vol.cpu.h; return; } }
+        }
+
+        /// <summary>Reads back the per-column tissue top heights (blood buffer .z) for the CPU surface picker.</summary>
+        public void RequestSurfaceHeights(Action<Unity.Collections.NativeArray<Vector4>> onData)
+        {
+            AsyncGPUReadback.Request(vol.blood, req => { if (!req.hasError) onData(req.GetData<Vector4>()); });
+        }
+
         void OnState(AsyncGPUReadbackRequest req)
         {
             stateInFlight = false;
+            stateAgeFrames = Time.frameCount - stateRequestFrame;
             if (req.hasError) return;
             var u = req.GetData<uint>();
             var r = readout;
@@ -294,7 +331,7 @@ namespace BovieSim
 
         public void Dispose()
         {
-            foreach (var b in new[] { props, state, drops, dummyF4, dummyU2, segs, probes, latDisp }) if (b != null) b.Release();
+            foreach (var b in new[] { props, state, drops, dummyF4, dummyU2, segs, probes, latDisp, rimHist }) if (b != null) b.Release();
             if (sliceTex != null) sliceTex.Release();
         }
     }

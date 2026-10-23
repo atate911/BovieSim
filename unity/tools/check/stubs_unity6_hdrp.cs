@@ -31,5 +31,6 @@ namespace UnityEngine.Rendering.HighDefinition
         public MinFloatParameter nearFocusStart = new MinFloatParameter(0, 0), nearFocusEnd = new MinFloatParameter(0, 0), farFocusStart = new MinFloatParameter(0, 0), farFocusEnd = new MinFloatParameter(0, 0);
     }
     public class HDAdditionalLightData : MonoBehaviour { }
+    public class HDAdditionalCameraData : MonoBehaviour { public enum AntialiasingMode { None, FastApproximateAntialiasing, TemporalAntialiasing, SubpixelMorphologicalAntiAliasing } public AntialiasingMode antialiasing; }
     public static class GameObjectExtension { public static HDAdditionalLightData AddHDLight(this GameObject g, LightType t) { return null; } }
 }

@@ -17,19 +17,21 @@ namespace BovieSim
 
         sealed class Slot
         {
-            public Mesh mesh; public GraphicsBuffer vb; public GameObject go; public MeshRenderer mr; public bool pending;
+            public Mesh mesh; public GraphicsBuffer vb; public GameObject go; public MeshRenderer mr; public bool pending; public int requestFrame;
         }
 
         readonly ComputeShader cs;
         readonly GpuVolume vol;
         readonly Slot[] slots = new Slot[2];
         int writeSlot, displaySlot = -1;
-        readonly ComputeBuffer bucketCount, bucketCursor, bucketOffset, args;
+        readonly ComputeBuffer bucketCount, bucketCursor, bucketOffset, args, occSmooth;
         ComputeBuffer latDisp;
-        readonly int kCount, kScan, kEmit, kBlood;
+        readonly int kSmooth, kCount, kScan, kEmit, kBlood;
         readonly uint[] zeros = new uint[Buckets];
         public readonly int capacity;
         public int lastVertexCount;
+        /// <summary>frames from starting an extraction to showing it</summary>
+        public int lastAgeFrames;
         public bool capped;
         readonly Mesh bloodMesh; readonly GraphicsBuffer bloodVb; public readonly GameObject bloodGo;
         public bool dirty = true;
@@ -42,7 +44,8 @@ namespace BovieSim
             bucketCount = new ComputeBuffer(Buckets, 4); bucketCursor = new ComputeBuffer(Buckets, 4); bucketOffset = new ComputeBuffer(Buckets, 4);
             args = new ComputeBuffer(Buckets, 20);
             latDisp = new ComputeBuffer(8, 16);
-            kCount = cs.FindKernel("CountTris"); kScan = cs.FindKernel("ScanBuckets"); kEmit = cs.FindKernel("EmitTris"); kBlood = cs.FindKernel("BloodMesh");
+            occSmooth = new ComputeBuffer(v.count, 4);
+            kSmooth = cs.FindKernel("SmoothOcc"); kCount = cs.FindKernel("CountTris"); kScan = cs.FindKernel("ScanBuckets"); kEmit = cs.FindKernel("EmitTris"); kBlood = cs.FindKernel("BloodMesh");
 
             // bounds in field mm: the bed plus headroom for deformation and pooled blood
             var bounds = new Bounds(new Vector3(0, -v.SizeDepth / 2 + 5, 0), new Vector3(v.SizeX + 20, v.SizeDepth + 30, v.SizeZ + 20));
@@ -110,7 +113,8 @@ namespace BovieSim
             cs.SetFloat("_BloodShowMm", 0.015f);
             cs.SetInts("_LatDims", 2, 2, 2, 0);
             cs.SetVector("_LatOrigin", new Vector4(0, 0, 0, 1));
-            foreach (var k in new[] { kCount, kScan, kEmit, kBlood })
+            foreach (var k in new[] { kSmooth, kCount, kEmit }) cs.SetBuffer(k, "_OccS", occSmooth);
+            foreach (var k in new[] { kSmooth, kCount, kScan, kEmit, kBlood })
             {
                 cs.SetBuffer(k, "_Occ", vol.occupancy); cs.SetBuffer(k, "_Cells", vol.cells); cs.SetBuffer(k, "_BloodCols", vol.blood);
                 cs.SetBuffer(k, "_BucketCount", bucketCount); cs.SetBuffer(k, "_BucketCursor", bucketCursor); cs.SetBuffer(k, "_BucketOffset", bucketOffset);
@@ -125,7 +129,7 @@ namespace BovieSim
             latDisp = new ComputeBuffer(nodeCount, 16);
             cs.SetInts("_LatDims", nx, ny, nz, 1);
             cs.SetVector("_LatOrigin", new Vector4(origin.x, origin.y, origin.z, spacing));
-            foreach (var k in new[] { kCount, kScan, kEmit, kBlood }) cs.SetBuffer(k, "_LatDisp", latDisp);
+            foreach (var k in new[] { kSmooth, kCount, kScan, kEmit, kBlood }) cs.SetBuffer(k, "_LatDisp", latDisp);
         }
 
         public ComputeBuffer LatticeBuffer { get { return latDisp; } }
@@ -141,10 +145,11 @@ namespace BovieSim
             cs.SetBuffer(kEmit, "_Verts", s.vb);
             cs.SetBuffer(kCount, "_Verts", s.vb);
             int gx = (v.nx + 2) / 4, gy = (v.ny + 2) / 4, gz = (v.nz + 2) / 4;
+            cs.Dispatch(kSmooth, (v.nx + 3) / 4, (v.ny + 3) / 4, (v.nz + 3) / 4);
             cs.Dispatch(kCount, gx, gy, gz);
             cs.Dispatch(kScan, 1, 1, 1);
             cs.Dispatch(kEmit, gx, gy, gz);
-            s.pending = true;
+            s.pending = true; s.requestFrame = Time.frameCount;
             int slot = writeSlot;
             AsyncGPUReadback.Request(bucketCount, req => OnCounts(slot, req));
             dirty = false;
@@ -156,6 +161,7 @@ namespace BovieSim
             var s = slots[slot];
             s.pending = false;
             if (req.hasError || s.mesh == null) return;
+            lastAgeFrames = Time.frameCount - s.requestFrame;
             var counts = req.GetData<uint>();
             int offset = 0;
             for (int b = 0; b < Buckets; b++)
@@ -180,7 +186,7 @@ namespace BovieSim
 
         public void Dispose()
         {
-            foreach (var b in new[] { bucketCount, bucketCursor, bucketOffset, args, latDisp }) if (b != null) b.Release();
+            foreach (var b in new[] { bucketCount, bucketCursor, bucketOffset, args, latDisp, occSmooth }) if (b != null) b.Release();
             foreach (var s in slots) if (s != null) { if (s.vb != null) s.vb.Dispose(); if (s.mesh != null) UnityEngine.Object.Destroy(s.mesh); }
             if (bloodVb != null) bloodVb.Dispose();
             if (bloodMesh != null) UnityEngine.Object.Destroy(bloodMesh);
