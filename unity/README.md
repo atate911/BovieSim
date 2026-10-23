@@ -7,7 +7,8 @@ subsurface-scattering skin and fat, HDRI lighting, dual-head surgical light with
 depth of field focused at the tip, bloom, TAA and ACES tonemapping.
 
 ## Requirements
-- Unity **6000.0 LTS** (6000.0.58f1 or later 6000.0.x) via Unity Hub, Personal licence is fine.
+- Unity **6.6** (6000.6.x, the current release) via Unity Hub, Personal licence is fine. Unity 6.3 LTS
+  (6000.3.x) also works. Unity 6.0 LTS reached end of support in October 2026.
 - **Windows 10 or 11, 64-bit** (the target platform; macOS/Metal should also work but is untested).
   DirectX 12 or DirectX 11 both work (every compute kernel stays within DX11's 8 writable buffers).
   A discrete GPU (NVIDIA GTX 1060 / AMD RX 580 class or better) is recommended; integrated graphics
@@ -29,7 +30,7 @@ depth of field focused at the tip, bloom, TAA and ACES tonemapping.
   restart the editor; accept it (keys and mouse use the legacy input, the pen uses the Input System).
 
 ## First open
-1. Unity Hub > Add > Add project from disk > `unity/BovieSim`. Open with 6000.0.x.
+1. Unity Hub > Add > Add project from disk > `unity/BovieSim`. Open with your 6000.6.x editor (accept if Hub offers to switch the project to it).
 2. The bootstrap installs **HDRP 17**, the **Input System** and the **Test Framework** (Package Manager).
    If Unity asks to enable the new input backends and restart, choose **Yes**; the bootstrap then sets
    input handling to Both and asks for one more restart. Wait for the

@@ -20,6 +20,11 @@ namespace BovieSim
         /// <summary>survives a scene reload so F6 can switch scenarios</summary>
         static string requestedScenario;
 
+        /// <summary>Unity 6.6 projects enter Play mode without a domain reload by default, so statics survive between
+        /// Play sessions: clear them here (a scene reload from F5/F6 does not run this, so the scenario switch still works).</summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStatics() { requestedScenario = null; InputState.invertTiltY = false; }
+
         [Tooltip("Scenario JSON in Resources/BovieSim/Scenarios")] public string scenarioId = "freeplay";
         [Tooltip("0 = scenario voxel size; larger values (e.g. 0.4) run faster on modest GPUs")] public float voxelOverride;
         public bool mechanics = true;
@@ -119,7 +124,7 @@ namespace BovieSim
             BuildInstruments();
             orbit = new OrbitCamera(viewCamera, field);
             audioOut = gameObject.AddComponent<ActivationAudio>();
-            if (postVolume == null) postVolume = FindFirstObjectByType<UnityEngine.Rendering.Volume>();
+            if (postVolume == null) postVolume = FindAnyObjectByType<UnityEngine.Rendering.Volume>();
             if (postVolume != null && postVolume.sharedProfile != null) postVolume.sharedProfile.TryGet(out dof);
             status = "";
             ready = true;
