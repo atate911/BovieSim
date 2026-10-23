@@ -11,14 +11,17 @@ for f in Sim Surface; do
     fi
   done
 done
-# particle shader: the HLSL block with HDRP includes swapped for the stub header
-{ echo '#include "particles_stub.hlsl"'; sed -n '/HLSLPROGRAM/,/ENDHLSL/p' "$S/Particles.shader" | sed '1d;$d' | grep -vE '^\s*#(pragma|include)'; } > "$OUT/particles.hlsl"
+# .shader files: the HLSL block with HDRP includes swapped for the stub header
 cp "$HERE/particles_stub.hlsl" "$OUT/"
-for st in vert:Vert frag:Frag; do
-  n=$((n + 1))
-  if ! glslangValidator -D -S "${st%%:*}" -e "${st##*:}" --target-env vulkan1.1 -o "$OUT/p.spv" "$OUT/particles.hlsl" > "$OUT/p.log" 2>&1; then
-    echo "FAIL Particles.shader:${st##*:}"; cat "$OUT/p.log"; fail=1
-  fi
+for sh in "$S"/*.shader; do
+  base=$(basename "$sh" .shader)
+  { echo '#include "particles_stub.hlsl"'; sed -n '/HLSLPROGRAM/,/ENDHLSL/p' "$sh" | sed '1d;$d' | grep -vE '^\s*#(pragma|include)'; } > "$OUT/$base.hlsl"
+  for st in vert:Vert frag:Frag; do
+    n=$((n + 1))
+    if ! glslangValidator -D -S "${st%%:*}" -e "${st##*:}" --target-env vulkan1.1 -o "$OUT/p.spv" "$OUT/$base.hlsl" > "$OUT/p.log" 2>&1; then
+      echo "FAIL $base.shader:${st##*:}"; cat "$OUT/p.log"; fail=1
+    fi
+  done
 done
 [ $fail -eq 0 ] && echo "$n shader entry points compiled"
 exit $fail

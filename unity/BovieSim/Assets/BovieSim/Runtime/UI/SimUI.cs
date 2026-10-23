@@ -26,7 +26,7 @@ namespace BovieSim
     /// scenario brief, controls and a timing readout. Laid out for 1920x1080 and scaled to any screen, so text
     /// stays sharp. Colours: teal accent, cut yellow, coag blue; amber warns, red fails.
     /// </summary>
-    public sealed class SimUI
+    public sealed partial class SimUI
     {
         // palette
         static readonly Color Card = new Color(0.05f, 0.075f, 0.09f, 0.88f), Line = new Color(1, 1, 1, 0.08f);
@@ -82,7 +82,7 @@ namespace BovieSim
             root.style.position = Position.Absolute; root.style.left = 0f; root.style.top = 0f; root.style.right = 0f; root.style.bottom = 0f;
             root.style.fontSize = 15f; root.style.color = Ink;
             BuildTextures();
-            BuildStatus(); BuildRightColumn(); BuildFeed(); BuildBrief(); BuildHelp(); BuildPerf();
+            BuildStatus(); BuildRightColumn(); BuildFeed(); BuildBrief(); BuildHelp(); BuildPerf(); BuildPanels();
         }
 
         // ------------------------------------------------------------------ helpers
@@ -294,7 +294,7 @@ namespace BovieSim
             feed = Box(root);
             feed.style.position = Position.Absolute; feed.style.left = 16f; feed.style.bottom = 40f; feed.style.width = 560f;
             feed.style.justifyContent = Justify.FlexEnd;
-            var hint = Text(root, "F1 brief · F2 controls · F3 timing · Tab instrument · Z/X pedals", 12, Muted);
+            var hint = Text(root, "F1 brief · F2 controls · F9 settings · V teaching view · P replay · Tab instrument · Z/X pedals", 12, Muted);
             hint.style.position = Position.Absolute; hint.style.left = 18f; hint.style.bottom = 14f;
         }
 
@@ -351,7 +351,8 @@ namespace BovieSim
                 { "C · J · H", "Section display · across the view or across the blade · hide section" },
                 { "- / =", "Section zoom out / in (up to the full 35 mm depth)" },
                 { "Right drag · Middle drag · Wheel", "Orbit · pan · zoom (Alt+left orbits, Shift+left pans)" },
-                { "F1 · F2 · F3", "Scenario brief · this list · timing readout" },
+                { "V · G · P", "Teaching view (off, temperature, damage) · tip gauge · pause and replay the last seconds" },
+                { "F1 · F2 · F3 · F9", "Scenario brief · this list · timing readout · settings (detail level, display, teaching)" },
                 { "F5 · F6 · F7 · F8", "Restart · next scenario · depth of field on/off · anti-aliasing mode" },
                 { "F11 · Esc", "Fullscreen · quit (built app)" },
                 { "Pen", "Pressure sets depth, tilt sets angle; Y flips tilt direction" },

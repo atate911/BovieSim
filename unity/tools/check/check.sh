@@ -18,7 +18,7 @@ report() { # $1 label, $2 log
     echo "$errs" | head -20 | while IFS= read -r line; do echo "::error title=$1::$line"; done
   fi
 }
-R="$UNITY_REFS"; REFS=""; for m in CoreModule IMGUIModule InputLegacyModule AudioModule JSONSerializeModule TextRenderingModule UIElementsModule; do REFS="$REFS -r:$R/UnityEngine.$m.dll"; done
+R="$UNITY_REFS"; REFS=""; for m in CoreModule IMGUIModule InputLegacyModule AudioModule JSONSerializeModule TextRenderingModule UIElementsModule ScreenCaptureModule; do REFS="$REFS -r:$R/UnityEngine.$m.dll"; done
 mcs -target:library -out:"$OUT/rt.dll" -define:BOVIE_INPUTSYSTEM $REFS "$HERE/stubs_inputsystem.cs" "$HERE/stubs_unity6_hdrp.cs" \
   $(find "$B/Core" "$B/Runtime" -name "*.cs") > "$OUT/rt.log" 2>&1
 report "runtime (module refs)" "$OUT/rt.log"

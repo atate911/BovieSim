@@ -45,7 +45,9 @@ namespace BovieSim
             var colDeepTop = new float[nc]; var colDeepBot = new float[nc];
             var colSeptum = new bool[nc]; var colLobule = new byte[nc];
             float lobule = sc.septa.lobuleMm, septHalf = sc.septa.thicknessMm * 0.5f;
-            for (int j = 0; j < ny; j++)
+            // columns are independent: fill rows in parallel (the noise functions are pure)
+            System.Threading.Tasks.Parallel.For(0, ny, j =>
+            {
                 for (int i = 0; i < nx; i++)
                 {
                     double x = (i + 0.5) * h, y = (j + 0.5) * h;
@@ -64,6 +66,7 @@ namespace BovieSim
                     colSeptum[c] = (vor.f2 - vor.f1) * lobule * 0.5 < septHalf;
                     colLobule[c] = (byte)vor.id;
                 }
+            });
 
             // ---- layer fill -----------------------------------------------------------------------
             float wEpi = P[(int)Tissue.Epidermis].water, wDerm = P[(int)Tissue.Dermis].water, wFat = P[(int)Tissue.Fat].water;
@@ -71,7 +74,8 @@ namespace BovieSim
             uint cEpi = Cell.Pack(Tissue.Epidermis), cMus = Cell.Pack(Tissue.Muscle, 0, 0, Cell.FlagFibreX);
             uint cScarpa = Cell.Pack(Tissue.SuperficialFascia), cDeep = Cell.Pack(Tissue.DeepFascia);
             uint cDermDeep = Cell.Pack(Tissue.Dermis, 0, 0, Cell.FlagDermalPlexus), cDerm = Cell.Pack(Tissue.Dermis);
-            for (int j = 0; j < ny; j++)
+            System.Threading.Tasks.Parallel.For(0, ny, j =>
+            {
                 for (int i = 0; i < nx; i++)
                 {
                     int c = i + nx * j;
@@ -98,6 +102,7 @@ namespace BovieSim
                         cell[idx] = cc; water[idx] = w;
                     }
                 }
+            });
 
             report = new AnatomyReport { fatMmActual = fatMm, deepFasciaDepthMm = L.epidermisMm + L.dermisMm + fatMm };
             var rep = report;

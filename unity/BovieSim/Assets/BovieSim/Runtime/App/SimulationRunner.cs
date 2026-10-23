@@ -48,6 +48,13 @@ namespace BovieSim
         readonly FrameTiming[] frameTimings = new FrameTiming[1]; float cpuMs, gpuMs;
         static readonly HDAdditionalCameraData.AntialiasingMode[] AaModes = { HDAdditionalCameraData.AntialiasingMode.SubpixelMorphologicalAntiAliasing, HDAdditionalCameraData.AntialiasingMode.TemporalAntialiasing, HDAdditionalCameraData.AntialiasingMode.FastApproximateAntialiasing, HDAdditionalCameraData.AntialiasingMode.None };
         int aaIndex;
+        // settings, detail level and teaching moments
+        UserSettings settings; DetailSettings detail; DetailLevel chosenLevel; string detailReason = "";
+        FrameBudget budget; bool budgetDismissed;
+        ReplayBuffer replay; bool paused; float replayT;
+        readonly System.Collections.Generic.Dictionary<string, float> lastMoment = new System.Collections.Generic.Dictionary<string, float>();
+        Material overlayMat; int overlayMode; // 0 off, 1 temperature, 2 damage
+        static string SettingsPath { get { return System.IO.Path.Combine(Application.persistentDataPath, "settings.json"); } }
 
         // ---- scene objects
         Transform field;
@@ -79,9 +86,11 @@ namespace BovieSim
                 Debug.LogError("[Bovie Sim] " + status);
                 yield break;
             }
-            if (!SystemInfo.supportsComputeShaders || !SystemInfo.supportsAsyncGPUReadback)
+            LoadSettings();
+            string unsupported = HardwareProfile.Unsupported();
+            if (unsupported != null)
             {
-                status = "Cannot start: this GPU/driver lacks compute shaders or async readback.";
+                status = "Cannot start: " + unsupported + ". Bovie Sim needs a DirectX 11 or 12 class graphics card with compute shaders (see docs/hardware.md).";
                 Debug.LogError("[Bovie Sim] " + status);
                 yield break;
             }
@@ -94,7 +103,12 @@ namespace BovieSim
             gen.remFault = scenario.faults != null && scenario.faults.Contains("rem");
 
             // anatomy and lattice are pure C#: build them on a worker thread
-            var sc = scenario; float vo = voxelOverride; bool mech = mechanics;
+            // detail level from the PC (or Settings); the inspector's Voxel Override still wins for development
+            chosenLevel = ParseLevel(settings.detail);
+            detail = DetailSettings.For(HardwareProfile.Resolve(chosenLevel, out detailReason));
+            budget = new FrameBudget(detail.frameBudgetMs);
+            status = "Building anatomy at " + detail.Name + " detail (" + (voxelOverride > 0 ? voxelOverride : detail.voxelMm).ToString("0.00") + " mm voxels)…";
+            var sc = scenario; float vo = voxelOverride > 0 ? voxelOverride : detail.voxelMm; bool mech = mechanics;
             var build = Task.Run(() =>
             {
                 AnatomyReport rep;
@@ -118,9 +132,12 @@ namespace BovieSim
             field.localScale = Vector3.one * 0.001f;
 
             gpu = new GpuVolume(volume);
-            physics = new PhysicsPipeline(simCs, gpu);
+            physics = new PhysicsPipeline(simCs, gpu, detail.maxSubdomain);
+            physics.relaxSweeps = detail.relaxSweeps;
             surface = new SurfaceRenderer(surfCs, gpu, field, SkinCorrectedMaterials(), assets.blood);
+            surface.maxBricksPerFrame = detail.bricksPerFrame;
             particles = new Particles(assets.particlesAlpha, assets.particlesAdditive);
+            if (assets.teachingOverlay != null) { overlayMat = new Material(assets.teachingOverlay); surface.SetOverlay(overlayMat, false); }
             if (scenario.preCarve != null && scenario.preCarve.Count > 0) physics.MarkWound(new[] { 0, 0, 0 }, new[] { volume.nx, volume.ny, volume.nz });
             if (lattice != null)
             {
@@ -134,10 +151,21 @@ namespace BovieSim
             ui.SetScenario(scenario);
             ui.ToggleOrientation += () => slicePerp = !slicePerp;
             events.OnEvent += ui.Push;
+            events.OnEvent += OnTeachingMoment;
+            ui.DetailChosen += l => { chosenLevel = l; settings.detail = l.ToString(); SaveSettings(); };
+            ui.SettingToggled += ToggleSetting;
+            ui.BudgetAccept += () => { var lower = (DetailLevel)Mathf.Max(0, (int)detail.level - 1); settings.detail = lower.ToString(); settings.overBudgetAt = detail.level.ToString(); SaveSettings(); Reload(scenarioId); };
+            ui.BudgetDismiss += () => budgetDismissed = true;
+            ui.ReplayAgain += () => replayT = 0;
+            ui.ReplayContinue += Resume;
+            ui.showPerf = settings.showTiming; ui.showGauge = settings.tipGauge;
+            replay = new ReplayBuffer(detail.replaySeconds, detail.replayWidth);
+            StartCoroutine(replay.CaptureLoop());
 
             // latency: one queued frame instead of two; SMAA instead of TAA (no ghosting behind moving instruments)
             QualitySettings.maxQueuedFrames = 1;
             hdCam = viewCamera.GetComponent<HDAdditionalCameraData>();
+            dofOn = settings.depthOfField; aaIndex = Mathf.Clamp(settings.antialiasing, 0, AaModes.Length - 1); InputState.invertTiltY = settings.invertTiltY;
             if (hdCam != null) hdCam.antialiasing = AaModes[aaIndex];
 
             BuildInstruments();
@@ -146,6 +174,7 @@ namespace BovieSim
             if (postVolume == null) postVolume = FindAnyObjectByType<UnityEngine.Rendering.Volume>();
             if (postVolume != null && postVolume.sharedProfile != null) postVolume.sharedProfile.TryGet(out dof);
             if (dof != null) dof.active = dofOn; // off by default: blur reads as lag when the view moves
+            ApplyRenderDetail();
             status = "";
             ready = true;
         }
@@ -187,13 +216,13 @@ namespace BovieSim
             drapes = MakePart("Drapes", MeshFactory.Drapes(volume.SizeX / 2, volume.SizeZ / 2), assets.drape, field);
             pencil = new GameObject("Bovie pencil"); pencil.transform.SetParent(field, false);
             MakePart("Body", MeshFactory.PencilBody(), assets.pencilBody, pencil.transform);
-            cutButton = MakePart("Cut button", MeshFactory.PencilButton(82), assets.pencilCutButton, pencil.transform).GetComponent<MeshRenderer>();
-            coagButton = MakePart("Coag button", MeshFactory.PencilButton(104), assets.pencilCoagButton, pencil.transform).GetComponent<MeshRenderer>();
+            cutButton = MakePart("Cut button", MeshFactory.PencilButton(44, 58), assets.pencilCutButton, pencil.transform).GetComponent<MeshRenderer>();
+            coagButton = MakePart("Coag button", MeshFactory.PencilButton(62, 76), assets.pencilCoagButton, pencil.transform).GetComponent<MeshRenderer>();
             bladeMesh = MeshFactory.Blade(); needleMesh = MeshFactory.Needle(); ballMesh = MeshFactory.Ball();
             electrodeFilter = MakePart("Electrode", bladeMesh, assets.steel, pencil.transform).GetComponent<MeshFilter>();
-            var arm = MeshFactory.ForcepsArm(forceps.armLength);
-            forcepsA = MakePart("Adson forceps A", arm, assets.steel, field);
-            forcepsB = MakePart("Adson forceps B", arm, assets.steel, field);
+            // arm A sits on the -Z side of the jaw centre and arm B on +Z: their teeth (1 x 2) face each other
+            forcepsA = MakePart("Adson forceps A", MeshFactory.ForcepsArm(forceps.armLength, true, 1), assets.steel, field);
+            forcepsB = MakePart("Adson forceps B", MeshFactory.ForcepsArm(forceps.armLength, false, 2), assets.steel, field);
             frazier = MakePart("Frazier suction", MeshFactory.Frazier(), assets.steel, field);
             hookGo = MakePart("Skin hook", MeshFactory.SkinHook(), assets.steel, field);
             foreach (var go in new[] { pencil, forcepsA, forcepsB, frazier, hookGo })
@@ -220,6 +249,7 @@ namespace BovieSim
             if (Input.GetKeyDown(KeyCode.F5)) { Reload(scenarioId); return; }
             if (Input.GetKeyDown(KeyCode.F6)) { Reload(ScenarioIds[(Array.IndexOf(ScenarioIds, scenarioId) + 1) % ScenarioIds.Length]); return; }
             if (!ready) return;
+            if (paused) { UpdatePaused(); return; }
             frameWatch.Reset(); frameWatch.Start();
             float frameDt = Mathf.Min(0.05f, Time.deltaTime);
             input.Update();
@@ -344,7 +374,11 @@ namespace BovieSim
 
             // ---- physics, then surface extraction when tissue or deformation changed
             bool hot = physics.Step(tool, gen, frameDt);
-            if (hot || latticeMoved || surface.dirty) surface.Extract();
+            // tissue changes where the electrode works every frame; the cooling region changes slowly (state, colour)
+            int[] bmin, bmax;
+            if (physics.ActiveBox(out bmin, out bmax)) surface.MarkVoxelBox(bmin, bmax);
+            if (Time.frameCount % 8 == 0 && physics.ThermalBox(out bmin, out bmax)) surface.MarkVoxelBox(bmin, bmax);
+            surface.Update(hasHit ? hit : tool.tip);
             picker.Refresh(physics, hot || latticeMoved);
             surface.UpdateBlood();
 
@@ -370,6 +404,7 @@ namespace BovieSim
             if (fpsT > 0.5f) { fps = frames / fpsT; frames = 0; fpsT = 0; }
             FillHud(r);
             ui.Refresh(hud, Metric);
+            UpdateGaugeAndBudget(frameDt);
             frameWatch.Stop(); cpuMs = Mathf.Lerp(cpuMs, (float)frameWatch.Elapsed.TotalMilliseconds, 0.1f);
             FrameTimingManager.CaptureFrameTimings();
             if (FrameTimingManager.GetLatestTimings(1, frameTimings) > 0 && frameTimings[0].gpuFrameTime > 0) gpuMs = Mathf.Lerp(gpuMs, (float)frameTimings[0].gpuFrameTime, 0.1f);
@@ -381,14 +416,19 @@ namespace BovieSim
             if (physics.TakeProbe(out sev, out om)) lattice.ApplyProbe(sev, om);
             if (mode != null && !mode.isCut && r.muscleHeatVoxels > 20 && tool.visible) lattice.Stimulate(tool.tip, Mathf.Min(2, 0.5f + r.iRms * 2), physics.simTime);
             lattice.Step(frameDt, physics.simTime);
-            // re-extract only when some node moved visibly since the last extraction
+            // rebuild only the bricks around nodes that moved visibly since they were last extracted
             latticeMoved = false;
             for (int n = 0; n < lattice.count; n++)
             {
                 var a = lattice.disp[n]; var b = lastDisp[n];
-                if (Mathf.Abs(a.x - b.x) + Mathf.Abs(a.y - b.y) + Mathf.Abs(a.z - b.z) > 0.02f) { latticeMoved = true; break; }
+                if (Mathf.Abs(a.x - b.x) + Mathf.Abs(a.y - b.y) + Mathf.Abs(a.z - b.z) > 0.02f)
+                {
+                    latticeMoved = true;
+                    surface.MarkSphereMm(lattice.Mat(n), lattice.spacing * 1.5f);
+                    lastDisp[n] = a;
+                }
             }
-            if (latticeMoved) { surface.UploadLattice(lattice.disp); Array.Copy(lattice.disp, lastDisp, lattice.count); }
+            if (latticeMoved) surface.UploadLattice(lattice.disp);
 
             if (lattice.lipomaFree && !lesionFreedReported)
             {
@@ -510,8 +550,131 @@ namespace BovieSim
             if (Input.GetKeyDown(KeyCode.F3)) ui.showPerf = !ui.showPerf;
             if (Input.GetKeyDown(KeyCode.Minus) || Input.GetKeyDown(KeyCode.KeypadMinus)) ui.ZoomStep(1);
             if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadPlus)) ui.ZoomStep(-1);
-            if (Input.GetKeyDown(KeyCode.F7)) { dofOn = !dofOn; if (dof != null) dof.active = dofOn; }
-            if (Input.GetKeyDown(KeyCode.F8) && hdCam != null) { aaIndex = (aaIndex + 1) % AaModes.Length; hdCam.antialiasing = AaModes[aaIndex]; }
+            if (Input.GetKeyDown(KeyCode.F7)) ToggleSetting("depthOfField");
+            if (Input.GetKeyDown(KeyCode.F8)) ToggleSetting("antialiasing");
+            if (Input.GetKeyDown(KeyCode.F9)) ui.showSettings = !ui.showSettings;
+            if (Input.GetKeyDown(KeyCode.G)) ToggleSetting("tipGauge");
+            if (Input.GetKeyDown(KeyCode.V)) SetOverlayMode((overlayMode + 1) % 3);
+            if (Input.GetKeyDown(KeyCode.P)) StartReplay("Paused", "Replay of the last " + replay.Seconds.ToString("0") + " seconds.", null);
+        }
+
+        // ------------------------------------------------------------------ settings and detail
+        void LoadSettings()
+        {
+            string json = null;
+            try { if (System.IO.File.Exists(SettingsPath)) json = System.IO.File.ReadAllText(SettingsPath); }
+            catch (Exception e) { Debug.LogWarning("[Bovie Sim] Could not read settings: " + e.Message); }
+            settings = UserSettings.FromJson(json);
+        }
+
+        void SaveSettings()
+        {
+            try { System.IO.File.WriteAllText(SettingsPath, settings.ToJson()); }
+            catch (Exception e) { Debug.LogWarning("[Bovie Sim] Could not save settings: " + e.Message); }
+        }
+
+        static DetailLevel ParseLevel(string s)
+        {
+            try { return (DetailLevel)Enum.Parse(typeof(DetailLevel), s ?? "Auto", true); }
+            catch (Exception) { return DetailLevel.Auto; }
+        }
+
+        void ToggleSetting(string key)
+        {
+            switch (key)
+            {
+                case "teachingMoments": settings.teachingMoments = !settings.teachingMoments; break;
+                case "tipGauge": settings.tipGauge = !settings.tipGauge; ui.showGauge = settings.tipGauge; break;
+                case "depthOfField": settings.depthOfField = !settings.depthOfField; dofOn = settings.depthOfField; if (dof != null) dof.active = dofOn; break;
+                case "antialiasing": settings.antialiasing = (settings.antialiasing + 1) % AaModes.Length; aaIndex = settings.antialiasing; if (hdCam != null) hdCam.antialiasing = AaModes[aaIndex]; break;
+                case "invertTiltY": settings.invertTiltY = !settings.invertTiltY; InputState.invertTiltY = settings.invertTiltY; break;
+                case "showTiming": settings.showTiming = !settings.showTiming; ui.showPerf = settings.showTiming; break;
+            }
+            SaveSettings();
+        }
+
+        /// <summary>Render-side detail: ambient occlusion and the surgical lights' shadow maps scale with the level.</summary>
+        void ApplyRenderDetail()
+        {
+            if (postVolume != null && postVolume.sharedProfile != null)
+            {
+                ScreenSpaceAmbientOcclusion ao;
+                if (postVolume.sharedProfile.TryGet(out ao)) ao.active = detail.ssao;
+            }
+            foreach (var n in new[] { "Surgical light A", "Surgical light B" })
+            {
+                var go = GameObject.Find(n); if (go == null) continue;
+                var hd = go.GetComponent<HDAdditionalLightData>();
+                if (hd != null) { hd.SetShadowResolutionOverride(true); hd.SetShadowResolution(detail.shadowResolution); }
+                var l = go.GetComponent<Light>(); if (l != null) l.shadows = detail.softShadows ? LightShadows.Soft : LightShadows.Hard;
+            }
+        }
+
+        void SetOverlayMode(int m)
+        {
+            overlayMode = overlayMat != null ? m : 0;
+            if (overlayMat != null) overlayMat.SetFloat("_Mode", Mathf.Max(1, overlayMode));
+            surface.SetOverlay(overlayMat, overlayMode > 0);
+        }
+
+        void UpdateGaugeAndBudget(float dt)
+        {
+            bool electrode = tool.visible && (activeTool == ToolKind.Pencil || (activeTool == ToolKind.Forceps && forceps.closed));
+            var sp = viewCamera.WorldToScreenPoint(field.TransformPoint(tool.tip + DisplayOffset(tool.tip)));
+            ui.UpdateGauge(electrode && sp.z > 0 && (gen.activation != Activation.None || physics.readout.contactVoxels > 0 || hud.maxT > 40), new Vector2(sp.x, sp.y), hud);
+            budget.Update(hud.frameMs, dt);
+            if (budget.overBudget && !budgetDismissed && detail.level > DetailLevel.Low)
+                ui.ShowBudgetWarning("At " + detail.Name + " detail this PC takes about " + hud.frameMs.ToString("0") + " ms per frame, over the " + detail.frameBudgetMs.ToString("0") + " ms budget (" + (detail.frameBudgetMs > 20 ? "30" : "60") + " fps). Restart at " + (DetailLevel)((int)detail.level - 1) + " detail?");
+            else ui.ShowBudgetWarning(null);
+            ui.RefreshSettings(settings, detail.level, detailReason, chosenLevel);
+        }
+
+        // ------------------------------------------------------------------ teaching moments (pause and replay)
+        static string MomentTitle(string type)
+        {
+            switch (type)
+            {
+                case "tissue.carbonized": return "Char";
+                case "vessel.rebleed": return "Rebleed from a char plug";
+                case "lesion.breached": return "Lipoma capsule entered";
+                case "tissue.nerveContact": return "Energy next to a nerve";
+                default: return null;
+            }
+        }
+
+        void OnTeachingMoment(SimEvent e)
+        {
+            if (!settings.teachingMoments || paused || replay == null || !replay.supported || replay.Count < 10) return;
+            string title = MomentTitle(e.type); if (title == null) return;
+            float last; if (lastMoment.TryGetValue(e.type, out last) && Time.unscaledTime - last < 30f) return;
+            lastMoment[e.type] = Time.unscaledTime;
+            StartReplay(title, e.detail, e.teaching);
+        }
+
+        void StartReplay(string title, string detailText, string teaching)
+        {
+            if (replay == null || replay.Count == 0) return;
+            paused = true; replay.recording = false; replayT = 0;
+            gen.activation = Activation.None; audioOut.Set(500, false);
+            ui.ShowReplay(title, detailText, teaching);
+        }
+
+        void Resume()
+        {
+            paused = false; ui.HideReplay();
+            replay.Clear(); replay.recording = true;
+        }
+
+        void UpdatePaused()
+        {
+            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.P)) { Resume(); return; }
+            // play once at real speed, hold the last frame for a second, loop
+            replayT += Time.unscaledDeltaTime;
+            float len = replay.Seconds;
+            if (replayT > len + 1f) replayT = 0;
+            float f = Mathf.Clamp01(replayT / Mathf.Max(len, 0.01f));
+            ui.SetReplayFrame(replay.Frame(Mathf.Min(replay.Count - 1, (int)(f * replay.Count))), f);
+            ui.Refresh(hud, Metric);
         }
 
         void FillHud(SimReadout r)
@@ -529,7 +692,7 @@ namespace BovieSim
             if (physics.rimSamples > 0) maxRimMm = Mathf.Max(maxRimMm, physics.rimMm);
             d.rimMm = maxRimMm;
             d.capsuleText = lattice != null && lattice.capsuleTotal > 0 ? lattice.capsuleAlive + " of " + lattice.capsuleTotal + " links attached" + (lattice.lipomaFree ? " · FREE, lifted " + clusterRiseMm.ToString("0.0") + " mm" : "") : "";
-            d.volumeText = volume.nx + "×" + volume.ny + "×" + volume.nz + " voxels at " + volume.h + " mm";
+            d.volumeText = "v" + BovieVersion.Version + " · " + detail.Name + " · " + volume.nx + "×" + volume.ny + "×" + volume.nz + " voxels at " + volume.h.ToString("0.00") + " mm" + (overlayMode == 1 ? " · teaching view: temperature" : overlayMode == 2 ? " · teaching view: damage" : "");
             d.tris = surface.lastVertexCount / 3; d.capped = surface.capped; d.fps = fps;
             d.frameMs = fps > 0 ? 1000f / fps : 0; d.cpuMs = cpuMs; d.gpuMs = gpuMs;
             d.stateAge = physics.stateAgeFrames; d.heightsAge = picker.heightsAgeFrames; d.surfaceAge = surface.lastAgeFrames;
@@ -608,6 +771,7 @@ namespace BovieSim
             if (particles != null) particles.Dispose();
             if (gpu != null) gpu.Dispose();
             if (ui != null) ui.Dispose();
+            if (replay != null) replay.Dispose();
         }
     }
 }

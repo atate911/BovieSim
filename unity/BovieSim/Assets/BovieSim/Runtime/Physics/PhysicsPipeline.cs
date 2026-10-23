@@ -50,6 +50,18 @@ namespace BovieSim
         readonly int[] tbMin = { int.MaxValue, int.MaxValue, int.MaxValue }, tbMax = { -1, -1, -1 };
         readonly int[] wbMin = { int.MaxValue, int.MaxValue, int.MaxValue }, wbMax = { -1, -1, -1 };
         float hotUntil;
+        bool lastStepActive; readonly int[] activeMin = new int[3], activeMax = new int[3];
+
+        /// <summary>The field-solve region around the electrode in the last step, if it was active (voxels, max exclusive).</summary>
+        public bool ActiveBox(out int[] min, out int[] max) { min = activeMin; max = activeMax; return lastStepActive; }
+
+        /// <summary>The region still cooling after activation (voxels, max exclusive), if any.</summary>
+        public bool ThermalBox(out int[] min, out int[] max)
+        {
+            min = new[] { Math.Max(0, tbMin[0]), Math.Max(0, tbMin[1]), Math.Max(0, tbMin[2]) };
+            max = new[] { tbMax[0], tbMax[1], tbMax[2] };
+            return simTime < hotUntil && tbMax[0] > tbMin[0];
+        }
         int lastSubsteps = 2;
         int probeEvery;
         bool stateInFlight, probeInFlight;
@@ -60,11 +72,13 @@ namespace BovieSim
         /// <summary>latest probe results; Fresh is cleared by TakeProbe</summary>
         byte[] probeSevered; float[] probeOmega; bool probeFresh;
 
-        public PhysicsPipeline(ComputeShader shader, GpuVolume volume)
+        /// <param name="maxSubdomain">largest field-solve region (voxels per side); the region aims for ~14 mm</param>
+        public PhysicsPipeline(ComputeShader shader, GpuVolume volume, int maxSubdomain = 64)
         {
             cs = shader; vol = volume;
             float h = vol.cpu.h;
-            subdomain = Math.Max(24, Math.Min(64, (int)Math.Round(14 / h)));
+            subdomain = Math.Max(24, Math.Min(maxSubdomain, (int)Math.Round(14 / h)));
+            subdomain = (subdomain + 3) / 4 * 4;
             float aMax = 0; for (int t = 1; t < TissueTable.Count; t++) aMax = Math.Max(aMax, TissueTable.Diffusivity(TissueTable.Props[t]));
             dtMax = Math.Min(0.8f * (h * 1e-3f) * (h * 1e-3f) / (6 * aMax), 0.004f);
 
@@ -155,6 +169,7 @@ namespace BovieSim
             var v = vol.cpu;
             float dtFrame = Math.Min(frameDt, 0.05f);
             bool active = gen.activation != Activation.None && !gen.remFault && tool.visible && readout.hasHit;
+            lastStepActive = active;
             if (!active) { readout.powerW = 0; readout.iRms = 0; readout.contactVoxels = 0; }
             int S = subdomain;
             int[] box0 = { 0, 0, 0 };
@@ -165,6 +180,7 @@ namespace BovieSim
                 var hi = new[] { box0[0] + S, box0[1] + S, box0[2] + S };
                 for (int a = 0; a < 3; a++) { tbMin[a] = Math.Min(tbMin[a], box0[a]); tbMax[a] = Math.Max(tbMax[a], hi[a]); }
                 MarkWound(box0, hi);
+                for (int a = 0; a < 3; a++) { activeMin[a] = box0[a]; activeMax[a] = hi[a]; }
                 hotUntil = simTime + 10;
                 activeSeconds += dtFrame;
             }

@@ -109,6 +109,9 @@ Locally:
 - [docs/tools.md](docs/tools.md): instrument model
 - [docs/visual-spec.md](docs/visual-spec.md): what the surgeon should see
 - [docs/status.md](docs/status.md): what is built, verified and still missing
+- [docs/hardware.md](docs/hardware.md): detail levels, requirements, laptops with two GPUs
+- [docs/upgrading.md](docs/upgrading.md): updating, rolling back, and what developers bump
+- [CHANGELOG.md](CHANGELOG.md): what changed in each version
 - [unity/BovieSim/Assets/BovieSim/Art/ATTRIBUTION.md](unity/BovieSim/Assets/BovieSim/Art/ATTRIBUTION.md): third-party assets
 
 Problems and realism feedback: open an issue using the templates.

@@ -30,7 +30,8 @@ namespace UnityEngine.Rendering.HighDefinition
         public DepthOfFieldModeParameter focusMode = new DepthOfFieldModeParameter();
         public MinFloatParameter nearFocusStart = new MinFloatParameter(0, 0), nearFocusEnd = new MinFloatParameter(0, 0), farFocusStart = new MinFloatParameter(0, 0), farFocusEnd = new MinFloatParameter(0, 0);
     }
-    public class HDAdditionalLightData : MonoBehaviour { }
+    public class ScreenSpaceAmbientOcclusion : VolumeComponent { public ClampedFloatParameter intensity = new ClampedFloatParameter(0, 0, 4), radius = new ClampedFloatParameter(2, 0.25f, 5); }
+    public class HDAdditionalLightData : MonoBehaviour { public void SetShadowResolution(int r) { } public void SetShadowResolutionOverride(bool o) { } }
     public class HDAdditionalCameraData : MonoBehaviour { public enum AntialiasingMode { None, FastApproximateAntialiasing, TemporalAntialiasing, SubpixelMorphologicalAntiAliasing } public AntialiasingMode antialiasing; }
     public static class GameObjectExtension { public static HDAdditionalLightData AddHDLight(this GameObject g, LightType t) { return null; } }
 }

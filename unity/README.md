@@ -18,6 +18,9 @@ depth of field focused at the tip, bloom, TAA and ACES tonemapping.
 The full instruction manual (installation and operation, with a guided first session) is
 [docs/manual.html](../docs/manual.html): download it and open it in a browser.
 
+Detail adapts to the PC (see [docs/hardware.md](../docs/hardware.md)); updates and rollbacks are in
+[docs/upgrading.md](../docs/upgrading.md).
+
 ## Windows notes
 - **Clone to a short path**, e.g. `E:\claude\bovie-sim`. Unity's `Library` folder nests deeply and paths
   over 260 characters break package imports (`OneDrive\Documents\...` paths are the usual culprit;
@@ -73,12 +76,14 @@ from the repo root to copy it into `Assets/BovieSim/Resources/BovieSim/Scenarios
 | RMB or Alt+LMB, MMB or Shift+LMB, wheel | Orbit, pan, zoom |
 | F1 / F2 / F3 | Scenario brief / controls / timing readout (frame, CPU, GPU ms; result ages) |
 | F7 / F8 | Depth of field on/off (off by default) / anti-aliasing SMAA, TAA, FXAA, off |
+| V / G / P | Teaching view on the tissue (temperature, damage) / tip gauge / pause and replay (Enter continues) |
+| F9 | Settings: detail level (Auto, Low 0.35, Medium 0.25, High 0.20, Ultra 0.16 mm), display, teaching |
 | F5 / F6 | Restart / next scenario (freeplay, hemostasis, lipoma) |
 | F11 / Esc | Toggle fullscreen / quit (built app only) |
 | Pen (Wacom) | Pressure sets electrode depth; tilt sets the instrument angle; Y flips tilt direction |
 
-The scenario can also be chosen on the `Bovie Sim` object (Scenario Id). Voxel Override (e.g. 0.4 mm)
-trades detail for speed on smaller GPUs.
+The scenario can also be chosen on the `Bovie Sim` object (Scenario Id). Voxel Override forces a voxel
+size for development; normally choose a detail level in Settings (F9).
 
 ## Layout
 ```

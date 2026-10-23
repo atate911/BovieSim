@@ -87,6 +87,9 @@ namespace BovieSim
     [Serializable]
     public class Scenario
     {
+        /// <summary>scenario file format; bump with incompatible changes (see docs/upgrading.md)</summary>
+        public const int SupportedSchema = 1;
+        public int schemaVersion = 1;
         public string id = "", name = "", description = "";
         public BedSpec bed = new BedSpec();
         public LayerSpec layers = new LayerSpec();
@@ -105,6 +108,7 @@ namespace BovieSim
             var s = JsonUtility.FromJson<Scenario>(json);
             if (s == null) throw new ArgumentException("scenario JSON did not parse");
             if (string.IsNullOrEmpty(s.id)) throw new ArgumentException("scenario missing field: id");
+            if (s.schemaVersion > SupportedSchema) throw new ArgumentException("scenario '" + s.id + "' uses format " + s.schemaVersion + "; this version of Bovie Sim reads up to " + SupportedSchema + ". Update Bovie Sim.");
             if (s.bed == null || s.bed.sizeMm == null || s.bed.sizeMm.Length < 3) throw new ArgumentException("scenario bed.sizeMm must have 3 values");
             if (!(s.bed.voxelMm > 0.05f && s.bed.voxelMm <= 2f)) throw new ArgumentException("bed.voxelMm out of range");
             if (s.lesion == null) s.lesion = new LesionSpec();

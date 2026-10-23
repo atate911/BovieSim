@@ -27,7 +27,6 @@ namespace UnityEngine.Rendering.HighDefinition
     public class TonemappingModeParameter : VolumeParameter<TonemappingMode> { }
     public class Tonemapping : VolumeComponent { public TonemappingModeParameter mode = new TonemappingModeParameter(); }
     public class Bloom : VolumeComponent { public ClampedFloatParameter intensity = new ClampedFloatParameter(0, 0, 1); }
-    public class ScreenSpaceAmbientOcclusion : VolumeComponent { public ClampedFloatParameter intensity = new ClampedFloatParameter(0, 0, 4), radius = new ClampedFloatParameter(2, 0.25f, 5); }
     public class Fog : VolumeComponent { public BoolParameter enabled = new BoolParameter(); }
     public class NoInterpMinFloatParameter : VolumeParameter<float> { }
     public class HDShadowSettings : VolumeComponent { public NoInterpMinFloatParameter maxShadowDistance = new NoInterpMinFloatParameter(); }

@@ -72,6 +72,87 @@ namespace BovieSim
             return this;
         }
 
+        /// <summary>
+        /// Lofted rounded-rectangle (superellipse) section along +Y. halfSize(y) gives the half width along X and Z;
+        /// exponent 2 is an ellipse, larger values approach a rectangle with rounded corners.
+        /// </summary>
+        public MeshFactory Loft(float y0, float y1, int rings, System.Func<float, Vector2> halfSize, float exponent, int seg = 32, bool capStart = true, bool capEnd = true)
+        {
+            var ring = new Vector3[rings + 1, seg]; var nrm = new Vector3[rings + 1, seg];
+            for (int r = 0; r <= rings; r++)
+            {
+                float y = Mathf.Lerp(y0, y1, r / (float)rings);
+                var hs = halfSize(y);
+                var hsN = halfSize(Mathf.Min(y1, y + 0.5f)); var hsP = halfSize(Mathf.Max(y0, y - 0.5f));
+                float slopeX = (hsP.x - hsN.x), slopeZ = (hsP.y - hsN.y);
+                for (int k = 0; k < seg; k++)
+                {
+                    float th = k / (float)seg * Mathf.PI * 2, c = Mathf.Cos(th), sn = Mathf.Sin(th);
+                    float e = 2f / exponent;
+                    float px = hs.x * Mathf.Sign(c) * Mathf.Pow(Mathf.Abs(c), e), pz = hs.y * Mathf.Sign(sn) * Mathf.Pow(Mathf.Abs(sn), e);
+                    ring[r, k] = new Vector3(px, y, pz);
+                    float gx = Mathf.Sign(c) * Mathf.Pow(Mathf.Abs(c), 2 - e) / Mathf.Max(hs.x, 1e-3f), gz = Mathf.Sign(sn) * Mathf.Pow(Mathf.Abs(sn), 2 - e) / Mathf.Max(hs.y, 1e-3f);
+                    var g = new Vector2(gx, gz).normalized;
+                    nrm[r, k] = new Vector3(g.x, g.x * slopeX + g.y * slopeZ, g.y).normalized;
+                }
+            }
+            for (int r = 0; r < rings; r++)
+                for (int k = 0; k < seg; k++)
+                {
+                    int k1 = (k + 1) % seg;
+                    Vector3 a = ring[r, k], b = ring[r, k1], c = ring[r + 1, k1], d = ring[r + 1, k];
+                    // outward: cross(b-a, c-a) must point away from the axis
+                    Tri(a, c, b, nrm[r, k], nrm[r + 1, k1], nrm[r, k1]);
+                    Tri(a, d, c, nrm[r, k], nrm[r + 1, k], nrm[r + 1, k1]);
+                }
+            if (capStart) { var cen = new Vector3(0, y0, 0); for (int k = 0; k < seg; k++) TriFacing(cen, ring[0, k], ring[0, (k + 1) % seg], Vector3.down); }
+            if (capEnd) { var cen = new Vector3(0, y1, 0); for (int k = 0; k < seg; k++) TriFacing(cen, ring[rings, k], ring[rings, (k + 1) % seg], Vector3.up); }
+            return this;
+        }
+
+        /// <summary>Round tube of radius r along a polyline (parallel-transport frames), optional cone at the end.</summary>
+        public MeshFactory Tube(IList<Vector3> path, float r, int seg = 16, bool pointedEnd = false)
+        {
+            int m = path.Count;
+            var t = new Vector3[m]; for (int i = 0; i < m; i++) t[i] = (path[Mathf.Min(m - 1, i + 1)] - path[Mathf.Max(0, i - 1)]).normalized;
+            var nrmV = Vector3.Cross(t[0], Mathf.Abs(t[0].y) < 0.9f ? Vector3.up : Vector3.right).normalized;
+            var rings = new Vector3[m, seg]; var norms = new Vector3[m, seg];
+            for (int i = 0; i < m; i++)
+            {
+                if (i > 0) { var axis = Vector3.Cross(t[i - 1], t[i]); if (axis.sqrMagnitude > 1e-10f) nrmV = Quaternion.AngleAxis(Vector3.SignedAngle(t[i - 1], t[i], axis), axis) * nrmV; }
+                var bin = Vector3.Cross(t[i], nrmV).normalized;
+                float rr = pointedEnd && i == m - 1 ? 0.02f : r;
+                for (int k = 0; k < seg; k++)
+                {
+                    float th = k / (float)seg * Mathf.PI * 2;
+                    var dir = nrmV * Mathf.Cos(th) + bin * Mathf.Sin(th);
+                    rings[i, k] = path[i] + dir * rr; norms[i, k] = dir;
+                }
+            }
+            for (int i = 0; i < m - 1; i++)
+                for (int k = 0; k < seg; k++)
+                {
+                    int k1 = (k + 1) % seg;
+                    Vector3 a = rings[i, k], b = rings[i, k1], c = rings[i + 1, k1], d = rings[i + 1, k];
+                    var outward = norms[i, k] + norms[i, k1];
+                    if (Vector3.Dot(Vector3.Cross(c - a, b - a), outward) >= 0) { Tri(a, c, b, norms[i, k], norms[i + 1, k1], norms[i, k1]); Tri(a, d, c, norms[i, k], norms[i + 1, k], norms[i + 1, k1]); }
+                    else { Tri(a, b, c, norms[i, k], norms[i, k1], norms[i + 1, k1]); Tri(a, c, d, norms[i, k], norms[i + 1, k1], norms[i + 1, k]); }
+                }
+            return this;
+        }
+
+        /// <summary>Points along a circular arc from `start` heading `dir`, turning by `degrees` about `axis`.</summary>
+        static void Arc(List<Vector3> pts, Vector3 start, Vector3 dir, Vector3 axis, float radius, float degrees, int steps)
+        {
+            var toCentre = Vector3.Cross(axis, dir).normalized;
+            var centre = start + toCentre * radius;
+            for (int i = 1; i <= steps; i++)
+            {
+                var q = Quaternion.AngleAxis(degrees * i / steps, axis);
+                pts.Add(centre + q * (start - centre));
+            }
+        }
+
         public Mesh Build(string name)
         {
             var m = new Mesh { name = name };
@@ -81,23 +162,57 @@ namespace BovieSim
             return m;
         }
 
-        // ---- instruments -------------------------------------------------------------------------
+        // ---- instruments (millimetres, local +Y from the working tip toward the hand) -------------------
 
+        /// <summary>
+        /// Bovie pencil body (Valleylab-style hand switching pencil): tapered nose with the electrode collet,
+        /// rounded-rectangle grip about 12 x 10 mm, ~15 cm long, and the cord leaving the back. The switches sit on
+        /// the +X face (up in the hand frame): yellow CUT nearest the tip, blue COAG behind it.
+        /// </summary>
         public static Mesh PencilBody()
         {
-            return new MeshFactory().Cylinder(3.2f, 5.2f, 22, 60, 28).Cylinder(5.2f, 5.2f, 60, 165, 28).Cylinder(5.2f, 4.6f, 165, 172, 28).Cylinder(1.8f, 3.2f, 14, 22, 20).Build("PencilBody");
+            var f = new MeshFactory();
+            f.Cylinder(1.25f, 1.25f, 12, 16, 16);                         // collet holding the electrode shaft
+            f.Loft(15f, 170f, 40, y =>
+            {
+                float nose = Mathf.SmoothStep(0, 1, Mathf.InverseLerp(15, 42, y));
+                float tail = Mathf.SmoothStep(0, 1, Mathf.InverseLerp(150, 170, y));
+                float wx = Mathf.Lerp(1.9f, 6.1f, nose) - 0.6f * tail, wz = Mathf.Lerp(1.9f, 5.2f, nose) - 0.6f * tail;
+                // a faint finger waist just behind the switches
+                float waist = 0.25f * Mathf.Exp(-Mathf.Pow((y - 92f) / 10f, 2));
+                return new Vector2(wx - waist, wz - waist);
+            }, 3.2f, 40);
+            // strain relief and cord, drooping away from the hand
+            f.Cylinder(2.4f, 1.9f, 170, 182, 16);
+            var cord = new List<Vector3> { new Vector3(0, 182, 0), new Vector3(0, 205, 0) };
+            Arc(cord, new Vector3(0, 205, 0), Vector3.up, Vector3.forward, 90f, 35f, 10);
+            f.Tube(cord, 1.7f, 12);
+            return f.Build("PencilBody");
         }
-        public static Mesh PencilButton(float y) { return new MeshFactory().Box(new Vector3(4.6f, y, 0), new Vector3(1.6f, 9, 3.2f)).Build("PencilButton"); }
-        /// <summary>Blade electrode: shaft 2.4 mm from y=5..15, blade 2.4 x 0.5 mm, tip at the origin.</summary>
+
+        /// <summary>Rocker switch pad on the +X face of the pencil, between y0 and y1 (mm from the tip).</summary>
+        public static Mesh PencilButton(float y0, float y1)
+        {
+            var f = new MeshFactory();
+            float mid = (y0 + y1) / 2, half = (y1 - y0) / 2;
+            f.Transform(Matrix4x4.TRS(new Vector3(5.9f, 0, 0), Quaternion.identity, Vector3.one));
+            f.Loft(y0, y1, 12, y =>
+            {
+                float u = (y - mid) / half; float round = Mathf.Sqrt(Mathf.Max(0.05f, 1 - u * u * u * u));
+                return new Vector2(1.1f * round, 3.4f * round);
+            }, 4f, 24);
+            return f.Build("PencilButton");
+        }
+
+        /// <summary>Blade electrode: insulated shaft into the collet, stainless blade ~2.4 x 0.5 mm, tip at the origin.</summary>
         public static Mesh Blade()
         {
-            var f = new MeshFactory().Cylinder(1.2f, 1.2f, 5, 15, 16).Box(new Vector3(0, 2.5f, 0), new Vector3(1.2f, 2.5f, 0.25f));
-            f.TriFacing(new Vector3(-1.2f, 0, 0.25f), new Vector3(0, -1.2f, 0), new Vector3(1.2f, 0, 0.25f), new Vector3(0, -0.2f, 1));
-            f.TriFacing(new Vector3(1.2f, 0, -0.25f), new Vector3(0, -1.2f, 0), new Vector3(-1.2f, 0, -0.25f), new Vector3(0, -0.2f, -1));
+            var f = new MeshFactory().Cylinder(1.18f, 1.18f, 5, 15, 16);
+            f.Loft(0f, 5.2f, 8, y => new Vector2(Mathf.Lerp(0.7f, 1.2f, Mathf.Clamp01(y / 1.2f)), 0.25f), 5f, 20);
             return f.Build("Blade");
         }
-        public static Mesh Needle() { return new MeshFactory().Cylinder(1.2f, 1.2f, 5, 15, 16).Cylinder(0.05f, 0.2f, 0, 10, 10).Build("Needle"); }
-        public static Mesh Ball() { var f = new MeshFactory().Cylinder(1.2f, 1.2f, 5, 15, 16).Cylinder(0.4f, 0.4f, 2, 5, 10); f.Sphere(new Vector3(0, 1.5f, 0), 1.5f, 12); return f.Build("Ball"); }
+        public static Mesh Needle() { return new MeshFactory().Cylinder(1.18f, 1.18f, 5, 15, 16).Cylinder(0.05f, 0.22f, 0, 10, 12).Build("Needle"); }
+        public static Mesh Ball() { var f = new MeshFactory().Cylinder(1.18f, 1.18f, 5, 15, 16).Cylinder(0.4f, 0.4f, 2, 5, 10); f.Sphere(new Vector3(0, 1.5f, 0), 1.5f, 14); return f.Build("Ball"); }
 
         public MeshFactory Sphere(Vector3 c, float r, int seg)
         {
@@ -113,27 +228,69 @@ namespace BovieSim
             return this;
         }
 
-        public static Mesh ForcepsArm(float length = 95f)
+        /// <summary>
+        /// One arm of Adson tissue forceps. Flat blade, thin across the closing direction (Z): narrow 1.2 mm tip,
+        /// widening to a 7 mm serrated grip, joined to the other arm at the back. Teeth (1 on one arm, 2 on the
+        /// other: "1 x 2") point toward the opposite arm; <paramref name="towardPositiveZ"/> says which way that is.
+        /// </summary>
+        public static Mesh ForcepsArm(float length = 95f, bool towardPositiveZ = true, int teeth = 1)
         {
-            var f = new MeshFactory().Box(new Vector3(0, 4, 0), new Vector3(0.6f, 4, 0.4f));
-            for (int i = 0; i < 6; i++) f.Box(new Vector3(0, 0.8f + i * 1.1f, 0.45f), new Vector3(0.6f, 0.25f, 0.12f));
-            f.Box(new Vector3(0, 8 + (length - 8) * 0.5f, 0), new Vector3(1.8f, (length - 8) * 0.5f, 0.7f));
-            for (int i = 0; i < 10; i++) f.Box(new Vector3(0, length * 0.45f + i * 3, -0.9f), new Vector3(2.4f, 0.6f, 0.25f));
+            var f = new MeshFactory();
+            f.Loft(0f, length, 48, y =>
+            {
+                float w = Mathf.Lerp(0.6f, 3.5f, Mathf.SmoothStep(0, 1, Mathf.InverseLerp(6, 34, y)));
+                w = Mathf.Lerp(w, 2.1f, Mathf.SmoothStep(0, 1, Mathf.InverseLerp(64, length, y)));
+                float t = Mathf.Lerp(0.45f, 0.8f, Mathf.InverseLerp(0, 30, y));
+                return new Vector2(w, t);
+            }, 6f, 28);
+            float side = towardPositiveZ ? 1f : -1f;
+            // teeth at the tip, pointing at the other jaw
+            for (int i = 0; i < teeth; i++)
+            {
+                float x = teeth == 1 ? 0 : (i == 0 ? -0.35f : 0.35f);
+                f.Box(new Vector3(x, 0.45f, side * 0.62f), new Vector3(0.16f, 0.32f, 0.2f));
+            }
+            // transverse grip serrations on the outer face
+            for (float y = 38; y <= 60; y += 1.3f) f.Box(new Vector3(0, y, -side * 0.85f), new Vector3(3.2f, 0.22f, 0.1f));
             return f.Build("ForcepsArm");
         }
 
+        /// <summary>
+        /// Frazier suction: 10 Fr (3.3 mm) cannula, straight for 70 mm then angled ~30 degrees into the handle,
+        /// which carries the thumb vent (a raised ring: cover it to suck) and the tubing barb.
+        /// </summary>
         public static Mesh Frazier()
         {
-            var f = new MeshFactory().Cylinder(1.5f, 1.5f, 0, 40, 16);
-            var bend = Matrix4x4.TRS(new Vector3(0, 40, 0), Quaternion.Euler(0, 0, -30), Vector3.one);
-            f.Transform(bend).Cylinder(1.5f, 1.5f, 0, 80, 16).Cylinder(4.5f, 4.5f, 60, 70, 16).Box(new Vector3(0, 66, 4.6f), new Vector3(2, 3, 0.6f));
+            var f = new MeshFactory();
+            var path = new List<Vector3> { Vector3.zero, new Vector3(0, 70, 0) };
+            Arc(path, new Vector3(0, 70, 0), Vector3.up, Vector3.forward, 12f, 30f, 8);
+            var last = path[path.Count - 1]; var dir = Quaternion.AngleAxis(30f, Vector3.forward) * Vector3.up;
+            path.Add(last + dir * 8f);
+            f.Tube(path, 1.65f, 16);
+            // handle along the angled direction
+            var hStart = last + dir * 8f;
+            var rot = Quaternion.FromToRotation(Vector3.up, dir);
+            f.Transform(Matrix4x4.TRS(hStart, rot, Vector3.one));
+            f.Loft(0f, 45f, 16, y => new Vector2(Mathf.Lerp(2.3f, 3.6f, Mathf.InverseLerp(0, 10, y)), Mathf.Lerp(2.3f, 4.8f, Mathf.InverseLerp(0, 10, y))), 3f, 28);
+            f.Cylinder(2.4f, 1.8f, 45f, 58f, 16);                        // tubing barb
+            // thumb vent: a raised ring on top of the handle
+            var ring = new List<Vector3>();
+            for (int i = 0; i <= 24; i++) { float a = i / 24f * Mathf.PI * 2; ring.Add(new Vector3(3.7f, 22f + Mathf.Cos(a) * 2.2f, Mathf.Sin(a) * 2.2f)); }
+            f.Tube(ring, 0.45f, 8);
             return f.Build("Frazier");
         }
 
+        /// <summary>Single-prong skin hook: fine curved wire hook on a 2 mm shaft and a flat ridged handle; the hook's bend is at the origin.</summary>
         public static Mesh SkinHook()
         {
-            var f = new MeshFactory().Cylinder(1.2f, 1.2f, 4, 110, 12).Cylinder(0.45f, 0.45f, 0, 4.5f, 8);
-            f.Transform(Matrix4x4.Rotate(Quaternion.Euler(110, 0, 0))).Cylinder(0.4f, 0.3f, 0, 3.2f, 8);
+            var f = new MeshFactory();
+            // straight wire down to 1.6 mm, then a 200-degree curl whose lowest point is the origin (the anchor)
+            var wire = new List<Vector3> { new Vector3(0, 9, 0), new Vector3(0, 1.6f, 0) };
+            Arc(wire, new Vector3(0, 1.6f, 0), Vector3.down, Vector3.forward, 1.6f, 200f, 14);
+            f.Tube(wire, 0.32f, 10, true);
+            f.Cylinder(1.0f, 0.45f, 9f, 16f, 12, false).Cylinder(1.0f, 1.0f, 16f, 60f, 12);
+            f.Loft(60f, 140f, 12, y => new Vector2(Mathf.Lerp(1.6f, 4.2f, Mathf.InverseLerp(60, 72, y)), 1.6f), 4f, 24);
+            for (float y = 78; y <= 110; y += 2.4f) f.Box(new Vector3(0, y, 1.62f), new Vector3(3.6f, 0.35f, 0.12f));
             return f.Build("SkinHook");
         }
 

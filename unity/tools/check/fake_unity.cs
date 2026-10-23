@@ -39,7 +39,7 @@ namespace UnityEngine {
     public static Color operator *(Color x, float s) { return new Color(x.r * s, x.g * s, x.b * s, x.a * s); }
   }
   public struct Vector4 { public float x, y, z, w; public Vector4(float x, float y, float z, float w) { this.x = x; this.y = y; this.z = z; this.w = w; } }
-  public static class JsonUtility { public static T FromJson<T>(string s) { throw new NotSupportedException("JsonUtility needs the Unity runtime"); } }
+  public static class JsonUtility { public static T FromJson<T>(string s) { throw new NotSupportedException("JsonUtility needs the Unity runtime"); } public static string ToJson(object o, bool pretty = false) { throw new NotSupportedException("JsonUtility needs the Unity runtime"); } }
 }
 namespace UnityEngine {
   public class Object {}

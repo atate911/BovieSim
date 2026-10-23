@@ -1,9 +1,12 @@
 // Surface extraction (marching tetrahedra over the occupancy field, iso 0.5), port of surface.wgsl.
-// Triangles are sorted into material buckets (tissue class x thermal state) so every bucket draws
-// with a stock HDRP Lit material via Graphics.RenderMeshIndirect. Three passes:
+// Works on one brick (a block of cells) at a time so only bricks that changed are rebuilt. Triangles are
+// sorted into material buckets (tissue class x thermal state); each brick's mesh has one submesh per bucket
+// drawn with a stock HDRP Lit material. Passes per brick:
+//   SmoothOcc   : smoothed occupancy over the brick plus a 2-cell apron
 //   CountTris   : triangles per bucket
-//   ScanBuckets : prefix sum -> per-bucket vertex ranges and indexed indirect draw args
-//   EmitTris    : write vertices (position deformed by the mechanics lattice, normal, tangent)
+//   ScanBuckets : prefix sum -> per-bucket vertex ranges (clamped to the brick mesh capacity; raw total kept)
+//   EmitTris    : write vertices (position deformed by the mechanics lattice, normal, tangent, uv0,
+//                 uv1 = temperature (C) and damage Omega for the teaching view)
 // SmoothOcc runs first: a binomial 3x3x3 filter of the occupancy field, so the isosurface follows a
 // smooth boundary instead of voxel steps (cut walls, craters, the lipoma).
 // BloodMesh builds the blood-pool surface (one vertex per surface column).
@@ -16,17 +19,20 @@
 #include "SimCommon.hlsl"
 
 #define NUM_BUCKETS 18
-#define VERTEX_STRIDE 48
+#define VERTEX_STRIDE 56
+#define COUNT_STRIDE 19   // 18 buckets + raw total
 
 StructuredBuffer<float> _Occ;
 RWStructuredBuffer<float> _OccS;         // smoothed occupancy (written by SmoothOcc, read by the marching passes)
 StructuredBuffer<uint> _Cells;
 StructuredBuffer<float4> _BloodCols;     // per column: h, age, surfY, hNext
-RWStructuredBuffer<uint> _BucketCount;   // NUM_BUCKETS
-RWStructuredBuffer<uint> _BucketCursor;  // NUM_BUCKETS
-RWStructuredBuffer<uint> _BucketOffset;  // NUM_BUCKETS
-struct DrawArgs { uint indexCount; uint instanceCount; uint startIndex; uint baseVertex; uint startInstance; };
-RWStructuredBuffer<DrawArgs> _Args;      // NUM_BUCKETS indexed indirect draws
+StructuredBuffer<float> _Temp;           // temperature (C)
+StructuredBuffer<float> _OmegaR;         // Arrhenius damage
+int4 _Brick0;                            // brick origin (cells), w = base index into the count buffers
+int4 _BrickN;                            // brick size (cells)
+RWStructuredBuffer<uint> _BucketCount;   // COUNT_STRIDE per brick processed this frame
+RWStructuredBuffer<uint> _BucketCursor;  // COUNT_STRIDE per brick
+RWStructuredBuffer<uint> _BucketOffset;  // COUNT_STRIDE per brick
 RWByteAddressBuffer _Verts;              // mesh vertex buffer: float3 pos, float3 normal, float4 tangent, float2 uv0
 int _Capacity;                           // vertex capacity of the mesh
 float _BloodShowMm;                      // blood thinner than this is not drawn
@@ -67,8 +73,10 @@ float3 GradAt(int i, int j, int k)
 [numthreads(4, 4, 4)]
 void SmoothOcc(uint3 gid : SV_DispatchThreadID)
 {
-    int i = (int)gid.x, j = (int)gid.y, k = (int)gid.z;
-    if (i >= NX || j >= NY || k >= NZ) return;
+    // the brick plus a 2-cell apron (corner values and their gradients reach one cell beyond the brick)
+    int i = _Brick0.x - 2 + (int)gid.x, j = _Brick0.y - 2 + (int)gid.y, k = _Brick0.z - 2 + (int)gid.z;
+    if ((int)gid.x >= _BrickN.x + 4 || (int)gid.y >= _BrickN.y + 4 || (int)gid.z >= _BrickN.z + 4) return;
+    if (i < 0 || j < 0 || k < 0 || i >= NX || j >= NY || k >= NZ) return;
     float sum = 0.0;
     for (int dk = -1; dk <= 1; dk++)
         for (int dj = -1; dj <= 1; dj++)
@@ -87,7 +95,7 @@ static float3 cG[8];
 static uint cIdx[8];
 static const int3 OFFS[8] = { int3(0,0,0), int3(1,0,0), int3(1,1,0), int3(0,1,0), int3(0,0,1), int3(1,0,1), int3(1,1,1), int3(0,1,1) };
 
-struct V { float3 p; float3 n; uint cell; };
+struct V { float3 p; float3 n; uint cell; float2 to; };
 
 V EdgeVertex(uint a, uint b)
 {
@@ -103,6 +111,8 @@ V EdgeVertex(uint a, uint b)
     uint ca = _Cells[ia], cb = _Cells[ib];
     bool pickA = CellType(cb) == T_AIR || (CellType(ca) != T_AIR && _Occ[ia] >= _Occ[ib]);
     v.cell = pickA ? ca : cb;
+    uint ic = pickA ? ia : ib;
+    v.to = float2(_Temp[ic], _OmegaR[ic]);
     return v;
 }
 
@@ -117,6 +127,7 @@ void WriteVertex(uint vid, V v)
     _Verts.Store3(addr + 12, asuint(n));
     _Verts.Store4(addr + 24, asuint(float4(tg, 1.0)));
     _Verts.Store2(addr + 40, asuint(pos.xz * 0.05));
+    _Verts.Store2(addr + 48, asuint(v.to));
 }
 
 // mode 0 = count, 1 = emit
@@ -125,11 +136,11 @@ void EmitTri(V a, V b, V c, uint mode)
     // consistent winding: geometric normal agrees with the field normal
     float3 gn = cross(b.p - a.p, c.p - a.p);
     if (dot(gn, a.n + b.n + c.n) < 0.0) { V t = b; b = c; c = t; }
-    uint bucket = BucketOf(a.cell);
-    if (mode == 0u) { uint d; InterlockedAdd(_BucketCount[bucket], 3u, d); return; }
-    uint local; InterlockedAdd(_BucketCursor[bucket], 3u, local);
-    if (local + 3u > _BucketCount[bucket]) return; // clamped by ScanBuckets
-    uint base = _BucketOffset[bucket] + local;
+    uint slot = (uint)_Brick0.w + BucketOf(a.cell);
+    if (mode == 0u) { uint d; InterlockedAdd(_BucketCount[slot], 3u, d); return; }
+    uint local; InterlockedAdd(_BucketCursor[slot], 3u, local);
+    if (local + 3u > _BucketCount[slot]) return; // clamped by ScanBuckets
+    uint base = _BucketOffset[slot] + local;
     WriteVertex(base, a); WriteVertex(base + 1u, b); WriteVertex(base + 2u, c);
 }
 
@@ -157,8 +168,9 @@ void DoTet(uint a, uint b, uint c, uint d, uint mode)
 
 void March(uint3 gid, uint mode)
 {
-    if ((int)gid.x + 1 >= NX || (int)gid.y + 1 >= NY || (int)gid.z + 1 >= NZ) return;
-    int i = (int)gid.x, j = (int)gid.y, k = (int)gid.z;
+    if ((int)gid.x >= _BrickN.x || (int)gid.y >= _BrickN.y || (int)gid.z >= _BrickN.z) return;
+    int i = _Brick0.x + (int)gid.x, j = _Brick0.y + (int)gid.y, k = _Brick0.z + (int)gid.z;
+    if (i + 1 >= NX || j + 1 >= NY || k + 1 >= NZ) return;
     bool allIn = true, allOut = true;
     for (uint c = 0u; c < 8u; c++)
     {
@@ -184,19 +196,21 @@ void March(uint3 gid, uint mode)
 [numthreads(1, 1, 1)]
 void ScanBuckets(uint3 gid : SV_DispatchThreadID)
 {
-    uint offset = 0u;
+    uint baseI = (uint)_Brick0.w;
+    uint offset = 0u, raw = 0u;
     for (uint b = 0u; b < NUM_BUCKETS; b++)
     {
-        uint n = _BucketCount[b];
+        uint n = _BucketCount[baseI + b];
+        raw += n;
         uint room = (uint)_Capacity > offset ? (uint)_Capacity - offset : 0u;
         n = min(n, room - room % 3u);
-        _BucketCount[b] = n;
-        _BucketOffset[b] = offset;
-        _BucketCursor[b] = 0u;
-        DrawArgs a; a.indexCount = n; a.instanceCount = 1u; a.startIndex = offset; a.baseVertex = 0u; a.startInstance = 0u;
-        _Args[b] = a;
+        _BucketCount[baseI + b] = n;
+        _BucketOffset[baseI + b] = offset;
+        _BucketCursor[baseI + b] = 0u;
         offset += n;
     }
+    // raw total (before clamping): the CPU grows the brick's mesh when it exceeds the capacity
+    _BucketCount[baseI + NUM_BUCKETS] = raw;
 }
 
 // ------------------------------------------------------------------ blood pool surface
@@ -216,6 +230,6 @@ void BloodMesh(uint3 gid : SV_DispatchThreadID)
     float3 p = float3((i + 0.5 - NX * 0.5) * HMM, y, (j + 0.5 - NY * 0.5) * HMM);
     float dx = BloodTop(i + 1, j) - BloodTop(i - 1, j), dz = BloodTop(i, j + 1) - BloodTop(i, j - 1);
     float3 n = normalize(float3(-dx, 2.0 * HMM, -dz));
-    V v; v.p = p; v.n = n; v.cell = 0u;
+    V v; v.p = p; v.n = n; v.cell = 0u; v.to = float2(37.0, 0.0);
     WriteVertex((uint)(i + NX * j), v);
 }

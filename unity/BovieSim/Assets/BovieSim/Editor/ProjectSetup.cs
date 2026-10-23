@@ -27,7 +27,7 @@ namespace BovieSim.EditorTools
         const string Tex = Root + "/Textures", Mat = Root + "/Materials", Dl = Root + "/Downloads";
         const string RegistryPath = "Assets/BovieSim/Resources/BovieSim/SimAssets.asset";
         const string ScenePath = Root + "/Main.unity";
-        const int TexSize = 512;
+        const int TexSize = 1024;
 
         /// <summary>Poly Haven HDRI ids tried in order (all CC0). The first one the API knows is used.</summary>
         static readonly string[] HdriCandidates = { "hospital_room", "hospital_room_2", "surgery", "studio_small_08", "studio_small_03" };
@@ -86,16 +86,17 @@ namespace BovieSim.EditorTools
 
                 Progress("Instrument and field materials", 0.62f);
                 assets.blood = LitMaterial("Blood", TissuePalette.BloodPooled, 0, 0.92f, 1f);
-                assets.steel = LitMaterial("Steel", new Color(0.78f, 0.78f, 0.80f), 1, 0.82f, 0);
-                assets.pencilBody = LitMaterial("PencilBody", new Color(0.90f, 0.87f, 0.78f), 0, 0.5f, 0);
-                assets.pencilCutButton = LitMaterial("PencilCut", new Color(0.92f, 0.78f, 0.12f), 0, 0.55f, 0);
-                assets.pencilCoagButton = LitMaterial("PencilCoag", new Color(0.16f, 0.36f, 0.82f), 0, 0.55f, 0);
+                assets.steel = LitMaterial("Steel", new Color(0.80f, 0.80f, 0.81f), 1, 0.72f, 0); // satin-finish surgical stainless
+                assets.pencilBody = LitMaterial("PencilBody", new Color(0.93f, 0.92f, 0.88f), 0, 0.45f, 0); // off-white moulded plastic
+                assets.pencilCutButton = LitMaterial("PencilCut", new Color(0.96f, 0.80f, 0.08f), 0, 0.55f, 0);
+                assets.pencilCoagButton = LitMaterial("PencilCoag", new Color(0.10f, 0.34f, 0.84f), 0, 0.55f, 0);
 
                 Progress("Downloading drape fabric (ambientCG, CC0)", 0.66f);
                 assets.drape = DrapeMaterial();
                 assets.particlesAlpha = ParticleMaterial("ParticlesAlpha", BlendMode.SrcAlpha, BlendMode.OneMinusSrcAlpha);
                 assets.particlesAdditive = ParticleMaterial("ParticlesAdditive", BlendMode.One, BlendMode.One);
                 assets.uiTheme = RuntimeTheme();
+                assets.teachingOverlay = OverlayMaterial();
                 assets.setupVersion = SimAssets.CurrentSetupVersion;
                 EditorUtility.SetDirty(assets);
 
@@ -132,6 +133,9 @@ namespace BovieSim.EditorTools
         static void ConfigurePlayer()
         {
             PlayerSettings.colorSpace = ColorSpace.Linear;
+            PlayerSettings.bundleVersion = BovieVersion.Version;
+            // fixes the settings folder: %USERPROFILE%\AppData\LocalLow\Bovie Sim\BovieSim
+            PlayerSettings.companyName = "Bovie Sim"; PlayerSettings.productName = "BovieSim";
             // CPU/GPU frame times for the F3 timing readout
             PlayerSettings.enableFrameTimingStats = true;
             // the sim reads the legacy Input class (mouse, keys) and the Input System (pen): needs "Both"
@@ -149,6 +153,18 @@ namespace BovieSim.EditorTools
             if (b == 16) return "Desiccated";
             if (b == 17) return "Carbonized";
             return TissueTextures.ClassNames[b % 8] + (b >= 8 ? "Coag" : "");
+        }
+
+        static Material OverlayMaterial()
+        {
+            string path = Mat + "/TeachingOverlay.mat";
+            var shader = Shader.Find("BovieSim/TeachingOverlay");
+            if (shader == null) throw new Exception("BovieSim/TeachingOverlay shader failed to compile; check the Console.");
+            var m = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (m == null) { m = new Material(shader) { name = "TeachingOverlay" }; AssetDatabase.CreateAsset(m, path); }
+            m.shader = shader; m.renderQueue = 3000;
+            EditorUtility.SetDirty(m);
+            return m;
         }
 
         /// <summary>UI Toolkit runtime theme: the stock default theme, imported from a one-line .tss file.</summary>

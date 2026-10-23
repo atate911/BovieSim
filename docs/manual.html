@@ -182,7 +182,10 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
       <li><a href="#technique">Technique in the sim</a></li>
       <li><a href="#scenarios">Scenarios</a></li>
       <li><a href="#feedback">Reading the feedback</a></li>
+      <li><a href="#teaching">Teaching view, gauge and replay</a></li>
+      <li><a href="#settings">Settings and detail level</a></li>
       <li class="part">Part 3 · Help</li>
+      <li><a href="#updating">Updating</a></li>
       <li><a href="#trouble">Troubleshooting</a></li>
       <li><a href="#report">Reporting a problem</a></li>
     </ol>
@@ -393,6 +396,10 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
           <tr><td><kbd>-</kbd> / <kbd>=</kbd></td><td>Section zoom out / in: 16 × 10 mm up to the full 56 × 35 mm</td></tr>
           <tr class="grp"><td colspan="2">Session</td></tr>
           <tr><td><kbd>F1</kbd> / <kbd>F2</kbd> / <kbd>F3</kbd></td><td>Scenario brief / list of controls on screen / timing readout</td></tr>
+          <tr><td><kbd>V</kbd></td><td>Teaching view on the tissue: off → temperature → damage</td></tr>
+          <tr><td><kbd>G</kbd></td><td>Tip gauge on or off</td></tr>
+          <tr><td><kbd>P</kbd> / <kbd>Enter</kbd></td><td>Pause and replay the last seconds / continue</td></tr>
+          <tr><td><kbd>F9</kbd></td><td>Settings: detail level, display and teaching options</td></tr>
           <tr><td><kbd>F7</kbd> / <kbd>F8</kbd></td><td>Depth of field on or off (off by default) / anti-aliasing: SMAA (default), TAA, FXAA, off</td></tr>
           <tr><td><kbd>F5</kbd></td><td>Restart the scenario from the beginning</td></tr>
           <tr><td><kbd>F6</kbd></td><td>Next scenario: Free play → Hemostasis drill → Lipoma excision</td></tr>
@@ -425,7 +432,7 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
       <div class="two">
         <div>
           <h3>Bovie pencil</h3>
-          <p>Blade (<kbd>B</kbd>), needle (<kbd>N</kbd>) or ball (<kbd>O</kbd>) electrode. The tip follows the tissue surface under the cursor; pen pressure pushes it deeper (0.15 to 1 mm). The hand-switch buttons glow when active.</p>
+          <p>Modelled on a Valleylab-style hand-switching pencil: yellow CUT switch nearest the tip, blue COAG switch behind it, both lighting when pressed. Blade (<kbd>B</kbd>), needle (<kbd>N</kbd>) or ball (<kbd>O</kbd>) electrode. The tip follows the tissue surface under the cursor; pen pressure pushes it deeper (0.15 to 1 mm). The hand-switch buttons glow when active.</p>
           <ul><li><b>Blade</b>: incisions. Roll it with <kbd>R</kbd> to cut with the edge or coagulate with the flat.</li><li><b>Needle</b>: fine dissection, concentrated current.</li><li><b>Ball</b>: broad surface coagulation.</li></ul>
         </div>
         <div>
@@ -567,7 +574,45 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
       </table></div>
     </section>
 
-    <section id="trouble">
+<section id="teaching">
+      <h2>Teaching view, gauge and replay</h2>
+      <h3>Teaching view (V)</h3>
+      <p>Press <kbd>V</kbd> to draw the data directly on the tissue surface, over the realistic view: first <b>temperature</b> (the same colour scale as the section, with lines at 45, 60 and 100 °C), then <b>damage</b> (Ω on a log scale, with a white line where damage becomes irreversible), then off. Unaffected tissue stays almost transparent, so you see where heat is spreading from the electrode while you work. The status footer names the active view.</p>
+      <h3>Tip gauge (G)</h3>
+      <p>A small panel follows the instrument while it is in contact, active or hot: <b>tip temperature</b>, a <b>contact</b> bar, delivered power against the setting (amber when the tissue has dried and the generator cannot deliver), and impedance. It keeps your eyes on the field. <kbd>G</kbd> hides it.</p>
+      <h3>Pause and replay (P)</h3>
+      <p>Bovie Sim keeps the last few seconds of what you saw. After a serious mistake (<b>char</b>, a <b>rebleed</b> from a char plug, <b>entering the lipoma capsule</b>, or <b>energy next to a nerve</b>) it pauses and replays those seconds with the teaching point, so you can see what led to it. Choose <i>Replay again</i>, or <i>Continue</i> (<kbd>Enter</kbd>) to carry on. Press <kbd>P</kbd> any time to pause and review. Each kind of moment replays at most once every 30 seconds; turn them off under <i>Teaching moments</i> in Settings.</p>
+    </section>
+
+    <section id="settings">
+      <h2>Settings and detail level</h2>
+      <p>Press <kbd>F9</kbd>. The top line shows your graphics card, its memory and the detail level in use, with the reason it was chosen.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Level</th><th>Voxel size</th><th>Frame-rate target</th><th>For</th></tr></thead>
+        <tbody>
+          <tr><td>Low</td><td class="num">0.35 mm</td><td class="num">60 fps</td><td>Integrated graphics, older cards</td></tr>
+          <tr><td>Medium</td><td class="num">0.25 mm</td><td class="num">60 fps</td><td>4–6 GB cards (GTX 1060, RX 580)</td></tr>
+          <tr><td>High</td><td class="num">0.20 mm</td><td class="num">60 fps</td><td>8–11 GB cards</td></tr>
+          <tr><td>Ultra</td><td class="num">0.16 mm</td><td class="num">30 fps</td><td>12 GB and more (RX 7800 XT, RX 9070 XT, RTX 4070 and up)</td></tr>
+        </tbody>
+      </table></div>
+      <p><b>Auto</b> picks the level from the graphics card. Finer voxels show thinner thermal margins and smoother cuts; the region solved around the electrode, solver iterations, shadows and ambient occlusion scale with the level too. A new level applies when you restart the scenario (<kbd>F5</kbd>). If the PC stays over its frame budget, a banner offers to restart one level lower.</p>
+      <p>Settings also switch teaching moments, the tip gauge, depth of field, anti-aliasing, the pen tilt direction and the timing readout. They are saved for your Windows user and survive updates. More detail on hardware is in <code>docs/hardware.md</code> in the repository.</p>
+    </section>
+
+    <div class="part-head">Part 3<span>Help</span></div>
+
+    <section id="updating">
+      <h2>Updating</h2>
+      <ol class="steps">
+        <li><div><b>Close Unity.</b></div></li>
+        <li><div><b>Get the new version.</b> In <code>E:\claude\bovie-sim</code> run <code>git pull</code> (or download the zip from GitHub again and replace the folder).</div></li>
+        <li><div><b>Open the project and accept setup.</b> If the update changed generated assets, Unity asks to re-run setup: choose <i>Set up</i>, then open <code>Main</code> again.</div></li>
+      </ol>
+      <p>The version number is in the status footer, and <code>CHANGELOG.md</code> lists what changed and whether setup is needed. To go back, <code>git checkout v0.3.0</code> (any listed tag) and re-run setup; <code>git checkout main</code> returns to the latest. Your settings carry over. Details are in <code>docs/upgrading.md</code>.</p>
+    </section>
+
+        <section id="trouble">
       <h2>Troubleshooting</h2>
       <div class="table-wrap"><table>
         <thead><tr><th>Symptom</th><th>What to do</th></tr></thead>
@@ -579,7 +624,9 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
           <tr><td>Keys and mouse do nothing, or an <code>InvalidOperationException</code> about the Input class</td><td><i>Project Settings → Player → Active Input Handling</i> must be <b>Both</b>. Set it and restart the editor.</td></tr>
           <tr><td>Pen moves the cursor but pressure and tilt do nothing</td><td>Tick <i>Use Windows Ink</i> in the Wacom settings. Check <code>com.unity.inputsystem</code> is installed in <i>Window → Package Manager</i>.</td></tr>
           <tr><td>Package import errors mentioning long paths</td><td>Move the project to a short path such as <code>E:\claude\bovie-sim</code>, outside OneDrive.</td></tr>
-          <tr><td>Slow or stuttering</td><td>Press <kbd>F3</kbd> and note the frame, CPU and GPU times. Select the <code>Bovie Sim</code> object and set <i>Voxel Override</i> to 0.4 or 0.5; keep depth of field off (<kbd>F7</kbd>).</td></tr>
+          <tr><td>Slow or stuttering</td><td>Press <kbd>F9</kbd> and choose a lower detail level, then <kbd>F5</kbd>. <kbd>F3</kbd> shows frame, CPU and GPU times. Keep depth of field off (<kbd>F7</kbd>).</td></tr>
+          <tr><td>Laptop runs slowly although it has a good graphics card</td><td>Windows may be using the integrated GPU: <i>Settings → System → Display → Graphics</i>, add Unity (and <code>BovieSim.exe</code>) and choose <i>High performance</i>. F9 shows which GPU is in use.</td></tr>
+          <tr><td>"Cannot start: … compute shaders …"</td><td>The graphics card or driver is too old, or you are in remote desktop / a virtual machine. Update the driver or run on the PC itself.</td></tr>
           <tr><td>No sky image or drape texture</td><td>The downloads were blocked; the sim falls back to built-in ones. Put any <code>.hdr</code> file into <code>Assets/BovieSim/Generated/Downloads</code> and run Set Up Project again.</td></tr>
           <tr><td>Instrument tilts the wrong way with the pen</td><td>Press <kbd>Y</kbd>.</td></tr>
           <tr><td>Keys do nothing in the editor while playing</td><td>Click inside the Game view to give it keyboard focus.</td></tr>

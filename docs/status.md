@@ -70,6 +70,17 @@
   tone and prep applied at runtime; Neutral tonemapping and white balance for the 4300 K light.
 - Not yet verified in Unity: all of the above (compiled and unit-tested here only).
 
+## Unity client, round 2 (0.4.0)
+- Detail levels from the GPU (`HardwareProfile`), saved user settings (`Core/UserSettings.cs`), F9 panel,
+  frame-budget banner (60 fps; 30 fps at Ultra).
+- Brick-based surface extraction (32³ cells, dirty queue, nearest the tip first, double-buffered, meshes
+  grow to fit); per-vertex temperature and damage feed the teaching overlay (V).
+- Tip gauge, pause-and-replay teaching moments (ring of downscaled frames).
+- Instrument models at real proportions (pencil switches and cord, Adson 1 x 2 teeth, Frazier thumb vent,
+  skin hook); anatomy build parallelised.
+- Upgrade path: version constant, changelog, tags, setup/settings/scenario versioning (docs/upgrading.md).
+- Not yet verified in Unity.
+
 ## Known gaps (next)
 - Picking and tool placement use material coordinates: with large deformation the instrument
   draws slightly off the displaced surface.
