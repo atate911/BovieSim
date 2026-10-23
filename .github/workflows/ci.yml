@@ -30,8 +30,7 @@ jobs:
       - name: Install Mono and glslang
         run: |
           sudo apt-get update
-          sudo apt-get install -y mono-mcs mono-runtime glslang-tools \
-            libmono-system-io-compression4.0-cil libmono-system-io-compression-filesystem4.0-cil
+          sudo apt-get install -y --no-install-recommends mono-devel glslang-tools
       - name: Fetch Unity reference assemblies (NuGet; not committed)
         run: |
           mkdir -p "$RUNNER_TEMP/refs" "$RUNNER_TEMP/sdk"

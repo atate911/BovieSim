@@ -11,6 +11,7 @@ status=0
 report() { # $1 label, $2 log
   errs=$(grep -Ev "$FILTER" "$2" | grep -E "error|warning CS0618" || true)
   if [ -n "$errs" ]; then echo "$errs"; echo "== $1: FAILED"; status=1; else echo "== $1: ok"; fi
+  if [ -n "$CI" ] && [ -n "$errs" ]; then echo "---- full log $2"; cat "$2"; fi
 }
 R="$UNITY_REFS"; REFS=""; for m in CoreModule IMGUIModule InputLegacyModule AudioModule JSONSerializeModule TextRenderingModule UIElementsModule; do REFS="$REFS -r:$R/UnityEngine.$m.dll"; done
 mcs -target:library -out:"$OUT/rt.dll" -define:BOVIE_INPUTSYSTEM $REFS "$HERE/stubs_inputsystem.cs" "$HERE/stubs_unity6_hdrp.cs" \
@@ -22,6 +23,6 @@ report "everything incl. editor (SDK refs)" "$OUT/ed.log"
 echo "== EditMode tests under mono (ScenarioTests need Unity's JsonUtility and are skipped)"
 if mcs -out:"$OUT/tests.exe" "$HERE/nunit_shim.cs" "$HERE/fake_unity.cs" "$B"/Core/*.cs "$B"/Tests/EditMode/*.cs > "$OUT/t.log" 2>&1; then
   BOVIE_RESOURCES="$B/Resources" mono "$OUT/tests.exe" ScenarioTests > "$OUT/tests.out" 2>&1 || status=1
-  grep -v '^PASS' "$OUT/tests.out"
-else cat "$OUT/t.log"; status=1; fi
+  if [ -n "$CI" ]; then cat "$OUT/tests.out"; else grep -v '^PASS' "$OUT/tests.out"; fi
+else cat "$OUT/t.log"; echo "== tests: did not compile"; status=1; fi
 exit $status
