@@ -14,7 +14,7 @@ import { initWebGPU } from '@/render/gpu';
 import { SurfaceExtractor } from '@/render/surface';
 import { Renderer, SceneParams } from '@/render/renderer';
 import { OrbitCamera } from '@/render/camera';
-import { buildDrapes, buildPencilBody, buildPencilButtons, buildBlade } from '@/render/meshes';
+import { buildDrapeSet, buildPencilBody, buildPencilButtons, buildBlade } from '@/render/meshes';
 import { Volume, cellType, cellState } from '@/core/volume';
 import { TISSUE_NAMES, STATE_NAMES } from '@/core/tissueProperties';
 import { PhysicsPipeline, SLICE_W, SLICE_H } from '@/physics/pipeline';
@@ -97,18 +97,35 @@ async function main() {
     arcLight: { x: 0, y: 0, z: 0, intensity: 0 },
   };
 
-  renderer.addMesh(buildDrapes(sx / 2, sz / 2), 'drapes', [0.12, 0.22, 0.40], { rough: 0.9, kind: 1 });
+  // fenestrated surgical drape: incise film on the skin, absorbent pad, then the loose blue drape (albedos in linear sRGB)
+  const drape = buildDrapeSet(sx / 2, sz / 2, scenario.vessels?.seed ?? 0);
+  renderer.addMesh(drape.film, 'drapeFilm', [0.46, 0.31, 0.25], { rough: 0.18, kind: 3 });   // clear incise film: the skin shows through, glossy
+  const drapePad = renderer.addMesh(drape.pad, 'drapePad', [0.075, 0.18, 0.37], { rough: 0.95, kind: 2 });
+  const drapeDraw = renderer.addMesh(drape.drape, 'drape', [0.06, 0.16, 0.34], { rough: 0.9, kind: 1 });
+  // four cotton towels square the window on top of the drape, held by Backhaus clips at the corners
+  const towelDraws = drape.towels.map((t, i) => renderer.addMesh(t, 'towel' + i, [0.065, 0.17, 0.30], { rough: 0.95, kind: 4 }));
+  const clipDraws = drape.clips.map((c, i) => renderer.addMesh(c.mesh, 'towelClip' + i, [0.62, 0.62, 0.63], { rough: 0.5, metallic: 1, model: c.model }));
+  // satin-finished stainless (f0 of steel) and off-white moulded plastic
+  const STEEL: [number, number, number] = [0.62, 0.62, 0.63];
   const pencilBody = renderer.addMesh(buildPencilBody(), 'pencilBody', [0.92, 0.86, 0.72], { rough: 0.45 });
   const pencilButtons = renderer.addMesh(buildPencilButtons(), 'pencilButtons', [0.85, 0.75, 0.1], { rough: 0.5 });
-  const blade = renderer.addMesh(buildBlade(), 'blade', [0.85, 0.85, 0.86], { rough: 0.25, metallic: 1 });
+  const blade = renderer.addMesh(buildBlade(), 'blade', STEEL, { rough: 0.45, metallic: 1 });
 
   const tool = new ElectrodeTool();
   const forceps = new ForcepsTool();
   const suction = new SuctionTool();
-  const forcepsA = renderer.addMesh(buildForcepsArm(), 'forcepsA', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
-  const forcepsB = renderer.addMesh(buildForcepsArm(), 'forcepsB', [0.9, 0.9, 0.92], { rough: 0.22, metallic: 0.9 });
-  const frazier = renderer.addMesh(buildFrazier(), 'frazier', [0.8, 0.8, 0.82], { rough: 0.35, metallic: 1 });
-  const hookMesh = renderer.addMesh(buildSkinHook(), 'hook', [0.8, 0.8, 0.82], { rough: 0.3, metallic: 1 });
+  const forcepsA = renderer.addMesh(buildForcepsArm(), 'forcepsA', STEEL, { rough: 0.5, metallic: 1 });
+  const forcepsB = renderer.addMesh(buildForcepsArm(), 'forcepsB', STEEL, { rough: 0.5, metallic: 1 });
+  const frazier = renderer.addMesh(buildFrazier(), 'frazier', STEEL, { rough: 0.5, metallic: 1 });
+  const hookMesh = renderer.addMesh(buildSkinHook(), 'hook', STEEL, { rough: 0.5, metallic: 1 });
+  // texture maps from public/textures (CC0 sets via scripts/fetch-textures.mjs, or your own: docs/textures.md); applied as they load
+  void renderer.loadTextures([
+    { slot: 'drape', draws: [drapeDraw], tileMm: 30, tintIfGrey: [0.06, 0.16, 0.34], normalStrength: 1.8 },
+    { slot: 'pad', draws: [drapePad], tileMm: 30, tintIfGrey: [0.075, 0.18, 0.37], fallbackSlot: 'drape', normalStrength: 1.8 },
+    { slot: 'towel', draws: towelDraws, tileMm: 30, tintIfGrey: [0.065, 0.17, 0.30], fallbackSlot: 'pad', normalStrength: 1.8 },
+    { slot: 'steel', draws: [blade, forcepsA, forcepsB, frazier, hookMesh, ...clipDraws], tileMm: 12, normalStrength: 0.6 },
+    { slot: 'plastic', draws: [pencilBody], tileMm: 20, tintIfGrey: [0.92, 0.86, 0.72] },
+  ]);
   const hookModel = mat4.create();
   let activeTool: ToolKind = TOOL_ORDER.includes(toolParam) ? toolParam : 'pencil';
   let pencilElectrode: 'blade' | 'needle' | 'ball' = 'blade';
@@ -387,7 +404,7 @@ async function main() {
       }, setCam: (az: number, el: number, dist: number, tx = 0, tz = 0) => { cam.azimuth = az; cam.elevation = el; cam.distance = dist; cam.target[0] = tx; cam.target[2] = tz; },
       /** depth peel of the 3D view: mode 0 off, 1 block cut, 2 dissection; depth in mm below the skin */
       setPeel: (mode: number, mm: number) => { peelMode = Math.max(0, Math.min(2, mode | 0)); peelMm = Math.min(bedDepthMm, Math.max(0, mm)); } };
-    window.__sim = { ready: true, frame: frameIndex, events: events.recent(12), tool: activeTool, peel: { mode: peelMode, mm: peelMm }, lipomaFree: lattice.lipomaFree, capsule: [lattice.capsuleAlive, lattice.capsuleTotal], clusterRiseMm,
+    window.__sim = { ready: true, frame: frameIndex, textures: renderer.loadedTextures.slice(), events: events.recent(12), tool: activeTool, peel: { mode: peelMode, mm: peelMm }, lipomaFree: lattice.lipomaFree, capsule: [lattice.capsuleAlive, lattice.capsuleTotal], clusterRiseMm,
       gapMm: lattice.distanceBetween(vec3.fromValues(gapPts[0], 0, gapPts[1]), vec3.fromValues(gapPts[2], 0, gapPts[3])), vertexCount, fps, report, readout: { ...r, hit: r.hit ? Array.from(r.hit) : null }, totals: physics.totals, simTime: physics.simTime, autoDone, settings: gen.settings };
     if (!headless) requestAnimationFrame(loop); else setTimeout(loop, 10);
   };

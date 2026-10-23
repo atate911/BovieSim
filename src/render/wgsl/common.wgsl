@@ -1,15 +1,18 @@
-// Shared frame uniforms, lighting and procedural helpers.
+// Shared frame uniforms, BRDF and procedural helpers.
 
 struct Frame {
   viewProj: mat4x4f,
   view: mat4x4f,
-  lightViewProj: mat4x4f,
+  lightViewProj: mat4x4f,   // surgical light head A (shadow map A)
+  light2ViewProj: mat4x4f,  // surgical light head B (shadow map B)
   cameraPos: vec4f,       // xyz, w = time (s)
-  lightDir: vec4f,        // xyz toward light, w = light intensity
-  lightColor: vec4f,      // rgb, w = ambient intensity
+  lightPos: vec4f,        // head A position (mm), w = intensity
+  light2Pos: vec4f,       // head B position (mm), w = intensity
+  lightColor: vec4f,      // rgb of the heads (4300 K, white-balanced), w = ambient intensity
   arcLight: vec4f,        // xyz position (mm), w = intensity (0 when generator idle)
   params0: vec4f,         // x = skin tone 0..1, y = prep type (0 none,1 chg,2 betadine), z = langer angle rad, w = exposure
   params1: vec4f,         // x = debug mode, y = bed half x (mm), z = bed half z (mm), w = shadow bias
+  params2: vec4f,         // x = tan(angular radius of a light dome), y/z = shadow texel size A/B (mm), w = shadow depth range (mm)
   resolution: vec4f,      // xy pixels
 };
 
@@ -70,15 +73,19 @@ fn F_Schlick(f0: vec3f, VoH: f32) -> vec3f { return f0 + (1.0 - f0) * pow(1.0 - 
 
 struct Shade { diffuse: vec3f, specular: vec3f };
 
-// Direct lighting for one light; wrap = subsurface wrap factor (0 hard, ~0.5 soft)
-fn shadeLight(N: vec3f, V: vec3f, L: vec3f, albedo: vec3f, rough: f32, f0: vec3f, wrap: f32) -> Shade {
+// Direct lighting for one light. wrap = subsurface wrap factor (0 hard, ~0.5 soft).
+// widen = extra GGX roughness for a large source (dome radius / 2 x distance): the highlight of an operating
+// light on wet tissue is a broad soft sheen, not a pin point; energy is renormalised (Karis).
+fn shadeLight(N: vec3f, V: vec3f, L: vec3f, albedo: vec3f, rough: f32, f0: vec3f, wrap: f32, widen: f32) -> Shade {
   let H = normalize(V + L);
   let NoL = dot(N, L); let NoV = max(dot(N, V), 1e-3);
   let NoH = max(dot(N, H), 0.0); let VoH = max(dot(V, H), 0.0);
-  let a = max(rough * rough, 0.002);
+  let a0 = max(rough * rough, 0.002);
+  let a = min(a0 + widen, 1.0);
+  let norm = (a0 * a0) / (a * a);
   let wrapped = clamp((NoL + wrap) / (1.0 + wrap), 0.0, 1.0);
   let F = F_Schlick(f0, VoH);
-  let spec = D_GGX(NoH, a) * V_Smith(NoV, max(NoL, 0.0), a) * F * max(NoL, 0.0);
+  let spec = D_GGX(NoH, a) * V_Smith(NoV, max(NoL, 0.0), a) * F * max(NoL, 0.0) * norm;
   var s: Shade;
   s.diffuse = albedo * wrapped * (1.0 - F) / PI;
   s.specular = spec;

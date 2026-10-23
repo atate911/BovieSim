@@ -96,6 +96,25 @@
   blanched footprint on the cut face. Section sampled trilinearly at 640 × 400.
 - Not yet verified in Unity (compiled and unit-tested here only).
 
+## Surgical field (0.6.0)
+- Drapes: folded fenestrated sheet (incise film, reinforcement pad, loose blue drape) built from one shared
+  heightfield (`src/render/meshes.ts`, `MeshFactory.Drapes`); three materials in Unity, three procedural fabric
+  kinds in the browser build.
+- Lights: two dome-sized surgical light heads; soft shadows with contact-sharp penumbrae (PCSS in both clients),
+  dome-widened highlights, emissive lamp heads for reflections, contact shadows and wound-scale AO in Unity.
+- Ray tracing (Unity, DXR): shadows + AO / + reflections / + GI and subsurface by tier, Auto from the detail level;
+  HDRP asset and DirectX 12 configured by Set Up Project; tissue bricks as dynamic ray-tracing geometry.
+- Colour: PBR Neutral tone mapping and sRGB output in the browser build; sRGB-correct scenario skin tint in Unity.
+- Squared field: four towels with Backhaus clips over a seeded, irregular drape (warped swells, waves, bunching,
+  creases); skin line network, mottling and sponge-stroke prep film. Generated instrument models (pencil with
+  switches, electrodes, Frazier, hook) and a purchased forceps pack import through Set Up Project.
+- Texture maps: optional albedo / normal / roughness sets per slot (drape, pad, steel, plastic) in both clients,
+  CC0 downloads (`npm run fetch:textures`, Set Up Project) or user-made (docs/textures.md); normal maps derived
+  from colour when absent. Procedural fallbacks: satin brushed steel reflecting the lit field and lamp domes,
+  nonwoven drape with fibre texture, bonding dots, rolled hem and package creases.
+- Verified: browser build headless at 0.5 mm (drape, soft shadows, tone mapping); Unity C# compile check and
+  EditMode tests under Mono. **Not yet verified in Unity**: HDRP rendering, DXR on real hardware, performance.
+
 ## Known gaps (next)
 - The depth peel is display-only: an instrument used while peeled still acts on the hidden tissue above the plane,
   so the tip floats over the cut face.

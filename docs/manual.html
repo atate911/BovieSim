@@ -370,7 +370,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
         <li><b class="n">4</b><span><b>Objectives.</b> The scenario's success criteria, live: each shows its current value and an OK, NEAR, FAIL or DONE badge.</span></li>
         <li><b class="n">5</b><span><b>Section view.</b> A live cross-section through the tip, rendered at 1280 × 800, with display buttons, zoom up to the full 35 mm depth, <b>Large</b> to float it over the field, <b>Peel 3D</b> (see <a href="#depth">Beneath the surface</a>), depth scale, layer labels, a colour legend, isotherms and the damage outline.</span></li>
         <li><b class="n">6</b><span><b>FT10 panel.</b> Laid out like the generator's touchscreen: yellow CUT and blue COAG tiles with the power and up/down arrows, a row of mode buttons under each, REM status, impedance, and on-screen footswitch pedals.</span></li>
-        <li><b class="n">7</b><span><b>The field.</b> Tissue under a two-head surgical light, with the instrument in your hand.</span></li>
+        <li><b class="n">7</b><span><b>The field.</b> Tissue under a two-head surgical light, framed by the fenestrated blue drape, with the instrument in your hand.</span></li>
       </ol>
       <p>Press <kbd>F3</kbd> for a timing readout: frame time, CPU and GPU time, and how many frames old each result is. The instrument itself follows the cursor in the same frame.</p>
     </section>
@@ -622,7 +622,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
         </tbody>
       </table></div>
       <p><b>Auto</b> picks the level from the graphics card. Finer voxels show thinner thermal margins and smoother cuts; the region solved around the electrode, solver iterations, shadows and ambient occlusion scale with the level too. A new level applies when you restart the scenario (<kbd>F5</kbd>). If the PC stays over its frame budget, a banner offers to restart one level lower.</p>
-      <p>Settings also switch teaching moments, the tip gauge, depth of field, anti-aliasing, the pen tilt direction and the timing readout. They are saved for your Windows user and survive updates. More detail on hardware is in <code>docs/hardware.md</code> in the repository.</p>
+      <p>Settings also switch teaching moments, the tip gauge, depth of field, anti-aliasing, ray tracing (Auto follows the detail level; Off, Shadows, Reflections or Full on a DirectX 12 PC with an RTX or RX&nbsp;6000-class card), the pen tilt direction and the timing readout. They are saved for your Windows user and survive updates. More detail on hardware is in <code>docs/hardware.md</code> in the repository.</p>
     </section>
 
     <div class="part-head">Part 3<span>Help</span></div>
@@ -676,9 +676,10 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           <tr><td>Keys and mouse do nothing, or an <code>InvalidOperationException</code> about the Input class</td><td><i>Project Settings → Player → Active Input Handling</i> must be <b>Both</b>. Set it and restart the editor.</td></tr>
           <tr><td>Pen moves the cursor but pressure and tilt do nothing</td><td>Tick <i>Use Windows Ink</i> in the Wacom settings. Check <code>com.unity.inputsystem</code> is installed in <i>Window → Package Manager</i>.</td></tr>
           <tr><td>Package import errors mentioning long paths</td><td>Move the project to a short path such as <code>E:\claude\bovie-sim</code>, outside OneDrive.</td></tr>
-          <tr><td>Slow or stuttering</td><td>Press <kbd>F9</kbd> and choose a lower detail level, then <kbd>F5</kbd>. <kbd>F3</kbd> shows frame, CPU and GPU times. Keep depth of field off (<kbd>F7</kbd>).</td></tr>
+          <tr><td>Slow or stuttering</td><td>Press <kbd>F9</kbd> and choose a lower detail level, then <kbd>F5</kbd>; set ray tracing to Off or Shadows. <kbd>F3</kbd> shows frame, CPU and GPU times. Keep depth of field off (<kbd>F7</kbd>).</td></tr>
           <tr><td>Laptop runs slowly although it has a good graphics card</td><td>Windows may be using the integrated GPU. <code>maintain doctor</code> sets Unity and any build in <code>Builds</code> to the graphics card; by hand: <i>Settings → System → Display → Graphics</i>, add Unity (and <code>BovieSim.exe</code>) and choose <i>High performance</i>. F9 shows which GPU is in use.</td></tr>
           <tr><td>"Cannot start: … compute shaders …"</td><td>The graphics card or driver is too old, or you are in remote desktop / a virtual machine. Update the driver or run on the PC itself.</td></tr>
+          <tr><td>Ray tracing shows "not available"</td><td>The editor or build must run on DirectX 12 (<i>Project Settings → Player → Graphics APIs for Windows</i>: Direct3D12 first, then restart Unity) on an RTX, RX&nbsp;6000 or Arc card with a current driver. <i>Window → Rendering → HDRP Wizard → HDRP + DXR</i>, <i>Fix All</i>.</td></tr>
           <tr><td>No sky image or drape texture</td><td>The downloads were blocked; the sim falls back to built-in ones. Put any <code>.hdr</code> file into <code>Assets/BovieSim/Generated/Downloads</code> and run Set Up Project again.</td></tr>
           <tr><td>Instrument tilts the wrong way with the pen</td><td>Press <kbd>Y</kbd>.</td></tr>
           <tr><td>Keys do nothing in the editor while playing</td><td>Click inside the Game view to give it keyboard focus.</td></tr>

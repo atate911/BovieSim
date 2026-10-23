@@ -65,6 +65,9 @@ npm test           # analytic physics tests (vitest)
 npm run build
 ```
 
+Texture maps for the drape and instruments are optional: `npm run fetch:textures` downloads CC0 sets, or drop your
+own into `public/textures/` ([docs/textures.md](docs/textures.md)).
+
 URL options: `?scenario=freeplay|hemostasis|lipoma`, `?voxel=0.5` (coarser bed for slower GPUs;
 default 0.25 mm), `?seed=3` (re-randomise anatomy), `?cut=1|2|4|8` (pre-carved trench, pit, ring
 around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temperature / damage / tissue-type overlay), `?mech=0`
@@ -132,6 +135,7 @@ Locally:
 - [docs/calibration.md](docs/calibration.md): simulated vs published values
 - [docs/tools.md](docs/tools.md): instrument model
 - [docs/visual-spec.md](docs/visual-spec.md): what the surgeon should see
+- [docs/textures.md](docs/textures.md): texture maps for drapes and instruments (CC0 downloads or your own, with prompts)
 - [docs/status.md](docs/status.md): what is built, verified and still missing
 - [docs/hardware.md](docs/hardware.md): detail levels, requirements, laptops with two GPUs
 - [docs/upgrading.md](docs/upgrading.md): updating (`maintain update`), rolling back, and what developers bump

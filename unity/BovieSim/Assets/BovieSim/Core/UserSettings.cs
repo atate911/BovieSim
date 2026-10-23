@@ -23,8 +23,12 @@ namespace BovieSim
         public bool teachingMoments = true;
         public bool showTiming;
         public bool tipGauge = true;
+        /// <summary>Auto (by detail level and GPU), Off, Shadows (ray-traced shadows + ambient occlusion), Reflections (+ ray-traced reflections), Full (+ global illumination and subsurface scattering)</summary>
+        public string rayTracing = "Auto";
         /// <summary>last detail level the PC could not hold in budget (the app suggests the one below)</summary>
         public string overBudgetAt = "";
+
+        public static readonly string[] RayTracingOptions = { "Auto", "Off", "Shadows", "Reflections", "Full" };
 
         public static UserSettings FromJson(string json)
         {
@@ -43,6 +47,7 @@ namespace BovieSim
         {
             if (version < 1) { detail = "Auto"; teachingMoments = true; tipGauge = true; }
             if (antialiasing < 0 || antialiasing > 3) antialiasing = 0;
+            if (Array.IndexOf(RayTracingOptions, rayTracing ?? "") < 0) rayTracing = "Auto";
             version = CurrentVersion;
         }
     }

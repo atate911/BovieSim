@@ -4,6 +4,47 @@ All notable changes. Versions follow `MAJOR.MINOR.PATCH`; each release is a git 
 (see [docs/upgrading.md](docs/upgrading.md)). "Setup" means *Bovie Sim > Set Up Project* must be re-run
 after updating (the editor offers it automatically).
 
+## 0.6.0: Surgical field (drapes, lights, colour, ray tracing) · Setup required
+
+- **Fenestrated drape with folds.** The flat frame is replaced by a draped sheet: an incise-film margin on the
+  skin, an absorbent reinforcement zone, then the loose blue nonwoven drape with swells, pleats radiating from
+  the fenestration and fine wrinkles (same geometry in both clients). Surgical-blue fabric with bonding dots
+  and a cloth sheen in the browser build; three HDRP materials (film, pad, drape) in Unity.
+- **Squared field.** Four folded cotton towels square the window on top of the drape, overlapping windmill-fashion
+  at the corners with a little misalignment, held by Backhaus towel clips; the incise film is a narrow clear band
+  over the skin edge. Drape folds are seeded per scenario and irregular: domain-warped swells, broad waves across
+  the sheet, local bunching, radiating pleats and package creases. Skin shows its polygonal line network, pores at
+  the cell corners, vascular mottling and the prep painted on in sponge strokes with a glossy film pooling in the
+  furrows (both clients).
+- **Overhead surgical light.** Two light heads modelled as 50 cm domes: shadows are sharp where the instrument
+  touches tissue and widen with distance (PCSS in Unity from the lights' shape radius with High shadow filtering,
+  percentage-closer soft shadows with two shadow maps in the browser build), the specular highlight on wet
+  tissue broadens to the dome's size, contact shadows ground the tip, and the lamp heads themselves are emissive
+  domes seen in reflections on steel and wet tissue.
+- **Ray tracing (Unity, DirectX 12 + RTX / RX 6000-class card).** Set Up Project enables DXR on the HDRP asset and
+  puts DirectX 12 first. Settings (F9) > *Ray tracing*: Auto by detail level (Medium: ray-traced shadows + ambient
+  occlusion; High: + reflections; Ultra: + global illumination and subsurface scattering), or Off / Shadows /
+  Reflections / Full. GPU-rebuilt tissue meshes enter the acceleration structure as dynamic geometry. Without
+  DXR the raster effects stay (screen-space reflections from High detail up).
+- **Texture maps.** Both clients take real maps for the drape, reinforcement pad, instrument steel and pencil
+  plastic (albedo, normal, roughness; a missing normal map is derived from the colour). CC0 sets download with
+  `npm run fetch:textures` (ambientCG, Poly Haven) for the browser build and by Set Up Project for Unity; your
+  own maps drop into `public/textures/<slot>/` or `Generated/Downloads/<Slot>_Color.jpg` (docs/textures.md, with
+  prompts for making them). Without maps: satin brushed steel that reflects the lit field and the lamp domes
+  instead of a dark room, a nonwoven drape with fibre texture, bonding dots and a rolled hem and package
+  creases in the folds.
+- **Instrument models (Unity).** A purchased pack dropped into `Assets/BovieSim/Models` replaces the procedural
+  Adson forceps (the pack's one-piece tweezers are split into two arms, straightened and fitted to the sim's
+  frame so they still open and close) and lays its scissors, haemostat and scalpel on the drape beside the
+  field; the pack's scratch map drives scratched smoothness and a normal map on its steel. Procedural teeth now
+  face each other. Generated models of the pencil (with its two switches), blade, needle and ball electrodes,
+  Frazier suction and skin hook (`pencil.fbx`, `blade.fbx`, …) replace the procedural ones, fitted by real length
+  with their own PBR maps.
+- **Colour rendering.** Browser build: Khronos PBR Neutral tone mapping (blood stays red, fat stays yellow) with a
+  proper sRGB transfer curve and a lighter vignette; near-white 4300 K light with the room's cool ambient and
+  blue drape bounce. Unity: ambient occlusion at wound scale (1.5 cm, not 25 cm); the scenario skin-tone and
+  prep tint is now applied in the right colour space.
+
 ## 0.5.0: Beneath the surface (section resolution, depth peel)
 
 - **Section at twice the resolution.** The cross-section is rendered at 1280 × 800 (960 × 600 at Low detail,

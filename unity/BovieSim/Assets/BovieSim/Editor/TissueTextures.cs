@@ -77,12 +77,20 @@ namespace BovieSim.EditorTools
                     float crease = Mathf.Abs(F(u, v * 0.35, 6, 4, 21) - 0.5f) * 2; crease = 1 - Smooth(0.0f, 0.06f, crease);
                     float crease2 = Mathf.Abs(F(u * 0.4, v, 9, 3, 23) - 0.5f) * 2; crease2 = 1 - Smooth(0.0f, 0.05f, crease2);
                     float mott = F(u, v, 4, 4, 31);
+                    // the skin's polygonal line network: primary furrows (~0.8 mm cells) and a finer secondary net
+                    var cell = Noise.Voronoi2P(u * 1.0, v * 1.6, 24, 131);
+                    float furrow = (1 - Smooth(0f, 0.07f, (float)(cell.f2 - cell.f1))) * (0.5f + 0.5f * F(u, v, 3, 2, 133));
+                    var cell2 = Noise.Voronoi2P(u, v, 64, 137);
+                    float furrow2 = (1 - Smooth(0f, 0.05f, (float)(cell2.f2 - cell2.f1))) * 0.8f;
                     c = TissuePalette.Skin(tone);
                     c = Color.Lerp(c, c * new Color(1.05f, 0.86f, 0.84f), (mott - 0.4f) * 0.8f);
-                    c *= 1 - pores * 0.12f - (crease + crease2 * 0.6f) * 0.08f;
-                    c *= TissuePalette.Prep(TissuePalette.BakedPrep); // the runtime corrects to the scenario prep and tone
-                    h = -pores * 0.35f - crease * 0.5f - crease2 * 0.3f + F(u, v, 24, 3, 37) * 0.25f;
-                    s = 0.42f + mott * 0.1f - pores * 0.1f;
+                    c *= 1 - pores * 0.12f - (crease + crease2 * 0.6f) * 0.06f - furrow * 0.05f - furrow2 * 0.03f;
+                    // prep painted on with a sponge: the film is thicker along the strokes and pools in the furrows
+                    float stroke = F(u * 0.25, v * 2, 3, 3, 141);
+                    float film = Mathf.Clamp01(0.55f + 0.5f * (stroke - 0.5f) + 0.25f * furrow);
+                    c *= Color.Lerp(Color.white, TissuePalette.Prep(TissuePalette.BakedPrep), 0.6f + 0.4f * film); // the runtime corrects to the scenario prep and tone
+                    h = -pores * 0.35f - crease * 0.4f - crease2 * 0.25f - furrow * 0.3f - furrow2 * 0.15f + F(u, v, 24, 3, 37) * 0.25f;
+                    s = 0.30f + 0.38f * film + mott * 0.06f - pores * 0.1f - furrow2 * 0.06f;
                     break;
                 }
                 case 1: // dermis (cut edge): pale pink-white collagen with punctate dermal bleeding
@@ -200,6 +208,23 @@ namespace BovieSim.EditorTools
             h = h * 0.6f + mott * 0.3f;
         }
 
+        /// <summary>Tangent-space normal map from a colour image: luminance as height, central differences (wrapping, so tiles stay seamless).</summary>
+        public static Color[] NormalFromColor(Color[] px, int w, int h, float strength)
+        {
+            var lum = new float[w * h];
+            for (int i = 0; i < lum.Length; i++) lum[i] = 0.299f * px[i].r + 0.587f * px[i].g + 0.114f * px[i].b;
+            var o = new Color[w * h];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    float dx = lum[(x + 1) % w + y * w] - lum[(x - 1 + w) % w + y * w];
+                    float dy = lum[x + ((y + 1) % h) * w] - lum[x + ((y - 1 + h) % h) * w];
+                    var nrm = new Vector3(-dx * strength, -dy * strength, 1).normalized;
+                    o[x + y * w] = new Color(nrm.x * 0.5f + 0.5f, nrm.y * 0.5f + 0.5f, nrm.z * 0.5f + 0.5f, 1);
+                }
+            return o;
+        }
+
         static Color[] HeightToNormal(float[] h, int size, float strength)
         {
             var o = new Color[h.Length];
@@ -218,7 +243,7 @@ namespace BovieSim.EditorTools
         public static Set Fabric(int size)
         {
             int n = size * size; var col = new Color[n]; var hgt = new float[n]; var mask = new Color[n];
-            var baseC = new Color(0.10f, 0.24f, 0.40f);
+            var baseC = new Color(0.15f, 0.30f, 0.49f);
             for (int y = 0; y < size; y++)
                 for (int x = 0; x < size; x++)
                 {
