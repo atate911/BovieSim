@@ -27,6 +27,11 @@ after updating (the editor offers it automatically).
   prompts for making them). Without maps: satin brushed steel that reflects the lit field and the lamp domes
   instead of a dark room, a nonwoven drape with fibre texture, bonding dots and a rolled hem and package
   creases in the folds.
+- **Instrument models (Unity).** A purchased pack dropped into `Assets/BovieSim/Models` replaces the procedural
+  Adson forceps (the pack's one-piece tweezers are split into two arms, straightened and fitted to the sim's
+  frame so they still open and close) and lays its scissors, haemostat and scalpel on the drape beside the
+  field; the pack's scratch map drives scratched smoothness and a normal map on its steel. Procedural teeth now
+  face each other.
 - **Colour rendering.** Browser build: Khronos PBR Neutral tone mapping (blood stays red, fat stays yellow) with a
   proper sRGB transfer curve and a lighter vignette; near-white 4300 K light with the room's cool ambient and
   blue drape bounce. Unity: ambient occlusion at wound scale (1.5 cm, not 25 cm); the scenario skin-tone and

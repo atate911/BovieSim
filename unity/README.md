@@ -128,6 +128,8 @@ flow, lattice gaping and lipoma freeing, scenario parsing, anatomy determinism a
 - **Ray tracing "not available"**: the editor or build must run on DirectX 12 (Project Settings > Player >
   Graphics APIs for Windows: Direct3D12 first, then restart) on an RTX / RX 6000 / Arc card with a current
   driver; check *HDRP Wizard > HDRP + DXR*.
+- **Instrument models**: drop a purchased pack's FBX and textures into `Assets/BovieSim/Models` (git-ignored)
+  and re-run setup; `tweezers` becomes the forceps, other instruments rest on the drape ([docs/textures.md](../docs/textures.md)).
 - **Downloads blocked**: put any `.hdr` into `Assets/BovieSim/Generated/Downloads` and re-run setup. Texture
   maps of your own go in the same folder as `Drape_Color.jpg`, `Steel_Color.jpg`, `Plastic_Color.jpg`, `Pad_Color.jpg`
   (optional `_NormalGL`, `_Roughness`), see [docs/textures.md](../docs/textures.md).

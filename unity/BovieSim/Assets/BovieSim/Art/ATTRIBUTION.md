@@ -12,6 +12,7 @@ CC-BY assets additionally need the credit shown in the app's About text before r
 | Drape fabric | First ambientCG material matching "fabric nonwoven", "fabric felt" or "fabric", else `Fabric030`, `Fabric026`, `Fabric004` (1K JPG: Color, NormalGL, Roughness) | https://ambientcg.com | CC0 1.0 | Lennart Demes / ambientCG | Tinted surgical blue when grey; reused lighter on the reinforcement pad; triplanar, 30 mm tile |
 | Instrument steel | First ambientCG material matching "brushed metal" or "brushed steel", else `Metal007`, `Metal006`, `Metal032` | https://ambientcg.com | CC0 1.0 | Lennart Demes / ambientCG | Normalised to stainless grey, satin smoothness; triplanar, 12 mm tile |
 | Pencil plastic | First ambientCG material matching "plastic", else `Plastic010`, `Plastic006` | https://ambientcg.com | CC0 1.0 | Lennart Demes / ambientCG | Tinted off-white; triplanar, 20 mm tile |
+| Instrument pack | FBX + textures in `Assets/BovieSim/Models` (purchased, e.g. CGTrader "Surgical Instruments") | marketplace | royalty-free per its licence; not redistributed | pack author | tweezers split into forceps arms; scissors, haemostat, scalpel laid on the drape; scratch map as mask / normal |
 | Your own maps | `Generated/Downloads/<Slot>_Color.jpg` (+ `_NormalGL`, `_Roughness`) for Drape, Pad, Steel, Plastic | you | your responsibility | you | Used in place of the downloads; log the source here before release |
 
 ## Made in this project (no third-party content)

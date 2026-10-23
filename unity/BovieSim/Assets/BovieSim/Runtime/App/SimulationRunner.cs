@@ -230,15 +230,19 @@ namespace BovieSim
             drapes = MakePart("Drapes", MeshFactory.Drapes(volume.SizeX / 2, volume.SizeZ / 2), new[] { assets.drapeFilm, assets.drapePad, assets.drape }, field);
             drapes.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
             BuildLampDomes();
+            BuildDressing();
             pencil = new GameObject("Bovie pencil"); pencil.transform.SetParent(field, false);
             MakePart("Body", MeshFactory.PencilBody(), assets.pencilBody, pencil.transform);
             cutButton = MakePart("Cut button", MeshFactory.PencilButton(44, 58), assets.pencilCutButton, pencil.transform).GetComponent<MeshRenderer>();
             coagButton = MakePart("Coag button", MeshFactory.PencilButton(62, 76), assets.pencilCoagButton, pencil.transform).GetComponent<MeshRenderer>();
             bladeMesh = MeshFactory.Blade(); needleMesh = MeshFactory.Needle(); ballMesh = MeshFactory.Ball();
             electrodeFilter = MakePart("Electrode", bladeMesh, assets.steel, pencil.transform).GetComponent<MeshFilter>();
-            // arm A sits on the -Z side of the jaw centre and arm B on +Z: their teeth (1 x 2) face each other
-            forcepsA = MakePart("Adson forceps A", MeshFactory.ForcepsArm(forceps.armLength, true, 1), assets.steel, field);
-            forcepsB = MakePart("Adson forceps B", MeshFactory.ForcepsArm(forceps.armLength, false, 2), assets.steel, field);
+            // arm A sits on the -Z side of the jaw centre and arm B on +Z. Each arm's local +Z (HandPose: cross(x, arm axis))
+            // points away from the jaw centre, so arm A's teeth go to local -Z and arm B's to local +Z to face each other.
+            // An instrument pack in Assets/BovieSim/Models replaces the procedural arms (ProjectSetup.ImportInstrumentPack).
+            bool packForceps = assets.forcepsArmA != null && assets.forcepsArmB != null && assets.packSteel != null;
+            forcepsA = MakePart("Adson forceps A", packForceps ? assets.forcepsArmA : MeshFactory.ForcepsArm(forceps.armLength, false, 1), packForceps ? assets.packSteel : assets.steel, field);
+            forcepsB = MakePart("Adson forceps B", packForceps ? assets.forcepsArmB : MeshFactory.ForcepsArm(forceps.armLength, true, 2), packForceps ? assets.packSteel : assets.steel, field);
             frazier = MakePart("Frazier suction", MeshFactory.Frazier(), assets.steel, field);
             hookGo = MakePart("Skin hook", MeshFactory.SkinHook(), assets.steel, field);
             foreach (var go in new[] { pencil, forcepsA, forcepsB, frazier, hookGo })
@@ -255,6 +259,22 @@ namespace BovieSim
             arcLight.intensity = 0;
             arcLight.shadows = LightShadows.None;
             arcLight.enabled = false;
+        }
+
+        /// <summary>Pack instruments resting on the drape beside the field (visual only), seated on the drape's own height.</summary>
+        void BuildDressing()
+        {
+            if (assets.dressing == null) return;
+            float ax = volume.SizeX / 2 - 2.5f, az = volume.SizeZ / 2 - 2.5f;
+            foreach (var d in assets.dressing)
+            {
+                if (d == null || d.mesh == null) continue;
+                var go = MakePart(d.name, d.mesh, d.material != null ? d.material : assets.packSteel != null ? assets.packSteel : assets.steel, field);
+                float y = MeshFactory.DrapeHeight(d.positionMm.x, d.positionMm.z, ax, az, 6f);
+                go.transform.localPosition = new Vector3(d.positionMm.x, y + 0.3f, d.positionMm.z);
+                go.transform.localRotation = Quaternion.Euler(0, d.yawDeg, 0);
+                go.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            }
         }
 
         /// <summary>

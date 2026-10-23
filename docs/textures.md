@@ -66,3 +66,21 @@ convention, of the same surface") and a **roughness map** ("greyscale roughness 
 the sim derives a normal map itself. Check tiling by viewing the image repeated 2 x 2; most generators need a
 "seamless" or "tileable" mode, or a tool such as Materialize or ImageMagick's `-virtual-pixel tile` to fix the
 edges.
+
+## Instrument models (purchased packs)
+
+Real instrument models replace the procedural ones. Put the pack's **FBX** (or OBJ) and its textures into
+`unity/BovieSim/Assets/BovieSim/Models/` (any sub-folder; the folder is git-ignored because a purchased pack
+may not be redistributed) and run *Bovie Sim > Set Up Project*. The setup matches meshes by name:
+
+| Mesh name | Used as | Fit |
+|---|---|---|
+| `tweezers` | Adson forceps | split into its two arms at the splay axis, each arm straightened, tip at the origin, scaled to 114.7 mm; the sim opens and closes them |
+| `scissors`, `scissor_tweezers`, `scalpel` | instruments resting on the drape beside the field | laid flat, scaled to their real length |
+| `items_scratches` (texture) | scratched smoothness and a derived normal map on all pack steel, in the pack's own UVs | |
+| anything ending in `_low` | skipped (LOD meshes) | |
+
+Scale is taken from each item's real length, so it does not matter whether the file is in metres,
+centimetres or Blender units. The Bovie pencil, Frazier suction and skin hook stay procedural until a model
+of each exists; a mesh named `frazier`, `skin_hook` or `pencil` is the hook for adding them. The browser
+build does not load models.

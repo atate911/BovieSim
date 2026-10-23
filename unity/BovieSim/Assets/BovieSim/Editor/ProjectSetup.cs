@@ -27,6 +27,8 @@ namespace BovieSim.EditorTools
         const string Root = "Assets/BovieSim/Generated";
         const string Tex = Root + "/Textures", Mat = Root + "/Materials", Dl = Root + "/Downloads";
         const string RegistryPath = "Assets/BovieSim/Resources/BovieSim/SimAssets.asset";
+        /// <summary>purchased instrument packs (FBX/OBJ + textures) go here; git-ignored, see docs/textures.md</summary>
+        const string ModelsDir = "Assets/BovieSim/Models";
         const string ScenePath = Root + "/Main.unity";
         const int TexSize = 1024;
 
@@ -58,7 +60,7 @@ namespace BovieSim.EditorTools
             {
                 Progress("Project settings", 0.02f);
                 ConfigurePlayer();
-                foreach (var d in new[] { Root, Tex, Mat, Dl, "Assets/BovieSim/Resources/BovieSim" }) Directory.CreateDirectory(d);
+                foreach (var d in new[] { Root, Tex, Mat, Dl, ModelsDir, "Assets/BovieSim/Resources/BovieSim" }) Directory.CreateDirectory(d);
                 AssetDatabase.Refresh();
 
                 Progress("HDRP asset", 0.05f);
@@ -108,6 +110,8 @@ namespace BovieSim.EditorTools
                 assets.lampDome = LitMaterial("LampDome", new Color(0.82f, 0.82f, 0.82f), 0, 0.35f, 0);
                 assets.lampDome.SetColor("_EmissiveColor", new Color(1f, 0.93f, 0.86f) * 150000f);
                 HDMaterial.ValidateMaterial(assets.lampDome);
+                Progress("Instrument models (Assets/BovieSim/Models)", 0.70f);
+                ImportInstrumentPack(assets);
                 assets.particlesAlpha = ParticleMaterial("ParticlesAlpha", BlendMode.SrcAlpha, BlendMode.OneMinusSrcAlpha);
                 assets.particlesAdditive = ParticleMaterial("ParticlesAdditive", BlendMode.One, BlendMode.One);
                 assets.uiTheme = RuntimeTheme();
@@ -562,6 +566,217 @@ namespace BovieSim.EditorTools
             HDMaterial.ValidateMaterial(m);
             EditorUtility.SetDirty(m);
             return m;
+        }
+
+        // ---- instrument pack: real models in place of the procedural ones --------------------------------------
+
+        /// <summary>Real length (mm) of each pack item along its longest axis, from the pack's own OBJ: fixes the scale whatever units the file uses.</summary>
+        static readonly System.Collections.Generic.Dictionary<string, float> PackLengthMm = new System.Collections.Generic.Dictionary<string, float>
+        {
+            { "tweezers", 114.7f }, { "scissors", 170.8f }, { "scissor_tweezers", 227.4f }, { "scalpel", 173.3f }, { "needle", 197f },
+        };
+
+        /// <summary>
+        /// Instrument models dropped into Assets/BovieSim/Models (a purchased pack: FBX or OBJ plus textures, not committed).
+        /// Meshes are matched by name: `tweezers` becomes the Adson forceps (split into its two arms, each straightened
+        /// and fitted to the sim's arm frame: tip at the origin, +Y toward the hinge, mm), and scissors, scalpel and the
+        /// ring-handled `scissor_tweezers` are laid on the drape beside the field. LOD meshes (`_low`) are skipped.
+        /// Without a pack everything stays procedural.
+        /// </summary>
+        static void ImportInstrumentPack(SimAssets assets)
+        {
+            assets.forcepsArmA = null; assets.forcepsArmB = null; assets.packSteel = null; assets.dressing = new DressingItem[0];
+            var meshes = new System.Collections.Generic.Dictionary<string, Mesh>();
+            foreach (var guid in AssetDatabase.FindAssets("t:Model", new[] { ModelsDir }))
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                foreach (var o in AssetDatabase.LoadAllAssetsAtPath(path))
+                {
+                    var m = o as Mesh; if (m == null) continue;
+                    string key = m.name.ToLowerInvariant();
+                    if (key.EndsWith("_low") || meshes.ContainsKey(key)) continue;
+                    meshes[key] = m;
+                }
+            }
+            if (meshes.Count == 0) { Debug.Log("[Bovie Sim] No instrument models in " + ModelsDir + "; procedural instruments."); return; }
+            Directory.CreateDirectory(Root + "/Models");
+            assets.packSteel = PackSteelMaterial(FindPackTexture("items_scratches"));
+            Mesh tweezers;
+            if (meshes.TryGetValue("tweezers", out tweezers))
+            {
+                var arms = SplitForcepsArms(tweezers, PackLengthMm["tweezers"]);
+                assets.forcepsArmA = SaveMesh(arms[0], "Forceps_ArmA"); assets.forcepsArmB = SaveMesh(arms[1], "Forceps_ArmB");
+                downloadLog.AppendLine("| Adson forceps | tweezers (instrument pack) | " + ModelsDir + " | pack licence | pack author | split into two arms, straightened, fitted to the sim frame |");
+            }
+            var dressing = new System.Collections.Generic.List<DressingItem>();
+            var places = new[] { new { key = "scissors", pos = new Vector3(-105f, 0, -70f), yaw = 28f }, new { key = "scissor_tweezers", pos = new Vector3(120f, 0, 75f), yaw = -18f }, new { key = "scalpel", pos = new Vector3(-85f, 0, 95f), yaw = 105f } };
+            foreach (var pl in places)
+            {
+                Mesh src; if (!meshes.TryGetValue(pl.key, out src)) continue;
+                var fitted = SaveMesh(FitFlat(src, PackLengthMm[pl.key]), "Dressing_" + pl.key);
+                dressing.Add(new DressingItem { name = pl.key, mesh = fitted, material = assets.packSteel, positionMm = pl.pos, yawDeg = pl.yaw });
+                downloadLog.AppendLine("| Field dressing | " + pl.key + " (instrument pack) | " + ModelsDir + " | pack licence | pack author | fitted flat, laid on the drape |");
+            }
+            assets.dressing = dressing.ToArray();
+            Debug.Log("[Bovie Sim] Instrument pack: " + string.Join(", ", new System.Collections.Generic.List<string>(meshes.Keys).ToArray()) + (tweezers != null ? "; forceps from the pack" : "; no tweezers mesh, procedural forceps") + "; " + dressing.Count + " items on the drape.");
+        }
+
+        static Texture2D FindPackTexture(string name)
+        {
+            foreach (var guid in AssetDatabase.FindAssets(name + " t:Texture2D", new[] { ModelsDir }))
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (Path.GetFileNameWithoutExtension(path).ToLowerInvariant() == name) return ImportTexture(path, false, false);
+            }
+            return null;
+        }
+
+        /// <summary>Satin stainless for the pack meshes: the pack's scratch map (in its own UVs) gives scratched smoothness and a derived normal map.</summary>
+        static Material PackSteelMaterial(Texture2D scratches)
+        {
+            var m = LitMaterial("PackSteel", new Color(0.80f, 0.80f, 0.81f), 1, 0.55f, 0);
+            if (scratches != null)
+            {
+                try
+                {
+                    var px = scratches.GetPixels(); int w = scratches.width, h = scratches.height;
+                    double sum = 0; for (int i = 0; i < px.Length; i += 7) sum += px[i].r; float mean = (float)(sum / ((px.Length + 6) / 7));
+                    var mask = new Color[px.Length];
+                    for (int i = 0; i < px.Length; i++) { float scratch = Mathf.Clamp01((mean - px[i].r) / Mathf.Max(mean, 0.05f)); mask[i] = new Color(1, 1, 1, 0.6f - 0.45f * scratch); }
+                    m.SetTexture("_MaskMap", SaveTexture("PackSteel_Mask", mask, w, h, true, false));
+                    m.SetFloat("_SmoothnessRemapMin", 0); m.SetFloat("_SmoothnessRemapMax", 1); m.SetFloat("_AORemapMin", 0); m.SetFloat("_AORemapMax", 1);
+                    m.SetTexture("_NormalMap", SaveTexture("PackSteel_Normal", TissueTextures.NormalFromColor(px, w, h, 1.5f), w, h, true, true));
+                    m.SetFloat("_NormalScale", 0.6f);
+                    m.SetFloat("_UVBase", 0); // the pack's own UVs
+                }
+                catch (Exception ex) { Debug.LogWarning("[Bovie Sim] pack scratch map unusable: " + ex.Message); }
+            }
+            HDMaterial.ValidateMaterial(m);
+            EditorUtility.SetDirty(m);
+            return m;
+        }
+
+        static Mesh SaveMesh(Mesh m, string name)
+        {
+            string path = Root + "/Models/" + name + ".asset";
+            var existing = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+            if (existing != null) AssetDatabase.DeleteAsset(path);
+            m.name = name;
+            AssetDatabase.CreateAsset(m, path);
+            return AssetDatabase.LoadAssetAtPath<Mesh>(path);
+        }
+
+        /// <summary>Axis indices of a bounds: longest (length), shortest (thickness) and the remaining one (width / splay).</summary>
+        static void PrincipalAxes(Bounds b, out int longest, out int shortest, out int other)
+        {
+            var sz = b.size; longest = 0; shortest = 0;
+            for (int k = 1; k < 3; k++) { if (sz[k] > sz[longest]) longest = k; if (sz[k] < sz[shortest]) shortest = k; }
+            if (longest == shortest) { longest = 0; shortest = 1; }
+            other = 3 - longest - shortest;
+        }
+
+        static float ExtentAcross(Vector3[] v, int along, int across, float lo, float hi)
+        {
+            float mn = float.MaxValue, mx = float.MinValue;
+            foreach (var p in v) if (p[along] >= lo && p[along] <= hi) { mn = Mathf.Min(mn, p[across]); mx = Mathf.Max(mx, p[across]); }
+            return mx > mn ? mx - mn : 0;
+        }
+
+        /// <summary>Sub-mesh from a triangle subset with a vertex transform (positions) and a rotation for normals; winding flipped when the transform mirrors.</summary>
+        static Mesh BuildPart(Mesh src, System.Collections.Generic.List<int> triIdx, Func<Vector3, Vector3> map, Func<Vector3, Vector3> mapN, bool flip)
+        {
+            var v = src.vertices; var n = src.normals; var uv = src.uv; var tris = src.triangles;
+            var remap = new System.Collections.Generic.Dictionary<int, int>();
+            var ov = new System.Collections.Generic.List<Vector3>(); var on = new System.Collections.Generic.List<Vector3>(); var ouv = new System.Collections.Generic.List<Vector2>(); var ot = new System.Collections.Generic.List<int>();
+            foreach (int t in triIdx)
+            {
+                int[] c = { tris[t * 3], tris[t * 3 + 1], tris[t * 3 + 2] };
+                if (flip) { int tmp = c[1]; c[1] = c[2]; c[2] = tmp; }
+                foreach (int i in c)
+                {
+                    int j;
+                    if (!remap.TryGetValue(i, out j))
+                    {
+                        j = ov.Count; remap[i] = j;
+                        ov.Add(map(v[i]));
+                        on.Add(n != null && n.Length == v.Length ? mapN(n[i]).normalized : Vector3.up);
+                        ouv.Add(uv != null && uv.Length == v.Length ? uv[i] : Vector2.zero);
+                    }
+                    ot.Add(j);
+                }
+            }
+            var m = new Mesh();
+            if (ov.Count > 65000) m.indexFormat = IndexFormat.UInt32;
+            m.SetVertices(ov); m.SetNormals(on); m.SetUVs(0, ouv); m.SetTriangles(ot, 0);
+            if (n == null || n.Length != v.Length) m.RecalculateNormals();
+            m.RecalculateTangents(); m.RecalculateBounds();
+            return m;
+        }
+
+        /// <summary>
+        /// Splits a one-piece tweezers mesh into its two arms (by the side of the splay axis), maps each into the sim's arm
+        /// frame (X thickness, +Y from the tip toward the hinge, Z the closing direction, mm) and straightens it so the
+        /// sim's per-arm pose sets the splay. Returns { arm A (local -Z toward the other arm), arm B }.
+        /// </summary>
+        static Mesh[] SplitForcepsArms(Mesh src, float realLengthMm)
+        {
+            var v = src.vertices; var b = src.bounds;
+            int L, T, S; PrincipalAxes(b, out L, out T, out S);
+            float lMin = b.min[L], lMax = b.max[L], span = Mathf.Max(lMax - lMin, 1e-6f);
+            // the arms spread apart toward the tips and join at the heel: the wider end is the tip end
+            bool tipAtMax = ExtentAcross(v, L, S, lMax - 0.15f * span, lMax) > ExtentAcross(v, L, S, lMin, lMin + 0.15f * span);
+            float sCentre = b.center[S], tCentre = b.center[T], scale = realLengthMm / span;
+            Func<Vector3, Vector3> map = p => new Vector3((p[T] - tCentre) * scale, (tipAtMax ? lMax - p[L] : p[L] - lMin) * scale, -(p[S] - sCentre) * scale);
+            Func<Vector3, Vector3> mapN = p => new Vector3(p[T], tipAtMax ? -p[L] : p[L], -p[S]);
+            Vector3 ex = Vector3.zero, ey = Vector3.zero, ez = Vector3.zero; ex[0] = 1; ey[1] = 1; ez[2] = 1;
+            bool flip = Vector3.Dot(Vector3.Cross(mapN(ex), mapN(ey)), mapN(ez)) < 0;
+            var tris = src.triangles; var result = new Mesh[2];
+            for (int side = 0; side < 2; side++)
+            {
+                var idx = new System.Collections.Generic.List<int>();
+                for (int t = 0; t < tris.Length / 3; t++)
+                {
+                    float sc = (v[tris[t * 3]][S] + v[tris[t * 3 + 1]][S] + v[tris[t * 3 + 2]][S]) / 3 - sCentre;
+                    if (side == 0 ? sc < 0 : sc >= 0) idx.Add(t);
+                }
+                var arm = BuildPart(src, idx, map, mapN, flip);
+                Straighten(arm, realLengthMm);
+                result[side] = arm;
+            }
+            return result;
+        }
+
+        /// <summary>Rotates an arm about X so its tip-to-heel line runs along +Y, then puts the tip at the origin.</summary>
+        static void Straighten(Mesh arm, float lengthMm)
+        {
+            var v = arm.vertices; var n = arm.normals;
+            Vector3 tip = Vector3.zero, heel = Vector3.zero; int nt = 0, nh = 0;
+            foreach (var p in v) { if (p.y < 0.06f * lengthMm) { tip += p; nt++; } else if (p.y > 0.85f * lengthMm) { heel += p; nh++; } }
+            if (nt == 0 || nh == 0) return;
+            tip /= nt; heel /= nh;
+            float ang = Mathf.Atan2(heel.z - tip.z, heel.y - tip.y) * Mathf.Rad2Deg;
+            // Unity's +X rotation takes +Y toward +Z, so a heel leaning toward +Z (positive angle) comes back with -ang
+            var rot = Quaternion.AngleAxis(-ang, Vector3.right);
+            var rtip = rot * tip;
+            for (int i = 0; i < v.Length; i++) { v[i] = rot * v[i] - new Vector3(rtip.x, 0, rtip.z); if (n != null && n.Length == v.Length) n[i] = rot * n[i]; }
+            float minY = float.MaxValue; foreach (var p in v) minY = Mathf.Min(minY, p.y);
+            for (int i = 0; i < v.Length; i++) v[i].y -= minY;
+            arm.vertices = v; if (n != null && n.Length == v.Length) arm.normals = n;
+            arm.RecalculateTangents(); arm.RecalculateBounds();
+        }
+
+        /// <summary>A pack instrument fitted to lie flat: length along X, thickness up (Y), centred, resting on y = 0, scaled to its real length (mm).</summary>
+        static Mesh FitFlat(Mesh src, float realLengthMm)
+        {
+            var b = src.bounds; int L, T, S; PrincipalAxes(b, out L, out T, out S);
+            float scale = realLengthMm / Mathf.Max(b.size[L], 1e-6f);
+            var c = b.center; float tMin = b.min[T];
+            Func<Vector3, Vector3> map = p => new Vector3((p[L] - c[L]) * scale, (p[T] - tMin) * scale, (p[S] - c[S]) * scale);
+            Func<Vector3, Vector3> mapN = p => new Vector3(p[L], p[T], p[S]);
+            Vector3 ex = Vector3.zero, ey = Vector3.zero, ez = Vector3.zero; ex[0] = 1; ey[1] = 1; ez[2] = 1;
+            bool flip = Vector3.Dot(Vector3.Cross(mapN(ex), mapN(ey)), mapN(ez)) < 0;
+            var all = new System.Collections.Generic.List<int>(); for (int t = 0; t < src.triangles.Length / 3; t++) all.Add(t);
+            return BuildPart(src, all, map, mapN, flip);
         }
 
         // ---- volume / post -----------------------------------------------------------------------------------
