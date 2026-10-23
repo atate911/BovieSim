@@ -30,7 +30,9 @@ depth of field focused at the tip, bloom, TAA and ACES tonemapping.
   restart the editor; accept it (keys and mouse use the legacy input, the pen uses the Input System).
 
 ## First open
-1. Unity Hub > Add > Add project from disk > `unity/BovieSim`. Open with your 6000.6.x editor (accept if Hub offers to switch the project to it).
+1. Unity Hub > Add > Add project from disk > `unity/BovieSim`. Hub only lists the project and asks
+   nothing else; then click the project to open it with your 6000.6.x editor. Keep the Console open
+   (Window > General > Console) to follow progress.
 2. The bootstrap installs **HDRP 17**, the **Input System** and the **Test Framework** (Package Manager).
    If Unity asks to enable the new input backends and restart, choose **Yes**; the bootstrap then sets
    input handling to Both and asks for one more restart. Wait for the
