@@ -4,7 +4,8 @@
   "references": [
     "BovieSim.Core",
     "Unity.RenderPipelines.Core.Runtime",
-    "Unity.RenderPipelines.HighDefinition.Runtime"
+    "Unity.RenderPipelines.HighDefinition.Runtime",
+    "Unity.InputSystem"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],
@@ -14,7 +15,8 @@
   "autoReferenced": true,
   "defineConstraints": ["BOVIE_HDRP"],
   "versionDefines": [
-    { "name": "com.unity.render-pipelines.high-definition", "expression": "17.0.0", "define": "BOVIE_HDRP" }
+    { "name": "com.unity.render-pipelines.high-definition", "expression": "17.0.0", "define": "BOVIE_HDRP" },
+    { "name": "com.unity.inputsystem", "expression": "1.0.0", "define": "BOVIE_INPUTSYSTEM" }
   ],
   "noEngineReferences": false
 }

@@ -8,12 +8,31 @@ depth of field focused at the tip, bloom, TAA and ACES tonemapping.
 
 ## Requirements
 - Unity **6000.0 LTS** (6000.0.58f1 or later 6000.0.x) via Unity Hub, Personal licence is fine.
-- Windows (DX12 or Vulkan) or macOS (Metal), discrete GPU recommended. HDRP needs compute shaders.
+- **Windows 10 or 11, 64-bit** (the target platform; macOS/Metal should also work but is untested).
+  DirectX 12 or DirectX 11 both work (every compute kernel stays within DX11's 8 writable buffers).
+  A discrete GPU (NVIDIA GTX 1060 / AMD RX 580 class or better) is recommended; integrated graphics
+  will run at a coarser voxel size.
 - Internet on first setup (Unity packages; optional CC0 HDRI and fabric downloads).
+
+## Windows notes
+- **Clone to a short path**, e.g. `C:\dev\bovie-sim`. Unity's `Library` folder nests deeply and paths
+  over 260 characters break package imports (`OneDrive\Documents\...` paths are the usual culprit;
+  OneDrive syncing the Library folder also slows the editor badly).
+- Use Git for Windows; its default line-ending conversion is fine for Unity files.
+- Allow the Unity editor through Windows Firewall when asked (package downloads and the optional
+  CC0 HDRI / fabric downloads).
+- **Wacom pen:** pressure and tilt reach Unity through Windows Ink. In *Wacom Tablet Properties >
+  Mapping* keep **Use Windows Ink** ticked (the default). The project reads the pen through Unity's
+  Input System package, which the bootstrap installs; without it a Windows pen behaves as a mouse.
+  If leaning the pen toward you tips the instrument away from you, press **Y**.
+- The bootstrap sets *Project Settings > Player > Active Input Handling* to **Both** and offers to
+  restart the editor; accept it (keys and mouse use the legacy input, the pen uses the Input System).
 
 ## First open
 1. Unity Hub > Add > Add project from disk > `unity/BovieSim`. Open with 6000.0.x.
-2. The bootstrap installs **HDRP 17** and the **Test Framework** (Package Manager). Wait for the
+2. The bootstrap installs **HDRP 17**, the **Input System** and the **Test Framework** (Package Manager).
+   If Unity asks to enable the new input backends and restart, choose **Yes**; the bootstrap then sets
+   input handling to Both and asks for one more restart. Wait for the
    import to finish; the console says `[Bovie Sim] Installing ...`. If it does not start, use
    `Bovie Sim > Install Required Packages`.
 3. When HDRP is in, a dialog offers **Set up the project**. Accept (or run `Bovie Sim > Set Up Project`).
@@ -41,7 +60,7 @@ from the repo root to copy it into `Assets/BovieSim/Resources/BovieSim/Scenarios
 | RMB or Alt+LMB, MMB or Shift+LMB, wheel | Orbit, pan, zoom |
 | F1 / F2 | Scenario brief (goal, success, failure points, decisions, uncertainties) / controls |
 | F5 / F6 | Restart / next scenario (freeplay, hemostasis, lipoma) |
-| Pen (Wacom) | Pressure sets electrode depth; tilt sets the instrument angle |
+| Pen (Wacom) | Pressure sets electrode depth; tilt sets the instrument angle; Y flips tilt direction |
 
 The scenario can also be chosen on the `Bovie Sim` object (Scenario Id). Voxel Override (e.g. 0.4 mm)
 trades detail for speed on smaller GPUs.
@@ -74,7 +93,9 @@ flow, lattice gaping and lipoma freeing, scenario parsing, anatomy determinism a
 - **Pink or missing tissue / "SimAssets not found"**: run `Bovie Sim > Set Up Project`.
 - **Black or very dark scene**: the exposure is fixed for an operating light (EV 15). Check the two
   `Surgical light` objects exist; adjust `Exposure` in `Generated/BovieVolume.asset` if needed.
-- **Input does nothing**: Project Settings > Player > Active Input Handling must be *Both* or *Input
-  Manager (Old)*; setup switches it from *Input System Package (New)* automatically (editor restart).
+- **Input does nothing / `InvalidOperationException` about the Input class**: Project Settings > Player >
+  Active Input Handling must be *Both*; the bootstrap sets it, then the editor must restart.
+- **Pen moves the cursor but pressure/tilt do nothing**: check Use Windows Ink in the Wacom settings and
+  that `com.unity.inputsystem` is installed (Window > Package Manager).
 - **Slow**: set Voxel Override to 0.4 or 0.5 on the `Bovie Sim` object; turn off DoF/SSAO in the volume.
 - **Downloads blocked**: put any `.hdr` into `Assets/BovieSim/Generated/Downloads` and re-run setup.

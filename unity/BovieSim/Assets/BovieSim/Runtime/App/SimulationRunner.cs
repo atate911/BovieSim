@@ -444,6 +444,7 @@ namespace BovieSim
             if (Input.GetKeyDown(KeyCode.C)) physics.sliceMode = (physics.sliceMode + 1) % 6;
             if (Input.GetKeyDown(KeyCode.H)) physics.sliceEnabled = !physics.sliceEnabled;
             if (Input.GetKeyDown(KeyCode.J)) slicePerp = !slicePerp;
+            if (Input.GetKeyDown(KeyCode.Y)) InputState.invertTiltY = !InputState.invertTiltY;
             if (Input.GetKeyDown(KeyCode.F1)) hud.showBrief = !hud.showBrief;
             if (Input.GetKeyDown(KeyCode.F2)) hud.showHelp = !hud.showHelp;
         }
@@ -467,7 +468,7 @@ namespace BovieSim
                 s += "\n\nZ/X pedal cut/coag · LMB hand-switch cut (Ctrl+LMB coag) on the pencil / grasp (forceps) / suck (suction) / hook\n" +
                      "Tab or Q tool · 1-4 cut mode · 5-6 coag mode · [ ] ; ' watts (Shift = 1 W) · B/N/O blade/needle/ball · R roll · T toothed\n" +
                      "C section mode · J section orientation · H hide section · RMB or Alt+LMB orbit · MMB or Shift+LMB pan · wheel zoom\n" +
-                     "F1 brief · F5 restart · F6 next scenario (" + string.Join(", ", ScenarioIds) + ") · pen pressure sets depth, pen tilt sets the angle";
+                     "F1 brief · F5 restart · F6 next scenario (" + string.Join(", ", ScenarioIds) + ") · pen pressure sets depth, pen tilt sets the angle (Y flips tilt)";
             else s += "\nF2 controls";
             return s;
         }

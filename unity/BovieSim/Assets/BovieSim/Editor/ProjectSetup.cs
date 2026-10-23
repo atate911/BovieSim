@@ -126,13 +126,13 @@ namespace BovieSim.EditorTools
         static void ConfigurePlayer()
         {
             PlayerSettings.colorSpace = ColorSpace.Linear;
-            // the sim reads the legacy Input class (mouse, keys, stylus touches): allow it alongside the Input System
+            // the sim reads the legacy Input class (mouse, keys) and the Input System (pen): needs "Both"
             var ps = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset");
             if (ps != null && ps.Length > 0)
             {
                 var so = new SerializedObject(ps[0]);
                 var p = so.FindProperty("activeInputHandler");
-                if (p != null && p.intValue == 1) { p.intValue = 2; so.ApplyModifiedProperties(); Debug.Log("[Bovie Sim] Active Input Handling set to Both (restart the editor if prompted)."); }
+                if (p != null && p.intValue != 2) { p.intValue = 2; so.ApplyModifiedProperties(); Debug.Log("[Bovie Sim] Active Input Handling set to Both (restart the editor if prompted)."); }
             }
         }
 

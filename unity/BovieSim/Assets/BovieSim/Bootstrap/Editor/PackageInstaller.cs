@@ -19,6 +19,8 @@ namespace BovieSim.Bootstrap
         {
             "com.unity.render-pipelines.high-definition",
             "com.unity.test-framework",
+            // pen pressure and tilt on Windows (Wacom via Windows Ink); mouse and keys still use the legacy Input class
+            "com.unity.inputsystem",
         };
         const string SessionKey = "BovieSim.PackageInstaller.Ran";
 
@@ -27,6 +29,7 @@ namespace BovieSim.Bootstrap
 
         static PackageInstaller()
         {
+            EditorApplication.delayCall += EnsureBothInputHandlers;
             if (SessionState.GetBool(SessionKey, false)) return;
             SessionState.SetBool(SessionKey, true);
             EditorApplication.delayCall += Begin;
@@ -72,5 +75,24 @@ namespace BovieSim.Bootstrap
         }
 
         static void Finish() => EditorApplication.update -= Poll;
+
+        /// <summary>
+        /// Installing the Input System offers to switch Active Input Handling to "Input System Package (New)",
+        /// which would make the legacy Input calls throw. The sim needs "Both" (2): set it and offer a restart.
+        /// </summary>
+        static void EnsureBothInputHandlers()
+        {
+            var ps = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset");
+            if (ps == null || ps.Length == 0) return;
+            var so = new SerializedObject(ps[0]);
+            var p = so.FindProperty("activeInputHandler");
+            if (p == null || p.intValue == 2) return;
+            p.intValue = 2;
+            so.ApplyModifiedPropertiesWithoutUndo();
+            AssetDatabase.SaveAssets();
+            Debug.Log("[Bovie Sim] Active Input Handling set to Both (legacy keys/mouse + Input System pen).");
+            if (EditorUtility.DisplayDialog("Bovie Sim", "Active Input Handling was changed to 'Both'. The editor must restart for this to take effect.", "Restart now", "Later"))
+                EditorApplication.OpenProject(System.IO.Directory.GetCurrentDirectory());
+        }
     }
 }

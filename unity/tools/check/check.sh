@@ -9,7 +9,7 @@ HERE=$(cd "$(dirname "$0")" && pwd); B="$HERE/../../BovieSim/Assets/BovieSim"; O
 FILTER='^Compilation|Location of the symbol|lightUnit|RenderPrimitives\(ref|CS1620: Argument .#1. is missing .ref.|AddAndRemoveRequest'
 echo "== runtime (module refs)"
 R="$UNITY_REFS"; REFS=""; for m in CoreModule IMGUIModule InputLegacyModule AudioModule JSONSerializeModule TextRenderingModule; do REFS="$REFS -r:$R/UnityEngine.$m.dll"; done
-mcs -target:library -out:"$OUT/rt.dll" $REFS "$HERE/stubs_unity6_hdrp.cs" $(find "$B/Core" "$B/Runtime" -name "*.cs") 2>&1 | grep -Ev "$FILTER" || true
+mcs -target:library -out:"$OUT/rt.dll" $REFS -define:BOVIE_INPUTSYSTEM "$HERE/stubs_inputsystem.cs" "$HERE/stubs_unity6_hdrp.cs" $(find "$B/Core" "$B/Runtime" -name "*.cs") 2>&1 | grep -Ev "$FILTER" || true
 echo "== everything incl. editor (SDK refs)"
 mcs -target:library -out:"$OUT/ed.dll" -r:"$UNITY_SDK/UnityEngine.dll" -r:"$UNITY_SDK/UnityEditor.dll" -r:System.IO.Compression.dll -r:System.IO.Compression.FileSystem.dll \
   "$HERE/stubs_unity6_hdrp.cs" "$HERE/stubs_hdrp_editor.cs" $(find "$B" -name "*.cs" -not -path "*/Tests/*") 2>&1 | grep -Ev "$FILTER" || true
