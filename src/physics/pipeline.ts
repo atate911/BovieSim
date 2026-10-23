@@ -17,7 +17,8 @@ export interface SimReadout {
 }
 
 const SIM_BYTES = 21 * 16;
-export const SLICE_W = 320, SLICE_H = 200;
+/** section image size; shown at 480 x 300 CSS px, so lines and layer edges stay sharp on high-DPI screens */
+export const SLICE_W = 640, SLICE_H = 400;
 const STATE_BYTES = 256;
 const DROPS_BYTES = 16 + 16 * 16;
 export const MAX_DROPS = 16;
@@ -51,8 +52,8 @@ export class PhysicsPipeline {
   private sliceReadback: GPUBuffer;
   private g2: GPUBindGroup;
   private g0s!: GPUBindGroup;
-  /** slice plane: origin (top centre, mm), horizontal axis, width mm, depth mm, mode */
-  slice = { o: vec3.create(), u: vec3.fromValues(1, 0, 0), widthMm: 16, depthMm: 10, mode: 0, enabled: true };
+  /** slice plane: origin (top centre, mm), horizontal axis, width mm, depth mm, mode; peelY = depth-peel plane (world y, mm; 1e9 none) */
+  slice = { o: vec3.create(), u: vec3.fromValues(1, 0, 0), widthMm: 16, depthMm: 10, mode: 0, enabled: true, peelY: 1e9 };
   readonly slicePixels = new Uint8ClampedArray(SLICE_W * SLICE_H * 4);
   private g0: GPUBindGroup;
   private gPot: [GPUBindGroup, GPUBindGroup];
@@ -210,7 +211,7 @@ export class PhysicsPipeline {
     f32.set([sl.o[0], sl.o[1], sl.o[2], sl.widthMm], 52);
     f32.set([sl.u[0], sl.u[1], sl.u[2], SLICE_W], 56);
     f32.set([0, -1, 0, SLICE_H], 60);
-    f32.set([sl.depthMm, sl.mode, 0, 0], 64);
+    f32.set([sl.depthMm, sl.mode, sl.peelY, 0], 64);
     const wb = this.woundBox();
     i32.set([wb.o[0], wb.o[1], wb.o[2], this.lastSubsteps], 68);
     i32.set([wb.s[0], wb.s[1], wb.s[2], 0], 72);

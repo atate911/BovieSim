@@ -81,7 +81,24 @@
 - Upgrade path: version constant, changelog, tags, setup/settings/scenario versioning (docs/upgrading.md).
 - Not yet verified in Unity.
 
+## Unity client, round 3 (0.5.0: section resolution, depth peel)
+- Section rendered at 1280 × 800 (`DetailSettings.sliceScale`: 960 × 600 at Low, 1600 × 1000 at High and Ultra),
+  bilinear; large view (Shift+C) floats the card over the field at 800 px.
+- Depth peel: a clip plane in the brick extraction (`Surface.compute` `_Clip` / `_ClipMode`). Block cut removes
+  every voxel centre above the plane (fractional occupancy for the voxel it crosses, so the face slides smoothly);
+  dissection keeps vessels, nerve, lipoma, capsule, blood and any voxel with a changed thermal state or Ω ≥ 0.53,
+  holding thin kept structures above the iso level so the smoothing does not erase them. Moving the plane rebuilds
+  only the bricks in the band it crossed. Ruler card with layer ticks, keys, Ctrl + wheel, sweep; the section draws
+  the plane as a dashed line. Display only: physics, pick and instruments keep the whole bed.
+- Browser build: the same peel, verified headless at 0.5 mm: a block cut at 6 mm shows fat lobules, septa and vessel
+  cross-sections on the cut face with the strata on the walls; a dissection at 20 mm shows the perforator tree, the
+  nerve and the lipoma over the muscle (336 k triangles); a coag activation then a block cut at 1.5 mm shows the
+  blanched footprint on the cut face. Section sampled trilinearly at 640 × 400.
+- Not yet verified in Unity (compiled and unit-tested here only).
+
 ## Known gaps (next)
+- The depth peel is display-only: an instrument used while peeled still acts on the hidden tissue above the plane,
+  so the tip floats over the cut face.
 - Picking and tool placement use material coordinates: with large deformation the instrument
   draws slightly off the displaced surface.
 - Blood is shaded on the tissue surface (depth-tinted), not as a separate fluid surface mesh.

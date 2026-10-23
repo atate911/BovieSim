@@ -76,6 +76,8 @@ from the repo root to copy it into `Assets/BovieSim/Resources/BovieSim/Scenarios
 | Space (forceps closed) | Lift the jaws (traction on a grasped edge, delivering a freed lipoma) |
 | C / J / H | Cross-section mode / orientation (across view or across the blade) / hide |
 | - / = | Section zoom out / in (16 × 10 mm up to the full 56 × 35 mm) |
+| Shift+C | Large section (800 px over the field) |
+| K / , . | Depth peel of the field: off, block cut, dissection / plane deeper, shallower (Shift: 0.1 mm). Ctrl + wheel scrubs it, Shift+K sweeps it, or drag the ruler |
 | RMB or Alt+LMB, MMB or Shift+LMB, wheel | Orbit, pan, zoom |
 | F1 / F2 / F3 | Scenario brief / controls / timing readout (frame, CPU, GPU ms; result ages) |
 | F7 / F8 | Depth of field on/off (off by default) / anti-aliasing SMAA, TAA, FXAA, off |

@@ -16,14 +16,44 @@ struct Counter { count: atomic<u32>, cap: u32, pad0: u32, pad1: u32 };
 @group(0) @binding(5) var<storage, read> omega: array<f32>;
 @group(0) @binding(6) var<storage, read_write> verts: array<Vertex>;
 @group(0) @binding(7) var<storage, read_write> counter: Counter;
+// Depth peel (view only; the physics keeps the whole bed): plane.xyz unit normal, plane.w offset.
+// A voxel centre p is on the removed side when dot(n, p) > w. mode.x: 0 off, 1 block cut (everything
+// above the plane goes), 2 dissection (skin, fat, septa and fasciae above the plane go; vessels, the
+// nerve, the lipoma with its capsule and any tissue the energy has changed stay, so the vascular tree,
+// the lesion and the thermal injury stand out in 3D).
+struct Clip { plane: vec4f, mode: vec4f };
+@group(0) @binding(8) var<uniform> clip: Clip;
 
 const ISO: f32 = 0.5;
+
+/** 1 on the kept side of the peel plane, 0 on the removed side, fractional for the voxel the plane crosses. */
+fn clipFrac(i: i32, j: i32, k: i32) -> f32 {
+  let w = voxelToWorld(info, vec3f(f32(i), f32(j), f32(k)));
+  let s = clip.plane.w - dot(clip.plane.xyz, w);
+  return clamp(s / info.hMm + 0.5, 0.0, 1.0);
+}
+/** Dissection keeps vessels, nerve, lipoma, capsule, blood and anything the energy has changed (ids as in tissueProperties.ts). */
+fn keptInDissection(c: u32, idx: u32) -> bool {
+  let ty = cellType(c);
+  if (ty == 0u) { return false; }
+  if (ty >= 8u && ty <= 13u) { return true; }
+  return cellState(c) != 0u || omega[idx] >= 0.53;
+}
+/** Occupancy after the peel. */
+fn effOcc(idx: u32, i: i32, j: i32, k: i32) -> f32 {
+  let o = occ[idx];
+  if (clip.mode.x < 0.5) { return o; }
+  let f = clipFrac(i, j, k);
+  if (f >= 1.0) { return o; }
+  if (clip.mode.x > 1.5 && keptInDissection(cells[idx], idx)) { return o; }
+  return o * f;
+}
 
 fn occAt(i: i32, j: i32, k: i32) -> f32 {
   let ci = clamp(i, 0, i32(info.nx) - 1);
   let cj = clamp(j, 0, i32(info.ny) - 1);
   let ck = clamp(k, 0, i32(info.nz) - 1);
-  return occ[vidx(info, u32(ci), u32(cj), u32(ck))];
+  return effOcc(vidx(info, u32(ci), u32(cj), u32(ck)), ci, cj, ck);
 }
 
 fn occSmooth(i: i32, j: i32, k: i32) -> f32 {
@@ -118,7 +148,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let o = offs[c];
     let ii = i + o.x; let jj = j + o.y; let kk = k + o.z;
     let idx = vidx(info, u32(ii), u32(jj), u32(kk));
-    let f = occ[idx];
+    let f = effOcc(idx, ii, jj, kk);
     corners[c].f = f;
     corners[c].idx = idx;
     corners[c].p = vec3f(f32(ii), f32(jj), f32(kk));
