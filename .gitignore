@@ -9,3 +9,5 @@ Thumbs.db
 .DS_Store
 .vs/
 .idea/
+# Windows builds made by maintain build
+/Builds/

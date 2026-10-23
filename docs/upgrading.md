@@ -5,26 +5,50 @@ existing install.
 
 ## For users
 
-### Update an editor install (git)
+### Update an editor install
 
 1. Close Unity.
-2. In `E:\claude\bovie-sim` run `git pull`.
-3. Open the project from Unity Hub. If the update changed generated assets, Unity asks to
-   **re-run setup**: choose *Set up*. (Or run *Bovie Sim > Set Up Project* yourself.)
+2. In `E:\claude\bovie-sim` run `maintain update` (or double-click `maintain.cmd` → *Update*). It fetches
+   from GitHub and, before changing anything, shows:
+   - the new commits and the changelog entries since your version;
+   - whether **setup** must be re-run (the setup version changes), and whether a **different Unity
+     editor** is needed (with a `unityhub://` link that opens Hub's install dialog for it);
+   - which of your locally edited files the update changes. Those are copied to
+     `%LOCALAPPDATA%\BovieSim\backups\<time>-update` and then replaced; edits the update does not touch
+     stay as they are. Files Unity writes itself (`Packages/manifest.json` after the packages install,
+     `ProjectSettings/*`, `.meta` files) count as expected, not as edits.
+
+   Enter updates (`--dry-run` only shows, `--yes` skips the question). It refuses while Unity has the
+   project open, on a branch other than `main`, or when `main` has local commits GitHub does not have.
+3. Do what it lists under *Next*: usually `maintain open`, and `maintain setup` (or *Set up* when Unity
+   asks) when setup changed.
 4. Open `Assets/BovieSim/Generated/Main.unity` and press Play.
+
+`git pull --ff-only` with Unity closed does the same without the preview and checks.
 
 Your settings (`settings.json`, see below) carry over. Anything under `Assets/BovieSim/Generated` is
 rebuilt; do not keep your own files there.
 
+### A ZIP download
+
+A ZIP copy has no git history and cannot be updated in place. Double-click `install.cmd` in it: it renames
+the folder to `<name>-zip-<date>`, clones in its place, and moves Unity's `Library` and copies the files
+Unity made (`.meta`, project settings, installed packages, setup output) so nothing re-imports.
+
 ### Update a built app
 
-Build again (*File > Build Profiles > Build*) into a new folder, or overwrite the old one, and copy the
-whole folder to the other PCs. Settings live outside the app folder, so they survive.
+`maintain build` (Unity closed) builds into `Builds\BovieSim-<version>`, running setup first if it is
+out of date; or *File > Build Profiles > Build* in the editor. Copy the whole folder to the other PCs.
+Settings live outside the app folder, so they survive.
 
 ### Go back to an earlier version
 
-Every release is tagged. `git tag` lists them; `git checkout v0.3.0` switches to one, `git checkout main`
-returns to the latest. Re-run setup after switching (generated assets differ between versions).
+`maintain rollback list` shows every version and the commit used for it (its `vX.Y.Z` tag where one
+exists). `maintain rollback 0.3.0` switches to it (a detached checkout; local files in the way are backed
+up as for an update), `maintain rollback previous` undoes the last update or rollback (from
+`%LOCALAPPDATA%\BovieSim\history.txt`), and `maintain rollback latest` or `maintain update` returns to
+`main`. Run `maintain setup` after switching: generated assets differ between versions, and an older
+version cannot tell that its assets are newer.
 
 ### Where settings are kept
 
@@ -43,7 +67,14 @@ display and teaching options.
 | Scenario or teaching text edits | none; run `npm run sync:unity` | CI fails if the Unity copies drift |
 
 Rules:
-- **CI must pass** before tagging (browser tests, shader compile, C# compile check, EditMode tests).
+- **CI must pass** before tagging (browser tests, shader compile, C# compile check, EditMode tests, and the
+  maintenance scripts under Windows PowerShell 5.1 and PowerShell 7).
+- **Tag releases on GitHub** (*Releases → Draft a new release*, tag `vX.Y.Z` on `main`): `maintain rollback`
+  fetches tags and prefers them. Versions before 0.4.0 are listed in `scripts/maintain.ps1`
+  (`$EarlyVersions`); later ones are found from `BovieVersion.cs` history when untagged.
+- **Batch entry points** (`maintain setup/test/build`) are `BovieSim.Bootstrap.BatchEntry.*`, which compile
+  without HDRP and forward to `BovieSim.EditorTools.BatchCommands`. Keep `ProjectSetup.RunSetup(false)`
+  free of dialogs.
 - **Never hand-write `.meta` files**; commit the ones Unity generates.
 - **Keep migrations additive**: an old `settings.json` or scenario must load in the new version.
 - Releases with *Setup required* say so in the changelog heading.

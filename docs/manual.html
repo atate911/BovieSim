@@ -96,12 +96,13 @@ main li + li { margin-top: 4px; }
 
 kbd { font-family: var(--f-mono); font-size: 13px; font-weight: 600; background: var(--key-bg); border: 1px solid var(--key-edge); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; white-space: nowrap; color: var(--ink); }
 code { font-family: var(--f-mono); font-size: 13.5px; background: var(--key-bg); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+pre.cmd { font-family: var(--f-mono); font-size: 13.5px; line-height: 1.5; background: var(--key-bg); color: var(--ink); padding: 10px 12px; border-radius: 6px; margin: 10px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .steps { list-style: none; padding: 0 !important; counter-reset: st; display: grid; gap: 14px; margin: 16px 0; }
 .steps > li { counter-increment: st; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; max-width: none; }
 .steps > li::before { content: counter(st); font-family: var(--f-display); font-weight: 700; font-size: 20px; width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--accent); color: var(--accent); display: grid; place-items: center; }
 .steps > li > div { min-width: 0; padding-top: 3px; }
-.steps b { display: block; }
+.steps > li > div > b:first-child { display: block; }
 
 .callout { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; padding: 14px 16px; border-radius: 6px; margin: 18px 0; max-width: 72ch; border-left: 4px solid; }
 .callout .tag { font-family: var(--f-display); font-weight: 700; letter-spacing: .1em; font-size: 14px; text-transform: uppercase; padding-top: 2px; }
@@ -185,7 +186,8 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
       <li><a href="#teaching">Teaching view, gauge and replay</a></li>
       <li><a href="#settings">Settings and detail level</a></li>
       <li class="part">Part 3 · Help</li>
-      <li><a href="#updating">Updating</a></li>
+      <li><a href="#maintain">The maintain command</a></li>
+      <li><a href="#updating">Updating and going back</a></li>
       <li><a href="#trouble">Troubleshooting</a></li>
       <li><a href="#report">Reporting a problem</a></li>
     </ol>
@@ -207,8 +209,11 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
       <p>The project lives on GitHub at <a href="https://github.com/atate911/boviesim">github.com/atate911/boviesim</a>. It is one folder containing the Unity application (<code>unity\BovieSim</code>), the shared scenarios and the browser version. Sign in to GitHub first if the repository is private.</p>
       <ol class="steps">
         <li><div><b>Choose a short folder</b> such as <code>E:\claude</code> or <code>C:\dev</code>. Keep it out of <code>OneDrive</code>, <code>Documents</code> and <code>Desktop</code>: Unity creates deeply nested files, Windows refuses paths over 260 characters, and OneDrive syncing them slows everything down. The rest of this manual uses <code>E:\claude</code>.</div></li>
-        <li><div><b>Either clone it with Git</b> (recommended, so updates are one command): install <a href="https://git-scm.com/download/win">Git for Windows</a>, open a terminal in <code>E:\claude</code> and run <code>git clone https://github.com/atate911/boviesim bovie-sim</code>. To update later, run <code>git pull</code> inside <code>E:\claude\bovie-sim</code> with Unity closed.</div></li>
-        <li><div><b>Or download a zip:</b> on the GitHub page choose <i>Code → Download ZIP</i>, right-click the zip → <i>Extract All…</i> into <code>E:\claude</code>, and rename the extracted <code>boviesim-main</code> folder to <code>bovie-sim</code>.</div></li>
+        <li><div><b>Run the installer</b> (recommended: it makes a git clone, so updates are one command later). Open <i>PowerShell</i> from the Start menu and paste:
+<pre class="cmd">irm https://raw.githubusercontent.com/atate911/BovieSim/main/scripts/install.ps1 | iex</pre>
+It installs Git and Unity Hub with <code>winget</code> if they are missing (Windows may ask for permission), suggests a folder (<code>E:\claude\bovie-sim</code> when <code>E:\claude</code> exists), warns about OneDrive and long paths, and clones the project. Press <kbd>Enter</kbd> to accept each suggestion.<br><span class="see">You should see: a green <b>OK</b> line saying <i>Bovie Sim installed</i>, then the status screen. A red <b>Editor</b> line is expected at this point: Unity is installed in the next section.</span></div></li>
+        <li><div><b>Already have a ZIP copy?</b> Double-click <code>install.cmd</code> inside it. It renames the ZIP folder (to <code>bovie-sim-zip-</code> and the date), clones in its place and moves Unity's files across (its <code>Library</code> cache, settings, packages and setup output), so nothing has to import again. Close Unity, and any Explorer window inside that folder, first. Delete the old folder once the new one works.</div></li>
+        <li><div><b>Or do it by hand:</b> with <a href="https://git-scm.com/download/win">Git for Windows</a> installed, open a terminal in <code>E:\claude</code> and run <code>git clone https://github.com/atate911/BovieSim bovie-sim</code>. A plain <i>Code → Download ZIP</i> also works, but cannot be updated in place.</div></li>
         <li><div><b>Check the path.</b> You should now have <code>E:\claude\bovie-sim\unity\BovieSim</code>, containing <code>Assets</code>, <code>Packages</code> and <code>ProjectSettings</code>.</div></li>
       </ol>
     </section>
@@ -278,6 +283,7 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
         <li><div><b>Copy the whole folder</b> to move it to another PC. The <code>.exe</code> needs the <code>BovieSim_Data</code> folder and <code>UnityPlayer.dll</code> beside it.</div></li>
       </ol>
       <p>In the built app, <kbd>F11</kbd> switches between fullscreen and a window and <kbd>Esc</kbd> quits.</p>
+      <p>Without opening Unity: close it and run <code>maintain build</code> in <code>E:\claude\bovie-sim</code>. The app goes to <code>Builds\BovieSim-</code><i>version</i> (or <code>maintain build E:\claude\BovieSimApp</code>); setup runs first if it is needed.</p>
     </section>
 
     <div class="part-head">Part 2<span>Operation</span></div>
@@ -310,7 +316,7 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
         <li>To start in a particular scenario or change detail, stop Play, select the <code>Bovie Sim</code> object in the Hierarchy and set <i>Scenario Id</i> (<code>freeplay</code>, <code>hemostasis</code> or <code>lipoma</code>) or <i>Voxel Override</i> (0 = full 0.25 mm detail; 0.4–0.5 runs faster).</li>
       </ul>
       <h3>After updating the project</h3>
-      <p>When you update (for example with <code>git pull</code>), Unity may say the project setup is out of date. Choose <b>Set up</b> in the dialog, or run <i>Bovie Sim → Set Up Project</i>, then open <code>Main</code> again. This rebuilds the generated materials, interface theme and scene.</p>
+      <p>When you update (<code>maintain update</code>, see <a href="#updating">Updating</a>), Unity may say the project setup is out of date. Choose <b>Set up</b> in the dialog, or run <i>Bovie Sim → Set Up Project</i>, or with Unity closed run <code>maintain setup</code>; then open <code>Main</code> again. This rebuilds the generated materials, interface theme and scene.</p>
       <div class="callout caution"><span class="tag">Caution</span><p>Unity discards changes made to objects while Play is running. Change <i>Scenario Id</i> and <i>Voxel Override</i> only while stopped.</p></div>
     </section>
 
@@ -602,14 +608,40 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
 
     <div class="part-head">Part 3<span>Help</span></div>
 
+    <section id="maintain">
+      <h2>The maintain command</h2>
+      <p><code>maintain.cmd</code> in the project folder looks after the installation: it updates it, checks the PC, runs Unity's setup, tests and build without opening the editor, fixes common problems and collects a report. Double-click it for a menu, or open a terminal in <code>E:\claude\bovie-sim</code> (in Explorer, type <code>cmd</code> in the address bar) and type a command:</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code>maintain status</code></td><td>One screen: version, whether updates are waiting, Unity, setup, graphics card, free space. Changes nothing.</td></tr>
+          <tr><td><code>maintain check</code></td><td>Every check, each with what to do about it: Git and the clone, folder path and OneDrive, Unity Hub and the exact editor, packages and setup, graphics driver age, which GPU a two-GPU laptop uses, saved settings. Add <code>--online</code> to ask GitHub for updates now, <code>--all</code> for more detail. Changes nothing.</td></tr>
+          <tr><td><code>maintain update</code></td><td>Shows the new commits and changelog, whether setup or a different Unity version is needed and which of your edited files it touches; asks; then updates. See <a href="#updating">Updating</a>.</td></tr>
+          <tr><td><code>maintain rollback</code></td><td><code>list</code>, a version (<code>0.3.0</code>), <code>previous</code> or <code>latest</code>.</td></tr>
+          <tr><td><code>maintain open</code></td><td>Opens the project in the Unity version it needs; if that version is missing it says how to install it.</td></tr>
+          <tr><td><code>maintain setup</code></td><td>Runs <i>Bovie Sim → Set Up Project</i> without a window, installing the packages first on a new clone. Unity must be closed.</td></tr>
+          <tr><td><code>maintain test</code></td><td>Runs the EditMode tests and lists any failure.</td></tr>
+          <tr><td><code>maintain build</code></td><td>Builds the Windows app (see <a href="#build">Build a standalone app</a>).</td></tr>
+          <tr><td><code>maintain doctor</code></td><td>Finds common problems and offers the safe fix for each: a crashed git command's lock file, an unfinished merge, a missing GitHub link, Unity's leftover lock file, out-of-date setup, a laptop running Unity on its integrated graphics, a damaged settings file.</td></tr>
+          <tr><td><code>maintain logs</code></td><td>Where Unity's and the app's logs are, with their recent errors; <code>maintain logs editor 100</code> shows the last 100 lines.</td></tr>
+          <tr><td><code>maintain clean</code></td><td>Deletes Unity's <code>Library</code> cache (rebuilt on the next open, which takes a while). Frees several GB and cures most odd import problems.</td></tr>
+          <tr><td><code>maintain reset-settings</code></td><td>Returns the simulator's settings to defaults, keeping a backup.</td></tr>
+          <tr><td><code>maintain report</code></td><td>Collects logs and PC facts into a zip; see <a href="#report">Reporting a problem</a>.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Every command ends with a verdict: <b>OK</b>, <b>WARN</b> (it worked; the warnings are repeated above the verdict) or <b>FAIL</b> (with what to do). <code>--dry-run</code> shows what a command would do without doing it, and <code>--yes</code> accepts every suggestion. Questions show their default in capitals, <code>[Y/n]</code>: <kbd>Enter</kbd> takes it. A record of every run is kept in <code>%LOCALAPPDATA%\BovieSim\maintain.log</code>.</p>
+    </section>
+
     <section id="updating">
-      <h2>Updating</h2>
+      <h2>Updating and going back</h2>
       <ol class="steps">
-        <li><div><b>Close Unity.</b></div></li>
-        <li><div><b>Get the new version.</b> In <code>E:\claude\bovie-sim</code> run <code>git pull</code> (or download the zip from GitHub again and replace the folder).</div></li>
-        <li><div><b>Open the project and accept setup.</b> If the update changed generated assets, Unity asks to re-run setup: choose <i>Set up</i>, then open <code>Main</code> again.</div></li>
+        <li><div><b>Close Unity</b> (and the simulator, if it is running as an app).</div></li>
+        <li><div><b>Run <code>maintain update</code></b> in <code>E:\claude\bovie-sim</code>, or double-click <code>maintain.cmd</code> and choose <i>Update</i>.<br><span class="see">You should see: <i>What's new</i> (the commits and changelog), then <i>What it means for this PC</i>: whether setup must be re-run, whether a different Unity version is needed, and any of your edited files the update changes (they are copied to a backup folder first, never lost). Press <kbd>Enter</kbd> to update.</span></div></li>
+        <li><div><b>Do what it lists under <i>Next</i>.</b> Usually <code>maintain open</code>; when setup is needed, choose <i>Set up</i> when Unity asks (or run <code>maintain setup</code> first). When a new Unity version is needed it gives a link that opens Unity Hub's install dialog for exactly that version.</div></li>
       </ol>
-      <p>The version number is in the status footer, and <code>CHANGELOG.md</code> lists what changed and whether setup is needed. To go back, <code>git checkout v0.3.0</code> (any listed tag) and re-run setup; <code>git checkout main</code> returns to the latest. Your settings carry over. Details are in <code>docs/upgrading.md</code>.</p>
+      <p>Files Unity writes by itself (installed packages, project settings, <code>.meta</code> files) are expected to differ from the repository and do not get in the way. Your settings carry over. The version number is in the status footer; <code>CHANGELOG.md</code> lists what changed in each version.</p>
+      <h3>Going back</h3>
+      <p><code>maintain rollback list</code> shows the versions. <code>maintain rollback 0.3.0</code> switches to one, <code>maintain rollback previous</code> undoes the last update or rollback, and <code>maintain rollback latest</code> (or <code>maintain update</code>) returns to the newest. Run <code>maintain setup</code> after switching: the generated assets differ between versions. Details are in <code>docs/upgrading.md</code>.</p>
     </section>
 
         <section id="trouble">
@@ -617,20 +649,23 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
       <div class="table-wrap"><table>
         <thead><tr><th>Symptom</th><th>What to do</th></tr></thead>
         <tbody>
+          <tr><td>Not sure what is wrong</td><td>Close Unity and run <code>maintain doctor</code>. It checks the clone, Unity, setup and graphics and offers a fix for each problem it can solve.</td></tr>
           <tr><td>Red errors in the Console after opening</td><td>Copy the first few exactly and send them (see <a href="#report">Reporting a problem</a>).</td></tr>
-          <tr><td>"The project setup is out of date"</td><td>Stop Play, run <i>Bovie Sim → Set Up Project</i>, open <code>Main</code> again.</td></tr>
+          <tr><td>"The project setup is out of date"</td><td>Stop Play, run <i>Bovie Sim → Set Up Project</i> (or close Unity and run <code>maintain setup</code>), open <code>Main</code> again.</td></tr>
           <tr><td>"SimAssets not found", pink or missing tissue</td><td>Run <i>Bovie Sim → Set Up Project</i>.</td></tr>
           <tr><td>Scene black or very dark</td><td>Check the two <i>Surgical light</i> objects exist. Exposure is fixed for an operating light; adjust <i>Exposure</i> in <code>Generated/BovieVolume.asset</code>.</td></tr>
           <tr><td>Keys and mouse do nothing, or an <code>InvalidOperationException</code> about the Input class</td><td><i>Project Settings → Player → Active Input Handling</i> must be <b>Both</b>. Set it and restart the editor.</td></tr>
           <tr><td>Pen moves the cursor but pressure and tilt do nothing</td><td>Tick <i>Use Windows Ink</i> in the Wacom settings. Check <code>com.unity.inputsystem</code> is installed in <i>Window → Package Manager</i>.</td></tr>
           <tr><td>Package import errors mentioning long paths</td><td>Move the project to a short path such as <code>E:\claude\bovie-sim</code>, outside OneDrive.</td></tr>
           <tr><td>Slow or stuttering</td><td>Press <kbd>F9</kbd> and choose a lower detail level, then <kbd>F5</kbd>. <kbd>F3</kbd> shows frame, CPU and GPU times. Keep depth of field off (<kbd>F7</kbd>).</td></tr>
-          <tr><td>Laptop runs slowly although it has a good graphics card</td><td>Windows may be using the integrated GPU: <i>Settings → System → Display → Graphics</i>, add Unity (and <code>BovieSim.exe</code>) and choose <i>High performance</i>. F9 shows which GPU is in use.</td></tr>
+          <tr><td>Laptop runs slowly although it has a good graphics card</td><td>Windows may be using the integrated GPU. <code>maintain doctor</code> sets Unity and any build in <code>Builds</code> to the graphics card; by hand: <i>Settings → System → Display → Graphics</i>, add Unity (and <code>BovieSim.exe</code>) and choose <i>High performance</i>. F9 shows which GPU is in use.</td></tr>
           <tr><td>"Cannot start: … compute shaders …"</td><td>The graphics card or driver is too old, or you are in remote desktop / a virtual machine. Update the driver or run on the PC itself.</td></tr>
           <tr><td>No sky image or drape texture</td><td>The downloads were blocked; the sim falls back to built-in ones. Put any <code>.hdr</code> file into <code>Assets/BovieSim/Generated/Downloads</code> and run Set Up Project again.</td></tr>
           <tr><td>Instrument tilts the wrong way with the pen</td><td>Press <kbd>Y</kbd>.</td></tr>
           <tr><td>Keys do nothing in the editor while playing</td><td>Click inside the Game view to give it keyboard focus.</td></tr>
-          <tr><td>Unity Hub cannot open the project or wants a different version</td><td>Install Unity 6.6 (6000.6) in <i>Installs</i>, then on the project's row choose that version from the editor-version dropdown.</td></tr>
+          <tr><td>Unity Hub cannot open the project or wants a different version</td><td><code>maintain check</code> names the exact version and gives a link that opens Hub's install dialog for it. Or install Unity 6.6 (6000.6) in <i>Installs</i>, then on the project's row choose that version from the editor-version dropdown.</td></tr>
+          <tr><td>Odd import errors, or the disk is nearly full</td><td>Close Unity and run <code>maintain clean</code> (deletes the <code>Library</code> cache; the next open rebuilds it).</td></tr>
+          <tr><td>"maintain is not recognized"</td><td>Run it from the project folder (<code>E:\claude\bovie-sim</code>); in PowerShell type <code>.\maintain</code>.</td></tr>
           <tr><td>Windows warns about an unknown app when starting the build</td><td><i>More info → Run anyway</i>. The build is not code-signed.</td></tr>
         </tbody>
       </table></div>
@@ -638,12 +673,11 @@ footer { grid-column: 1 / -1; color: var(--muted); font-size: 14px; padding-top:
 
     <section id="report">
       <h2>Reporting a problem</h2>
-      <p>Send these and the fix can be made without guessing:</p>
+      <p>Close Unity and run <code>maintain report</code>. It collects Unity's editor log, the app's log, your settings, the setup and batch logs and a full <code>maintain check</code> into one zip and shows it in Explorer. Besides those files it holds only PC facts and folder paths (the paths include your Windows user name). Attach it to an issue on GitHub (<i>Issues → New issue</i>) or send it, along with:</p>
       <ul>
-        <li>The first error from the Console, copied exactly (file, line and message). Right-click the Console tab → <i>Open Editor Log</i> gives the full log if needed.</li>
+        <li>The first error from the Console, copied exactly (file, line and message), if there was one.</li>
         <li>What you were doing, and the scenario.</li>
         <li>A screenshot of the Game view for anything visual: tissue colours, lighting, smoke or blood that looks wrong to a surgeon's eye.</li>
-        <li>Your graphics card (<i>Task Manager → Performance → GPU</i>) and Unity version.</li>
       </ul>
       <p>Visual realism is tuned against your judgement. If something does not look the way it does in theatre, describe what you expect to see.</p>
     </section>

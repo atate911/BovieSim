@@ -1,6 +1,9 @@
 * text=auto
 # shell scripts must keep LF endings on Windows checkouts
 *.sh text eol=lf
+# Windows scripts: cmd.exe misreads batch files with LF endings
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
 *.cs text diff=csharp
 *.compute text
 *.hlsl text
