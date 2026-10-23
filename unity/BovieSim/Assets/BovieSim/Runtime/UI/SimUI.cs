@@ -18,6 +18,8 @@ namespace BovieSim
         // section
         public float sliceTopY; public List<KeyValuePair<string, float>> layers = new List<KeyValuePair<string, float>>();
         public bool slicePerp;
+        // depth peel of the 3D view
+        public int peelMode; public float peelMm, bedDepthMm; public bool peelSweep;
     }
 
     /// <summary>
@@ -41,6 +43,10 @@ namespace BovieSim
         public bool pedalCut, pedalCoag;
         public bool showBrief = true, showHelp, showPerf;
         public int zoomIndex = 2;
+        /// <summary>large section: the card floats over the field at 800 px instead of 556 px in the column (Shift+C)</summary>
+        public bool largeSection; bool shownLarge;
+        float BoxW { get { return largeSection ? 800f : 556f; } }
+        float BoxH { get { return BoxW * physics.sliceH / physics.sliceW; } }
         public event Action ToggleOrientation;
 
         // status
@@ -51,9 +57,9 @@ namespace BovieSim
         VisualElement objList; readonly List<VisualElement[]> objRows = new List<VisualElement[]>();
         Objectives objectives;
         // section
-        VisualElement sectionCard, sectionImgBox, overlay, legendBox; Image sectionImg; Label sectionTitle, orientBtnLabel;
+        VisualElement rightTop, sectionCard, sectionImgBox, overlay, legendBox; Image sectionImg; Label sectionTitle, orientBtnLabel;
         readonly List<Button> modeButtons = new List<Button>();
-        Button isoBtn, dmgBtn; int lastLegendMode = -1; float lastLabelKey = float.NaN;
+        Button isoBtn, dmgBtn, peelBtn, largeBtn; int lastLegendMode = -1; float lastLabelKey = float.NaN;
         // ft10
         Label cutMode, coagMode, cutW, coagW, remLbl, zLine; VisualElement cutLamp, coagLamp; // cutMode/coagMode unused since the segmented mode row
         // feed, brief, help, perf
@@ -178,23 +184,25 @@ namespace BovieSim
             var col = Box(root);
             col.style.position = Position.Absolute; col.style.right = 16f; col.style.top = 16f; col.style.bottom = 16f; col.style.width = 580f;
             col.style.justifyContent = Justify.SpaceBetween;
-            var top = Box(col);
+            rightTop = Box(col);
             // objectives
-            var o = CardBox(top); o.style.marginBottom = 10f;
+            var o = CardBox(rightTop); o.style.marginBottom = 10f;
             Heading(o, "Objectives");
             objList = Box(o);
             // section
-            sectionCard = CardBox(top);
+            sectionCard = CardBox(rightTop);
             var head = Box(sectionCard, true); head.style.justifyContent = Justify.SpaceBetween; head.style.alignItems = Align.Center; head.style.marginBottom = 6f;
             sectionTitle = Text(head, "SECTION", 12, Muted, true); sectionTitle.style.letterSpacing = 1.2f;
             var zoom = Box(head, true); zoom.pickingMode = PickingMode.Position;
             Btn(zoom, "−", () => Zoom(-1), 30); Btn(zoom, "+", () => Zoom(1), 30);
             var orient = Btn(zoom, "Across view", () => { if (ToggleOrientation != null) ToggleOrientation(); });
             orientBtnLabel = null; orient.name = "orient";
+            peelBtn = Btn(zoom, "Peel 3D", () => { if (PeelCycle != null) PeelCycle(); });
+            largeBtn = Btn(zoom, "Large", () => largeSection = !largeSection); largeBtn.style.marginRight = 0f;
             var modes = Box(sectionCard, true); modes.pickingMode = PickingMode.Position; modes.style.marginBottom = 6f; modes.style.flexWrap = Wrap.Wrap;
             for (int m = 0; m < ModeNames.Length; m++) { int mm = m; modeButtons.Add(Btn(modes, ModeNames[m], () => physics.sliceMode = mm)); }
             sectionImgBox = Box(sectionCard);
-            sectionImgBox.style.width = 556f; sectionImgBox.style.height = 556f * PhysicsPipeline.SliceH / PhysicsPipeline.SliceW;
+            sectionImgBox.style.width = BoxW; sectionImgBox.style.height = BoxH;
             sectionImg = new Image { image = physics.sliceTex, scaleMode = ScaleMode.StretchToFill };
             sectionImg.pickingMode = PickingMode.Ignore;
             sectionImg.style.position = Position.Absolute; sectionImg.style.left = 0f; sectionImg.style.top = 0f; sectionImg.style.right = 0f; sectionImg.style.bottom = 0f;
@@ -210,6 +218,25 @@ namespace BovieSim
 
         void Zoom(int d) { zoomIndex = Mathf.Clamp(zoomIndex + d, 0, Zooms.Length - 1); physics.sliceWidthMm = Zooms[zoomIndex][0]; physics.sliceDepthMm = Zooms[zoomIndex][1]; lastLabelKey = float.NaN; }
         public void ZoomStep(int d) { Zoom(d); }
+
+        /// <summary>Normal: the section sits in the right column at 556 px. Large: it floats over the field at 800 px, so the image is near 1:1 with its pixels.</summary>
+        void ApplySectionSize()
+        {
+            shownLarge = largeSection;
+            sectionCard.RemoveFromHierarchy();
+            if (largeSection)
+            {
+                root.Add(sectionCard);
+                sectionCard.style.position = Position.Absolute; sectionCard.style.left = 500f; sectionCard.style.top = 16f; sectionCard.style.width = BoxW + 24f;
+            }
+            else
+            {
+                rightTop.Insert(1, sectionCard);
+                sectionCard.style.position = Position.Relative; sectionCard.style.left = StyleKeyword.Null; sectionCard.style.top = StyleKeyword.Null; sectionCard.style.width = StyleKeyword.Null;
+            }
+            sectionImgBox.style.width = BoxW; sectionImgBox.style.height = BoxH;
+            lastLegendMode = -1; lastLabelKey = float.NaN;
+        }
 
         // FT10-style touchscreen: near-black glass, a yellow CUT tile and a blue COAG tile with large power digits,
         // up/down arrows beside the digits, and the mode choices as a segmented row under each tile.
@@ -294,7 +321,7 @@ namespace BovieSim
             feed = Box(root);
             feed.style.position = Position.Absolute; feed.style.left = 16f; feed.style.bottom = 40f; feed.style.width = 560f;
             feed.style.justifyContent = Justify.FlexEnd;
-            var hint = Text(root, "F1 brief · F2 controls · F9 settings · V teaching view · P replay · Tab instrument · Z/X pedals", 12, Muted);
+            var hint = Text(root, "F1 brief · F2 controls · F9 settings · V teaching view · K depth peel · P replay · Tab instrument · Z/X pedals", 12, Muted);
             hint.style.position = Position.Absolute; hint.style.left = 18f; hint.style.bottom = 14f;
         }
 
@@ -348,8 +375,9 @@ namespace BovieSim
                 { "1-4 / 5-6", "Cut mode Pure, Blend, Low, Valleylab / coag Fulgurate, Spray" },
                 { "[ ]  ; '", "Cut / coag watts −5 +5 (Shift: 1 W)" },
                 { "B N O · R · T", "Blade, needle, ball · roll the blade 45° · toothed / smooth forceps" },
-                { "C · J · H", "Section display · across the view or across the blade · hide section" },
+                { "C · J · H · Shift+C", "Section display · across the view or across the blade · hide section · large section" },
                 { "- / =", "Section zoom out / in (up to the full 35 mm depth)" },
+                { "K · , .", "Depth peel of the field: off → block cut → dissection · deeper / shallower (Shift: 0.1 mm). Ctrl + wheel scrubs, Shift+K sweeps" },
                 { "Right drag · Middle drag · Wheel", "Orbit · pan · zoom (Alt+left orbits, Shift+left pans)" },
                 { "V · G · P", "Teaching view (off, temperature, damage) · tip gauge · pause and replay the last seconds" },
                 { "F1 · F2 · F3 · F9", "Scenario brief · this list · timing readout · settings (detail level, display, teaching)" },
@@ -442,17 +470,18 @@ namespace BovieSim
             Swatch(r, "45 °C", new Color(0.30f, 0.90f, 1.00f)); Swatch(r, "60 °C", new Color(1.00f, 0.85f, 0.20f));
             Swatch(r, "100 °C", new Color(1.00f, 0.30f, 0.20f)); Swatch(r, "Ω = 1 (dashed)", Color.white);
         }
-        static void Bar(VisualElement p, Texture2D tex, string[] ticks, float[] at = null)
+        void Bar(VisualElement p, Texture2D tex, string[] ticks, float[] at = null)
         {
+            float w = BoxW;
             var img = new Image { image = tex, scaleMode = ScaleMode.StretchToFill }; img.pickingMode = PickingMode.Ignore;
-            img.style.height = 12f; img.style.width = 556f; Radius(img, 2);
+            img.style.height = 12f; img.style.width = w; Radius(img, 2);
             p.Add(img);
-            var r = Box(p); r.style.height = 16f; r.style.width = 556f;
+            var r = Box(p); r.style.height = 16f; r.style.width = w;
             for (int i = 0; i < ticks.Length; i++)
             {
                 float f = at != null ? at[i] : i / (float)(ticks.Length - 1);
                 var l = Text(r, ticks[i], 12, Muted); l.style.position = Position.Absolute; l.style.top = 1f;
-                if (i == ticks.Length - 1) l.style.right = 0f; else l.style.left = Mathf.Max(0, f * 556 - (i == 0 ? 0 : 14));
+                if (i == ticks.Length - 1) l.style.right = 0f; else l.style.left = Mathf.Max(0, f * w - (i == 0 ? 0 : 14));
             }
         }
 
@@ -528,6 +557,7 @@ namespace BovieSim
                 }
             }
             RefreshSection(d);
+            RefreshDepth(d);
             RefreshFT10(d);
             brief.style.display = showBrief ? DisplayStyle.Flex : DisplayStyle.None;
             help.style.display = showHelp ? DisplayStyle.Flex : DisplayStyle.None;
@@ -541,9 +571,11 @@ namespace BovieSim
         {
             sectionCard.style.display = physics.sliceEnabled ? DisplayStyle.Flex : DisplayStyle.None;
             if (!physics.sliceEnabled) return;
+            if (largeSection != shownLarge) ApplySectionSize();
             int mode = physics.sliceMode;
             for (int m = 0; m < modeButtons.Count; m++) SetActive(modeButtons[m], m == mode, Accent);
             SetActive(isoBtn, (physics.sliceFlags & 1) != 0, Accent); SetActive(dmgBtn, (physics.sliceFlags & 2) != 0, Accent);
+            SetActive(peelBtn, d.peelMode != 0, Accent); SetActive(largeBtn, largeSection, Accent);
             isoBtn.style.display = mode <= 2 ? DisplayStyle.Flex : DisplayStyle.None; dmgBtn.style.display = mode <= 2 ? DisplayStyle.Flex : DisplayStyle.None;
             var ob = sectionCard.Q<Button>("orient"); if (ob != null) ob.text = d.slicePerp ? "Across blade" : "Across view";
             sectionTitle.text = "SECTION · " + ModeNames[mode].ToUpperInvariant() + " · " + physics.sliceWidthMm.ToString("0") + " × " + physics.sliceDepthMm.ToString("0") + " MM";
@@ -553,7 +585,7 @@ namespace BovieSim
             if (key == lastLabelKey) return;
             lastLabelKey = key;
             overlay.Clear();
-            float boxW = 556, boxH = 556f * PhysicsPipeline.SliceH / PhysicsPipeline.SliceW;
+            float boxW = BoxW, boxH = BoxH;
             float depthMm = physics.sliceDepthMm, pxPerMm = boxH / depthMm;
             // depth ticks (mm below the original skin surface, y = 0)
             float step = depthMm <= 12 ? 2 : depthMm <= 22 ? 5 : 5;

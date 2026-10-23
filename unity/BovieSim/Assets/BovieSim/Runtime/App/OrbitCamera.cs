@@ -2,7 +2,7 @@ using UnityEngine;
 
 namespace BovieSim
 {
-    /// <summary>Orbit camera around a target in field millimetres. Right-drag orbit, wheel zoom, middle or Shift-drag pan.</summary>
+    /// <summary>Orbit camera around a target in field millimetres. Right-drag orbit, wheel zoom, middle or Shift-drag pan (Ctrl + wheel is left to the depth peel).</summary>
     public sealed class OrbitCamera
     {
         public Vector3 targetMm = Vector3.zero;
@@ -21,13 +21,14 @@ namespace BovieSim
             }
         }
 
-        public void HandleInput(bool overUi)
+        /// <param name="wheelZoom">false while the wheel is claimed by something else (Ctrl held: depth peel)</param>
+        public void HandleInput(bool overUi, bool wheelZoom = true)
         {
             if (!overUi)
             {
                 if (Input.GetMouseButtonDown(1) || (Input.GetMouseButtonDown(0) && (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt)))) { dragging = 1; last = Input.mousePosition; }
                 else if (Input.GetMouseButtonDown(2) || (Input.GetMouseButtonDown(0) && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)))) { dragging = 2; last = Input.mousePosition; }
-                float wheel = Input.mouseScrollDelta.y;
+                float wheel = wheelZoom ? Input.mouseScrollDelta.y : 0f;
                 if (Mathf.Abs(wheel) > 0.01f) distanceMm = Mathf.Clamp(distanceMm * Mathf.Exp(-wheel * 0.1f), 25f, 600f);
             }
             if (dragging != 0 && !Input.GetMouseButton(0) && !Input.GetMouseButton(1) && !Input.GetMouseButton(2)) dragging = 0;

@@ -4,6 +4,8 @@ import { mkdirSync } from 'node:fs';
 const name = process.argv[2] ?? 'frame';
 const extra = process.argv[3] ?? 'voxel=0.5';
 const timeout = parseInt(process.argv[4] ?? '120000', 10);
+/** frames to wait after the app reports ready (the software GPU can take seconds per frame) */
+const settleFrames = parseInt(process.argv[5] ?? '0', 10);
 mkdirSync('screenshots', { recursive: true });
 const args = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', '--enable-features=WebGPU,Vulkan', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--no-sandbox'];
 const browser = await chromium.launch({ headless: true, executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args });
@@ -14,6 +16,7 @@ const t0 = Date.now();
 try {
   await page.goto(`http://localhost:${process.env.PORT ?? 5199}/?headless=1&${extra}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__sim?.ready, null, { timeout });
+  if (settleFrames > 0) { const f0 = await page.evaluate(() => window.__sim.frame); await page.waitForFunction((n) => window.__sim.frame >= n, f0 + settleFrames, { timeout }); }
   await page.waitForTimeout(1500);
   const sim = await page.evaluate(() => ({ vertexCount: window.__sim.vertexCount, fps: window.__sim.fps, hud: document.getElementById('hud')?.innerText }));
   console.log(JSON.stringify(sim));

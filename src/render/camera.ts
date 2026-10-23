@@ -41,7 +41,8 @@ export class OrbitCamera {
     });
     const end = () => { this.dragging = null; };
     el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
-    el.addEventListener('wheel', (e) => { this.distance = Math.min(600, Math.max(25, this.distance * Math.exp(e.deltaY * 0.001))); e.preventDefault(); }, { passive: false });
+    // Ctrl + wheel is the depth peel (main.ts); plain wheel zooms
+    el.addEventListener('wheel', (e) => { e.preventDefault(); if (e.ctrlKey) return; this.distance = Math.min(600, Math.max(25, this.distance * Math.exp(e.deltaY * 0.001))); }, { passive: false });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 

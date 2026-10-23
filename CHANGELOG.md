@@ -4,6 +4,21 @@ All notable changes. Versions follow `MAJOR.MINOR.PATCH`; each release is a git 
 (see [docs/upgrading.md](docs/upgrading.md)). "Setup" means *Bovie Sim > Set Up Project* must be re-run
 after updating (the editor offers it automatically).
 
+## 0.5.0: Beneath the surface (section resolution, depth peel)
+
+- **Section at twice the resolution.** The cross-section is rendered at 1280 × 800 (960 × 600 at Low detail,
+  1600 × 1000 at High and Ultra) with bilinear filtering, so layer edges, isotherms and the damage line stay
+  sharp on 1440p and 4K screens. **Large** (Shift+C, or the button on the section) floats it over the field at
+  800 px.
+- **Depth peel (K):** a plane through the 3D field that reveals the architecture under the skin. *Block cut*
+  hides everything above the plane: the cut face shows each layer, the vessels in cross-section and what the
+  energy did at that depth. *Dissection* strips skin, fat, septa and fasciae and leaves the perforators, the
+  nerve, the lipoma and any heated tissue standing in 3D. A ruler marked with the layers drags the plane; `,`
+  and `.` step it, Ctrl + wheel scrubs it, Shift+K sweeps it down and up; the section marks the plane with a
+  dashed line. Display only: the physics, the pick and the instruments keep the whole bed.
+- Browser build: the same depth peel (`K`, `,` `.`, Ctrl + wheel, `?peel=block,6`), and the section is sampled
+  trilinearly at 640 × 400 instead of nearest-voxel at 320 × 200.
+
 ## 0.4.1: Maintenance scripts
 
 - **`maintain.cmd`** in the repo root (double-click for a menu) keeps a local install healthy: `status`,
