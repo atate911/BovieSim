@@ -67,8 +67,10 @@ from the repo root to copy it into `Assets/BovieSim/Resources/BovieSim/Scenarios
 |---|---|
 | Z / X (or the on-screen CUT / COAG pedals) | Footswitch cut / coag |
 | LMB on the pencil | Hand-switch cut; Ctrl+LMB hand-switch coag |
-| LMB with forceps / suction / hook | Grasp (and buzz with a pedal) / suck / hook and retract |
-| Tab or Q | Next instrument: Bovie pencil, Adson forceps, Frazier suction, skin hook |
+| LMB with forceps / hemostat / suction / gauze / hook | Grasp (and buzz with a pedal) / close and push the jaws in / suck / press the pad / hook and retract |
+| Tab or Q | Next instrument: Bovie pencil, Adson forceps, Kelly hemostat, Frazier suction, 4x4 gauze, skin hook |
+| Space (hemostat closed) | Spread the jaws inside the tissue: blunt dissection of areolar and fatty planes |
+| Gauze | Hold still to dab (soaks liquid blood, tamponades, settles ooze); drag with pressure to wipe (lifts clot and stain, restarts ooze); `U` discards a soaked pad |
 | 1-4 / 5-6 | Cut mode Pure, Blend, Low, Valleylab / coag Fulgurate, Spray |
 | `[` `]` and `;` `'` | Cut and coag watts -5/+5 (Shift: 1 W); or the FT10 panel buttons |
 | B / N / O, R | Blade / needle / ball electrode, roll the blade 45 degrees |
@@ -81,7 +83,7 @@ from the repo root to copy it into `Assets/BovieSim/Resources/BovieSim/Scenarios
 | F7 / F8 | Depth of field on/off (off by default) / anti-aliasing SMAA, TAA, FXAA, off |
 | V / G / P | Teaching view on the tissue (temperature, damage) / tip gauge / pause and replay (Enter continues) |
 | F9 | Settings: detail level (Auto, Low 0.35, Medium 0.25, High 0.20, Ultra 0.16 mm), display, teaching |
-| F5 / F6 | Restart / next scenario (freeplay, hemostasis, lipoma) |
+| F5 / F6 | Restart / next scenario (freeplay, hemostasis, lipoma, viscera) |
 | F11 / Esc | Toggle fullscreen / quit (built app only) |
 | Pen (Wacom) | Pressure sets electrode depth; tilt sets the instrument angle; Y flips tilt direction |
 

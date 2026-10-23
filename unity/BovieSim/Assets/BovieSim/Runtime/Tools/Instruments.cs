@@ -2,16 +2,20 @@ using UnityEngine;
 
 namespace BovieSim
 {
-    public enum ToolKind { Pencil, Forceps, Suction, Hook }
+    public enum ToolKind { Pencil, Forceps, Hemostat, Suction, Gauze, Hook }
     public enum ElectrodeType { Blade = 0, Needle = 1, Ball = 2, Forceps = 3 }
 
     /// <summary>Hand-held instrument pose helpers (port of src/tools/instrument.ts). All in field millimetres.</summary>
     public static class HandPose
     {
-        public static readonly ToolKind[] Order = { ToolKind.Pencil, ToolKind.Forceps, ToolKind.Suction, ToolKind.Hook };
+        public static readonly ToolKind[] Order = { ToolKind.Pencil, ToolKind.Forceps, ToolKind.Hemostat, ToolKind.Suction, ToolKind.Gauze, ToolKind.Hook };
         public static string Label(ToolKind k)
         {
-            switch (k) { case ToolKind.Pencil: return "Bovie pencil"; case ToolKind.Forceps: return "Adson forceps"; case ToolKind.Suction: return "Frazier suction"; default: return "Skin hook"; }
+            switch (k)
+            {
+                case ToolKind.Pencil: return "Bovie pencil"; case ToolKind.Forceps: return "Adson forceps"; case ToolKind.Hemostat: return "Kelly hemostat";
+                case ToolKind.Suction: return "Frazier suction"; case ToolKind.Gauze: return "4x4 gauze"; default: return "Skin hook";
+            }
         }
 
         /// <summary>The handle runs toward the surgeon's right hand: to-camera direction rotated 55 deg, 38 deg up; pen tilt overrides.</summary>
@@ -115,6 +119,99 @@ namespace BovieSim
             var pivot = centre + axis * armLength;
             armAy = (pivot - tipA).normalized; armAz = Vector3.Cross(x, armAy).normalized;
             armBy = (pivot - tipB).normalized; armBz = Vector3.Cross(x, armBy).normalized;
+        }
+    }
+
+    /// <summary>
+    /// Kelly / mosquito hemostat (port of src/tools/hemostat.ts): curved jaws that grasp like forceps and, pushed into a
+    /// plane and opened, dissect bluntly. Closed tips sit `insertMm` below the surface hit (pen pressure pushes them
+    /// deeper); `spread` 0..1 opens the jaws from closedMm to spreadMm over about half a second while the spread key is held.
+    /// </summary>
+    public sealed class HemostatTool
+    {
+        public Vector3 tipA, tipB, axis = Vector3.up, centre;
+        /// <summary>jaws closed (grasp / push)</summary>
+        public bool closed;
+        /// <summary>0..1 opening while spreading; true while the spread key is held with the jaws inserted</summary>
+        public float spread; public bool spreading;
+        public bool visible = true;
+        public float openMm = 5f, closedMm = 0.6f, spreadMm = 8f;
+        /// <summary>capsule radius of the jaw tips used for coaptation, conduction and dissection, mm</summary>
+        public float jawRadius = 0.7f;
+        /// <summary>how deep the tips are pushed into tissue (mm), from pen pressure</summary>
+        public float insertMm = 1.5f;
+        public float armLength = 120f;
+        public Vector3 armAy, armAz, armBy, armBz;
+        /// <summary>tip midpoint of the previous frame (push dissection runs along the direction of travel)</summary>
+        public Vector3 prevMid; bool hadPrev;
+
+        public float Span { get { return spreading ? closedMm + (spreadMm - closedMm) * spread : closed ? closedMm : openMm; } }
+        public Vector3 Mid { get { return (tipA + tipB) * 0.5f; } }
+
+        /// <summary>Advances the spread animation: opens while `hold` and the jaws are inserted, closes again when released.</summary>
+        public void Animate(bool hold, float dt)
+        {
+            spreading = hold && closed;
+            spread = Mathf.Clamp01(spread + (spreading ? dt / 0.5f : -dt / 0.25f));
+        }
+
+        public void Place(bool hasHit, Vector3 hit, Vector3 cameraPos, bool hasTilt, Vector2 tilt, float pressure = 0.5f)
+        {
+            if (!hasHit) { visible = false; hadPrev = false; return; }
+            visible = true;
+            axis = HandPose.Axis(hit, cameraPos, hasTilt, tilt);
+            Vector3 x, z; HandPose.Frame(axis, out x, out z);
+            // closed tips are pushed into the tissue along the handle axis; open jaws rest on the surface
+            insertMm = closed ? 0.8f + pressure * 2.6f : 0.3f;
+            centre = hit - axis * insertMm;
+            if (hadPrev) prevMid = Mid; else { prevMid = centre; hadPrev = true; }
+            tipA = centre - z * (Span / 2); tipB = centre + z * (Span / 2);
+            // each arm: local y along the arm from its tip to the box lock, arms converge at the lock
+            var pivot = centre + axis * (armLength * 0.55f);
+            armAy = (pivot - tipA).normalized; armAz = Vector3.Cross(x, armAy).normalized;
+            armBy = (pivot - tipB).normalized; armBz = Vector3.Cross(x, armBy).normalized;
+        }
+
+        /// <summary>Tip travel since the previous frame (mm); push dissection needs the closed tips to be moving through tissue.</summary>
+        public float Travel() { return hadPrev ? Vector3.Distance(prevMid, Mid) : 0f; }
+    }
+
+    /// <summary>
+    /// Folded 4x4 gauze held in the fingers (port of src/tools/gauze.ts). Pressed on the field it soaks up liquid blood
+    /// within its footprint and tamponades the surface beneath it; dragged with pressure it wipes, taking clot and stain
+    /// with it but disturbing the capillaries so the surface oozes again. It holds a limited volume; Fresh() discards it.
+    /// </summary>
+    public sealed class GauzeTool
+    {
+        public Vector3 centre, axis = Vector3.up, velocity, frameZ = Vector3.forward;
+        /// <summary>0..1 how hard the gauze is pressed (left button + pen pressure)</summary>
+        public float pressure;
+        public bool visible = true;
+        /// <summary>footprint radius, mm (a folded 4x4 pressed down covers about a 12 mm patch)</summary>
+        public float radius = 6f;
+        /// <summary>capacity of a folded 4x4, microlitres</summary>
+        public float capacityUl = 8000f;
+        public float soakedUl; public int discarded;
+        Vector3 lastCentre; bool hadLast;
+
+        public float Saturation { get { return Mathf.Min(1f, soakedUl / capacityUl); } }
+        public bool Saturated { get { return soakedUl >= capacityUl; } }
+        /// <summary>absorption capability left: 0 when saturated</summary>
+        public float Absorb { get { return Saturated ? 0f : 1f; } }
+
+        public void Fresh() { soakedUl = 0; discarded++; }
+
+        public void Place(bool hasHit, Vector3 hit, Vector3 cameraPos, bool hasTilt, Vector2 tilt, bool pressed, float penPressure, float dt)
+        {
+            if (!hasHit) { visible = false; pressure = 0; hadLast = false; velocity = Vector3.zero; return; }
+            visible = true;
+            axis = HandPose.Axis(hit, cameraPos, hasTilt, tilt);
+            // the pad sits on the surface, pressed in a little
+            pressure = pressed ? Mathf.Max(0.3f, penPressure) : 0f;
+            centre = hit + axis * (pressed ? -0.4f * pressure : 0.8f);
+            velocity = hadLast && dt > 0 ? (centre - lastCentre) / dt : Vector3.zero;
+            lastCentre = centre; hadLast = true;
+            Vector3 x; HandPose.Frame(axis, out x, out frameZ);
         }
     }
 

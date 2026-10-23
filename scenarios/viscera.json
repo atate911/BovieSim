@@ -1,0 +1,156 @@
+{
+  "id": "viscera",
+  "name": "Visceral surface",
+  "description": "A wide wound through fat, fascia and a thin muscle layer has exposed the serosal surface of a viscus. A serosal arteriole is bleeding and the raw surface oozes. Control them with the least energy and do not injure the wall.",
+  "bed": {
+    "sizeMm": [
+      50,
+      50,
+      30
+    ],
+    "voxelMm": 0.25
+  },
+  "layers": {
+    "epidermisMm": 0.15,
+    "dermisMm": 2.0,
+    "fatMm": 9,
+    "superficialFasciaMm": 0.4,
+    "superficialFasciaAt": 0.55,
+    "deepFasciaMm": 0.8,
+    "variation": 0.1,
+    "areolarMm": 0.5
+  },
+  "septa": {
+    "lobuleMm": 6,
+    "thicknessMm": 0.35
+  },
+  "vessels": {
+    "seed": 31,
+    "perforatorsPerCm2": 0.3,
+    "arterialFraction": 0.4,
+    "radiusMm": [
+      0.3,
+      0.8
+    ],
+    "dermalPlexus": true
+  },
+  "nerves": [],
+  "organ": {
+    "kind": "bowel",
+    "muscleMm": 4,
+    "serosaMm": 0.3,
+    "bleeder": {
+      "xMm": 2,
+      "yMm": -1,
+      "rMm": 0.5,
+      "arterial": true,
+      "angleDeg": 30,
+      "lengthMm": 10
+    }
+  },
+  "preCarve": [
+    {
+      "kind": "pit",
+      "centerMm": [
+        0,
+        0
+      ],
+      "lengthMm": 13,
+      "widthMm": 0,
+      "depthMm": 16.0,
+      "slope": 0.15,
+      "floor": "organ"
+    }
+  ],
+  "skin": {
+    "prep": "chlorhexidine",
+    "tone": 0.35,
+    "langerDeg": 0
+  },
+  "generator": {
+    "cutMode": "pure",
+    "coagMode": "fulgurate",
+    "cutWatts": 20,
+    "coagWatts": 20,
+    "policy": "suggested"
+  },
+  "faults": [],
+  "education": {
+    "goal": "Stop the serosal bleeding and the capillary ooze with gauze pressure first and brief low-power coag only where it keeps bleeding, without heating or breaching the visceral wall.",
+    "success": [
+      {
+        "metric": "bloodLostMl",
+        "op": "<",
+        "value": 5,
+        "label": "Blood loss under 5 ml"
+      },
+      {
+        "metric": "exposedBleeding",
+        "op": "==",
+        "value": 0,
+        "label": "No active bleeding"
+      },
+      {
+        "metric": "visceraVaporisedMm3",
+        "op": "<",
+        "value": 1,
+        "label": "No visceral wall removed"
+      },
+      {
+        "metric": "charVolumeMm3",
+        "op": "<",
+        "value": 3,
+        "label": "Less than 3 mm3 of char"
+      }
+    ],
+    "failurePoints": [
+      {
+        "id": "wall-heat",
+        "trigger": "viscera.heated",
+        "consequence": "Full-thickness thermal injury of the wall: a delayed perforation days later.",
+        "teaching": "The wall is a few millimetres thick and conducts well. Lowest power, briefest touch, pinpoint only, or use pressure instead of energy."
+      },
+      {
+        "id": "wipe",
+        "trigger": "gauze.wipe",
+        "consequence": "Wiping drags the clot off the serosa and restarts the ooze.",
+        "teaching": "Dab and hold. Count to ten before you look."
+      },
+      {
+        "id": "boil",
+        "trigger": "blood.boiling",
+        "consequence": "Buzzing in the pool cooks a skin of coagulum over the bleeder and cooks the wall under it.",
+        "teaching": "Clear the field first: suction for the liquid, gauze for the clot, then treat the vessel you can see."
+      }
+    ],
+    "decisionPoints": [
+      {
+        "id": "ooze",
+        "trigger": "tissue.oozing",
+        "prompt": "The raw serosa is oozing. Gauze pressure, or coag?",
+        "options": [
+          {
+            "label": "Gauze pressure",
+            "outcome": "Correct: capillary ooze stops with a few seconds of pressure."
+          },
+          {
+            "label": "Coag",
+            "outcome": "Heats a thin wall for a problem that would have stopped by itself."
+          }
+        ]
+      }
+    ],
+    "ambiguity": [
+      {
+        "id": "wall-thickness",
+        "description": "How thick the wall is under the serosa cannot be seen.",
+        "affects": "organ.muscleMm"
+      },
+      {
+        "id": "serosal-vessels",
+        "description": "Serosal vessel positions are seeded per attempt.",
+        "affects": "vessels.seed"
+      }
+    ]
+  }
+}

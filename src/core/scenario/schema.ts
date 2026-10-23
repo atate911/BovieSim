@@ -21,6 +21,8 @@ export interface LayerSpec {
   deepFasciaMm: number;
   /** +- random variation of layer thickness, fraction (modeled ambiguity) */
   variation?: number;
+  /** loose areolar plane on either face of Scarpa's fascia and above the deep fascia (mm, default 0.5; 0 disables) */
+  areolarMm?: number;
 }
 
 export interface SeptaSpec {
@@ -53,6 +55,8 @@ export interface PreCarve {
   angleDeg?: number;
   /** wall slope: extra half-width (trench) or radius shrink (pit) per mm of depth */
   slope?: number;
+  /** the floor follows a layer instead of a fixed depth: just onto the deep fascia, the muscle or the organ's serosa */
+  floor?: 'deepFascia' | 'muscle' | 'organ';
 }
 
 export interface NerveSpec {
@@ -72,9 +76,23 @@ export interface LipomaSpec {
   capsuleMm: number;
   /** 'subcutaneous' | 'subfascial' | 'intramuscular' */
   plane: 'subcutaneous' | 'subfascial' | 'intramuscular';
+  /** thickness of the loose areolar sheath around the capsule (the plane that shells out), mm; default 0.4 */
+  areolarMm?: number;
 }
 
 export type LesionSpec = LipomaSpec;
+
+/**
+ * A visceral organ beneath the muscle: a serosal membrane over soft, very vascular parenchyma.
+ * The muscle layer is `muscleMm` thick below the deep fascia; the organ fills the rest of the bed.
+ */
+export interface OrganSpec {
+  kind: 'bowel' | 'liver';
+  muscleMm: number;
+  serosaMm: number;
+  /** a serosal vessel laid at the surface so that a pre-carved floor onto the organ opens it (bed-centred mm) */
+  bleeder?: { xMm: number; yMm: number; rMm: number; arterial: boolean; angleDeg?: number; lengthMm?: number };
+}
 
 export interface SkinSpec {
   prep: 'chlorhexidine' | 'betadine' | 'none';
@@ -140,6 +158,7 @@ export interface Scenario {
   vessels: VesselSpec;
   nerves: NerveSpec[];
   lesion?: LesionSpec;
+  organ?: OrganSpec;
   preCarve?: PreCarve[];
   skin: SkinSpec;
   generator: GeneratorPreset;
@@ -156,5 +175,6 @@ export function validateScenario(s: unknown): Scenario {
   const edu = o.education as EducationSpec;
   if (typeof edu.goal !== 'string') throw new Error('education.goal required');
   const sc = o as unknown as Scenario;
+  if (sc.organ && !(sc.organ.muscleMm >= 0 && sc.organ.serosaMm >= 0)) throw new Error('organ.muscleMm and organ.serosaMm must be >= 0');
   return { ...sc, nerves: sc.nerves ?? [], faults: sc.faults ?? [] };
 }

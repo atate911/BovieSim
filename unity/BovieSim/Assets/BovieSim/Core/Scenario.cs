@@ -14,6 +14,8 @@ namespace BovieSim
     {
         public float epidermisMm = 0.15f, dermisMm = 2f, fatMm = 18f, superficialFasciaMm = 0.4f, superficialFasciaAt = 0.55f, deepFasciaMm = 0.8f;
         public float variation = 0f;
+        /// <summary>loose areolar plane on either face of Scarpa's fascia and above the deep fascia (mm); negative = default 0.5</summary>
+        public float areolarMm = -1f;
     }
 
     [Serializable] public class SeptaSpec { public float lobuleMm = 6f, thicknessMm = 0.35f; }
@@ -43,7 +45,25 @@ namespace BovieSim
         public float capsuleMm = 0.3f;
         /// <summary>subcutaneous | subfascial | intramuscular</summary>
         public string plane = "subcutaneous";
+        /// <summary>thickness of the loose areolar sheath around the capsule (mm); negative = default 0.4</summary>
+        public float areolarMm = -1f;
         public bool IsLipoma { get { return type == "lipoma"; } }
+    }
+
+    [Serializable]
+    public class OrganBleeder { public float xMm, yMm, rMm = 0f, angleDeg = 0f, lengthMm = 10f; public bool arterial = true; }
+
+    /// <summary>A visceral organ beneath the muscle: `muscleMm` of muscle under the deep fascia, then serosa over parenchyma to the bottom.</summary>
+    [Serializable]
+    public class OrganSpec
+    {
+        /// <summary>bowel | liver; empty when the scenario has no organ</summary>
+        public string kind = "";
+        public float muscleMm = 4f, serosaMm = 0.3f;
+        public OrganBleeder bleeder;
+        public bool IsPresent { get { return !string.IsNullOrEmpty(kind); } }
+        /// <summary>an absent bleeder deserialises with radius 0</summary>
+        public bool HasBleeder { get { return bleeder != null && bleeder.rMm > 0f; } }
     }
 
     [Serializable]
@@ -56,6 +76,8 @@ namespace BovieSim
         public float angleDeg = 0f;
         /// <summary>negative = use the kind's default (0.3 trench, 0.4 pit)</summary>
         public float slope = -1f;
+        /// <summary>the floor follows a layer instead of a fixed depth: deepFascia | muscle | organ (empty = fixed depth)</summary>
+        public string floor = "";
     }
 
     [Serializable] public class SkinSpec { public string prep = "chlorhexidine"; public float tone = 0.35f; public float langerDeg = 0f; }
@@ -97,6 +119,7 @@ namespace BovieSim
         public VesselSpec vessels = new VesselSpec();
         public List<NerveSpec> nerves = new List<NerveSpec>();
         public LesionSpec lesion = new LesionSpec();
+        public OrganSpec organ = new OrganSpec();
         public List<PreCarve> preCarve = new List<PreCarve>();
         public SkinSpec skin = new SkinSpec();
         public GeneratorPreset generator = new GeneratorPreset();
@@ -112,6 +135,7 @@ namespace BovieSim
             if (s.bed == null || s.bed.sizeMm == null || s.bed.sizeMm.Length < 3) throw new ArgumentException("scenario bed.sizeMm must have 3 values");
             if (!(s.bed.voxelMm > 0.05f && s.bed.voxelMm <= 2f)) throw new ArgumentException("bed.voxelMm out of range");
             if (s.lesion == null) s.lesion = new LesionSpec();
+            if (s.organ == null) s.organ = new OrganSpec();
             if (s.vessels.@explicit == null) s.vessels.@explicit = new List<ExplicitVessel>();
             if (s.preCarve == null) s.preCarve = new List<PreCarve>();
             if (s.nerves == null) s.nerves = new List<NerveSpec>();

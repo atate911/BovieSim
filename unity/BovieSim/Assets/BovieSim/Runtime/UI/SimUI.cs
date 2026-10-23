@@ -13,6 +13,8 @@ namespace BovieSim
         public float zOhm = float.PositiveInfinity, powerW, vRms; public int contact;
         public float maxT = 37, vaporised, simTime, bloodLost, pooled, rimMm, charMm3;
         public int carbon, exposedArt, exposedVen, sealedVx, charPlug, rebleeds, tris; public bool capped;
+        // blood layer and mechanics
+        public float oozeMl, clotMl, gauzeMl; public int oozeVoxels, strands, tornLinks, tornVoxels, dissectedVoxels;
         // timing
         public float frameMs, cpuMs, gpuMs, fps; public int stateAge, heightsAge, surfaceAge;
         // section
@@ -161,6 +163,8 @@ namespace BovieSim
             Row(c, "blood", "Blood lost / pooled");
             Row(c, "ends", "Bleeding ends");
             Row(c, "seal", "Sealed / char plug / rebleeds");
+            Row(c, "ooze", "Ooze / clot in field");
+            Row(c, "mech", "Strands / torn / dissected");
             Row(c, "rim", "Skin edge thermal rim");
             Row(c, "capsule", "Lipoma capsule");
             footer = Text(c, "", 12, Muted); footer.style.marginTop = 6f;
@@ -342,9 +346,10 @@ namespace BovieSim
             Heading(help, "Controls · F2");
             string[,] keys = {
                 { "Z / X", "Footswitch cut / coag (or the on-screen pedals)" },
-                { "Left mouse", "Pencil: hand-switch cut (Ctrl = coag). Forceps: grasp. Suction: on. Hook: catch and drag" },
-                { "Space", "Lift the closed forceps (traction, delivering a freed lipoma)" },
-                { "Tab or Q", "Next instrument: pencil, Adson forceps, Frazier suction, skin hook" },
+                { "Left mouse", "Pencil: hand-switch cut (Ctrl = coag). Forceps / hemostat: grasp (pen pressure pushes the hemostat tips in). Suction: on. Gauze: press. Hook: catch and drag" },
+                { "Space", "Forceps closed: lift (traction, delivering a freed lipoma). Hemostat closed: spread the jaws (blunt dissection of areolar and fatty planes)" },
+                { "Gauze · U", "Hold still to dab (soaks blood, tamponades, settles ooze); drag with pressure to wipe (lifts clot and stain, restarts ooze) · fresh pad" },
+                { "Tab or Q", "Next instrument: pencil, Adson forceps, Kelly hemostat, Frazier suction, 4x4 gauze, skin hook" },
                 { "1-4 / 5-6", "Cut mode Pure, Blend, Low, Valleylab / coag Fulgurate, Spray" },
                 { "[ ]  ; '", "Cut / coag watts −5 +5 (Shift: 1 W)" },
                 { "B N O · R · T", "Blade, needle, ball · roll the blade 45° · toothed / smooth forceps" },
@@ -415,9 +420,10 @@ namespace BovieSim
                 Swatch(r, "Fat", TissuePalette.Fat); Swatch(r, "Fascia", TissuePalette.Fascia);
                 Swatch(r, "Muscle", TissuePalette.Muscle); Swatch(r, "Artery", TissuePalette.Artery);
                 Swatch(r, "Vein", TissuePalette.Vein); Swatch(r, "Lipoma", TissuePalette.Lipoma);
+                Swatch(r, "Areolar", TissuePalette.Areolar); Swatch(r, "Viscera", TissuePalette.Viscera); Swatch(r, "Serosa", TissuePalette.Serosa);
                 Swatch(r, "Coag dermis", TissuePalette.CoagDermis); Swatch(r, "Coag muscle", TissuePalette.CoagMuscle);
                 Swatch(r, "Desiccated", TissuePalette.Desiccated); Swatch(r, "Char", TissuePalette.Char);
-                Swatch(r, "Sealed", new Color(0.4f, 0.8f, 0.45f));
+                Swatch(r, "Sealed", new Color(0.4f, 0.8f, 0.45f)); Swatch(r, "Bleeding / oozing", new Color(0.6f, 0.05f, 0.05f)); Swatch(r, "Dissected plane", new Color(0.14f, 0.13f, 0.12f));
                 LineKey(legendBox);
             }
             else if (mode == 1 || mode == 4 || mode == 5)
@@ -502,6 +508,10 @@ namespace BovieSim
             rows["blood"].text = d.bloodLost.ToString("0.00") + " ml / " + d.pooled.ToString("0.00") + " ml";
             rows["ends"].text = d.exposedArt + " arterial · " + d.exposedVen + " venous"; rows["ends"].style.color = d.exposedArt > 0 ? BadC : d.exposedVen > 0 ? WarnC : Ink;
             rows["seal"].text = d.sealedVx + " · " + d.charPlug + " · " + d.rebleeds; rows["seal"].style.color = d.charPlug > 0 ? WarnC : Ink;
+            rows["ooze"].text = d.oozeMl.ToString("0.00") + " ml from " + d.oozeVoxels + " vx · clot " + d.clotMl.ToString("0.00") + " ml" + (d.gauzeMl > 0 ? " · gauze " + d.gauzeMl.ToString("0.00") + " ml" : "");
+            rows["ooze"].style.color = d.clotMl > 0.3f ? WarnC : Ink;
+            rows["mech"].text = d.strands + " strands · " + d.tornLinks + " links / " + d.tornVoxels + " vx torn · " + d.dissectedVoxels + " vx dissected";
+            rows["mech"].style.color = d.tornLinks > 0 ? WarnC : Ink;
             rows["rim"].text = d.rimMm > 0 ? d.rimMm.ToString("0.00") + " mm" : "no incision edge yet"; rows["rim"].style.color = d.rimMm >= 0.5f ? BadC : d.rimMm >= 0.4f ? WarnC : Ink;
             capsuleRow.style.display = string.IsNullOrEmpty(d.capsuleText) ? DisplayStyle.None : DisplayStyle.Flex;
             rows["capsule"].text = d.capsuleText;

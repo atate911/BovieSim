@@ -6,6 +6,6 @@ namespace BovieSim
     /// </summary>
     public static class BovieVersion
     {
-        public const string Version = "0.4.1";
+        public const string Version = "0.5.0";
     }
 }

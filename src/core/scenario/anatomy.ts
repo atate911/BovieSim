@@ -1,5 +1,5 @@
 import { Scenario } from './schema';
-import { Volume, VolumeDims, packCell, FLAG_DERMAL_PLEXUS, FLAG_FIBRE_X } from '../volume';
+import { Volume, VolumeDims, packCell, FLAG_DERMAL_PLEXUS, FLAG_FIBRE_X, CUT_AIR } from '../volume';
 import { Tissue, TISSUE } from '../tissueProperties';
 import { mulberry32, fbm2, voronoi2 } from '../noise';
 
@@ -8,6 +8,8 @@ export interface AnatomyReport {
   vessels: { x: number; y: number; r: number; arterial: boolean }[];
   fatMmActual: number;
   deepFasciaDepthMm: number;
+  /** depth (mm) of the serosal surface when the scenario has an organ */
+  organDepthMm?: number;
   lesionCenter?: [number, number, number];
   fillMs: number;
 }
@@ -15,6 +17,11 @@ export interface AnatomyReport {
 /**
  * Builds the voxel volume for a scenario. Layer thicknesses carry the scenario's modeled
  * variation so the learner cannot know exact depths in advance.
+ *
+ * Planes: a loose areolar sheet lies on either face of Scarpa's fascia and immediately above the
+ * deep fascia (the planes a surgeon spreads bluntly), and a thin areolar sheath surrounds a lipoma's
+ * capsule (the plane it shells out along). Below the deep fascia an optional organ replaces the deep
+ * muscle: serosa over soft parenchyma.
  */
 export function buildAnatomy(sc: Scenario, voxelOverride?: number, seedOverride?: number): { volume: Volume; report: AnatomyReport } {
   const t0 = performance.now();
@@ -29,8 +36,10 @@ export function buildAnatomy(sc: Scenario, voxelOverride?: number, seedOverride?
   const rng = mulberry32(seed * 7919 + 13);
   const L = sc.layers;
   const variation = L.variation ?? 0;
+  const areolar = L.areolarMm ?? 0.5;
   const fatScale = 1 + variation * (rng() * 2 - 1);
   const fatMm = L.fatMm * fatScale;
+  const organ = sc.organ;
 
   const { cell, occupancy, water } = vol;
   const sx = nx * h, sy = ny * h;
@@ -75,15 +84,19 @@ export function buildAnatomy(sc: Scenario, voxelOverride?: number, seedOverride?
   }
 
   // ---- layer fill -------------------------------------------------------------------------
-  const wEpi = TISSUE[Tissue.Epidermis].water, wDerm = TISSUE[Tissue.Dermis].water, wFat = TISSUE[Tissue.Fat].water;
-  const wSept = TISSUE[Tissue.Septum].water, wFasc = TISSUE[Tissue.DeepFascia].water, wMus = TISSUE[Tissue.Muscle].water;
+  const W = (t: Tissue) => TISSUE[t].water;
+  const wEpi = W(Tissue.Epidermis), wDerm = W(Tissue.Dermis), wFat = W(Tissue.Fat), wSept = W(Tissue.Septum), wFasc = W(Tissue.DeepFascia), wMus = W(Tissue.Muscle);
+  const wAre = W(Tissue.Areolar), wSer = W(Tissue.Serosa), wVis = W(Tissue.Viscera);
   const cEpi = packCell(Tissue.Epidermis), cMus = packCell(Tissue.Muscle, 0, 0, FLAG_FIBRE_X);
   const cScarpa = packCell(Tissue.SuperficialFascia), cDeep = packCell(Tissue.DeepFascia);
+  const cAre = packCell(Tissue.Areolar), cSer = packCell(Tissue.Serosa), cVis = packCell(Tissue.Viscera);
   for (let j = 0; j < ny; j++) {
     for (let i = 0; i < nx; i++) {
       const c = i + nx * j;
       const surf = colSurf[c];
       const dermBot = colDermis[c], sTop = colScarpaTop[c], sBot = colScarpaBot[c], dTop = colDeepTop[c], dBot = colDeepBot[c];
+      const musBot = organ ? dBot + organ.muscleMm : 1e9;
+      const serBot = organ ? musBot + organ.serosaMm : 1e9;
       const sept = colSeptum[c] === 1;
       const lob = colLobule[c];
       const cFat = packCell(Tissue.Fat, 0, lob);
@@ -98,13 +111,22 @@ export function buildAnatomy(sc: Scenario, voxelOverride?: number, seedOverride?
         if (occ <= 0) { cell[idx] = 0; water[idx] = 0; continue; }
         const depth = (surf - (k + 0.5)) * h; // mm below surface at voxel centre
         let cc: number, w: number;
+        // septal attachments tether the areolar planes, so a septum column stays fibrous through them
+        const fatOrSept = (): void => { if (sept) { cc = cSept; w = wSept; } else { cc = cFat; w = wFat; } };
+        const areolarOrSept = (): void => { if (sept) { cc = cSept; w = wSept; } else { cc = cAre; w = wAre; } };
+        cc = cFat; w = wFat;
         if (k >= topK || depth < L.epidermisMm) { cc = cEpi; w = wEpi; }
         else if (depth < dermBot) { cc = depth > dermBot - 0.6 ? cDermDeep : cDerm; w = wDerm; }
-        else if (depth < sTop) { if (sept) { cc = cSept; w = wSept; } else { cc = cFat; w = wFat; } }
+        else if (depth < sTop - areolar) fatOrSept();
+        else if (depth < sTop) areolarOrSept();
         else if (depth < sBot) { cc = cScarpa; w = wFasc; }
-        else if (depth < dTop) { if (sept) { cc = cSept; w = wSept; } else { cc = cFat; w = wFat; } }
+        else if (depth < sBot + areolar) areolarOrSept();
+        else if (depth < dTop - areolar) fatOrSept();
+        else if (depth < dTop) areolarOrSept();
         else if (depth < dBot) { cc = cDeep; w = wFasc; }
-        else { cc = cMus; w = wMus; }
+        else if (depth < musBot) { cc = cMus; w = wMus; }
+        else if (depth < serBot) { cc = cSer; w = wSer; }
+        else { cc = cVis; w = wVis; }
         cell[idx] = cc; water[idx] = w;
       }
     }
@@ -112,6 +134,7 @@ export function buildAnatomy(sc: Scenario, voxelOverride?: number, seedOverride?
 
   // ---- vessels ------------------------------------------------------------------------------
   const report: AnatomyReport = { dims, vessels: [], fatMmActual: fatMm, deepFasciaDepthMm: L.epidermisMm + L.dermisMm + fatMm, fillMs: 0 };
+  if (organ) report.organDepthMm = report.deepFasciaDepthMm + L.deepFasciaMm + organ.muscleMm;
   const areaCm2 = (sx / 10) * (sy / 10);
   const nPerf = Math.round(sc.vessels.perforatorsPerCm2 * areaCm2);
   const [rMin, rMax] = sc.vessels.radiusMm;
@@ -189,6 +212,28 @@ export function buildAnatomy(sc: Scenario, voxelOverride?: number, seedOverride?
     const r = rMin + (rMax - rMin) * Math.pow(rng(), 1.6);
     placeVessel(x, y, r, rng() < sc.vessels.arterialFraction);
   }
+  // subserosal vessels run a millimetre under the organ surface (intact under a pre-carved floor); an optional
+  // bleeder lies in the serosa itself so the floor opens it
+  if (organ) {
+    const nSer = Math.round(0.4 * areaCm2);
+    for (let n = 0; n < nSer; n++) {
+      const x = (0.1 + 0.8 * rng()) * sx, y = (0.1 + 0.8 * rng()) * sy;
+      const c = Math.floor(x / h) + nx * Math.floor(y / h);
+      const r = 0.25 + 0.45 * rng();
+      const d0 = colDeepBot[c] + organ.muscleMm + organ.serosaMm + 1.0 + r;
+      const ang = rng() * 6.28, len = 8 + rng() * 10;
+      paintSegment(x, y, d0, x + Math.cos(ang) * len, y + Math.sin(ang) * len, d0 + 0.3, r, rng() < 0.5 ? Tissue.Artery : Tissue.Vein, Math.round(r / 0.05));
+    }
+    const bl = organ.bleeder;
+    if (bl) {
+      const x = bl.xMm + sx / 2, y = bl.yMm + sy / 2;
+      const c = Math.floor(x / h) + nx * Math.floor(y / h);
+      const d0 = colDeepBot[c] + organ.muscleMm + 0.1;
+      const ang = (bl.angleDeg ?? 0) * Math.PI / 180, len = (bl.lengthMm ?? 10) / 2;
+      paintSegment(x - Math.cos(ang) * len, y - Math.sin(ang) * len, d0, x + Math.cos(ang) * len, y + Math.sin(ang) * len, d0, bl.rMm, bl.arterial ? Tissue.Artery : Tissue.Vein, Math.round(bl.rMm / 0.05));
+      report.vessels.push({ x: bl.xMm, y: bl.yMm, r: bl.rMm, arterial: bl.arterial });
+    }
+  }
 
   // ---- nerves ---------------------------------------------------------------------------------
   for (const nv of sc.nerves) {
@@ -212,10 +257,13 @@ export function buildAnatomy(sc: Scenario, voxelOverride?: number, seedOverride?
     if (le.plane === 'intramuscular') topDepth = colDeepBot[cc0] + 3;
     const cdz = topDepth + cz; // centre depth
     const cap = le.capsuleMm;
+    const sheath = le.areolarMm ?? 0.4;
     const wLip = TISSUE[Tissue.Lipoma].water, wCap = TISSUE[Tissue.LipomaCapsule].water;
     const cLip = packCell(Tissue.Lipoma, 0, 0), cCap = packCell(Tissue.LipomaCapsule);
-    const iMin = Math.max(0, Math.floor((cx - a - cap) / h)), iMax = Math.min(nx - 1, Math.ceil((cx + a + cap) / h));
-    const jMin = Math.max(0, Math.floor((cy - b - cap) / h)), jMax = Math.min(ny - 1, Math.ceil((cy + b + cap) / h));
+    const iMin = Math.max(0, Math.floor((cx - a - cap - sheath) / h)), iMax = Math.min(nx - 1, Math.ceil((cx + a + cap + sheath) / h));
+    const jMin = Math.max(0, Math.floor((cy - b - cap - sheath) / h)), jMax = Math.min(ny - 1, Math.ceil((cy + b + cap + sheath) / h));
+    const minAxis = Math.min(a, b, cz);
+    const shell = cap / minAxis, shellA = sheath / minAxis;
     for (let j = jMin; j <= jMax; j++) {
       for (let i = iMin; i <= iMax; i++) {
         const c = i + nx * j;
@@ -225,15 +273,18 @@ export function buildAnatomy(sc: Scenario, voxelOverride?: number, seedOverride?
         const lobN = 1 + 0.08 * (fbm2(px / 3, py / 3, 2, seed + 41) - 0.5) * 2;
         for (let k = 0; k < nz; k++) {
           const pz = (surf - (k + 0.5)) * h;
-          if (pz < topDepth - cap - h || pz > cdz + cz + cap + h) continue;
+          if (pz < topDepth - cap - sheath - h || pz > cdz + cz + cap + sheath + h) continue;
           const ex = (px - cx) / a, ey = (py - cy) / b, ez = (pz - cdz) / cz;
           const rr = Math.sqrt(ex * ex + ey * ey + ez * ez) * lobN;
           const idx = i + nx * (j + ny * k);
           if (occupancy[idx] <= 0) continue;
-          // normalised shell thickness
-          const shell = cap / Math.min(a, b, cz);
           if (rr <= 1 - shell) { cell[idx] = cLip; water[idx] = wLip; }
           else if (rr <= 1) { cell[idx] = cCap; water[idx] = wCap; }
+          else if (rr <= 1 + shellA) {
+            // the areolar plane around the capsule, except where the host is already fibrous or a vessel
+            const t = cell[idx] & 0xff;
+            if (t === Tissue.Fat || t === Tissue.Lipoma) { cell[idx] = cAre; water[idx] = wAre; }
+          }
         }
       }
     }
@@ -243,19 +294,33 @@ export function buildAnatomy(sc: Scenario, voxelOverride?: number, seedOverride?
   }
 
   // ---- pre-existing wound -----------------------------------------------------------------
+  // the floor can follow a layer (the exposed deep fascia, muscle or serosa) instead of a fixed depth
+  const floorDepth = (pc: NonNullable<Scenario['preCarve']>[number], x: number, y: number): number => {
+    if (!pc.floor) return pc.depthMm;
+    const i = Math.min(nx - 1, Math.max(0, Math.floor((x + sx / 2) / h))), j = Math.min(ny - 1, Math.max(0, Math.floor((y + sy / 2) / h)));
+    const c = i + nx * j;
+    const fromSurface = pc.floor === 'deepFascia' ? colDeepTop[c] : pc.floor === 'muscle' ? colDeepBot[c] : colDeepBot[c] + (organ ? organ.muscleMm : 0);
+    // layer depths are below the actual (undulating) surface; the carve works in nominal-surface depth
+    return fromSurface + 0.15 - (colSurf[c] - surfK) * h;
+  };
   for (const pc of sc.preCarve ?? []) carveSdf(vol, (x, y, d) => {
     const cx = pc.centerMm[0], cy = pc.centerMm[1];
-    if (pc.kind === 'pit') return Math.max(Math.hypot(x - cx, y - cy) - (pc.lengthMm - d * (pc.slope ?? 0.4)), d - pc.depthMm);
+    const dd = d - floorDepth(pc, x, y);
+    if (pc.kind === 'pit') return Math.max(Math.hypot(x - cx, y - cy) - (pc.lengthMm - d * (pc.slope ?? 0.4)), dd);
     const a = (pc.angleDeg ?? 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
     const u = (x - cx) * ca + (y - cy) * sa, v = -(x - cx) * sa + (y - cy) * ca;
-    return Math.max(Math.abs(u) - pc.lengthMm / 2, Math.abs(v) - (pc.widthMm + d * (pc.slope ?? 0.3)), d - pc.depthMm);
+    return Math.max(Math.abs(u) - pc.lengthMm / 2, Math.abs(v) - (pc.widthMm + d * (pc.slope ?? 0.3)), dd);
   });
 
   report.fillMs = performance.now() - t0;
   return { volume: vol, report };
 }
 
-/** Carves a region given by a signed distance (mm, negative inside) in bed coordinates (x, y from the bed centre, depth below the nominal surface). */
+/**
+ * Carves a region given by a signed distance (mm, negative inside) in bed coordinates (x, y from the
+ * bed centre, depth below the nominal surface). Removed voxels become cut air: a raw wound surface
+ * whose exposed vessel ends bleed and whose walls ooze.
+ */
 export function carveSdf(volume: Volume, sdf: (x: number, y: number, depth: number) => number) {
   const { nx, ny, nz, h } = volume.dims;
   const surfK = volume.surfaceK;
@@ -265,8 +330,9 @@ export function carveSdf(volume: Volume, sdf: (x: number, y: number, depth: numb
     if (d < h) {
       const idx = volume.index(i, j, k);
       const keep = Math.min(1, Math.max(0, 0.5 + d / h));
-      volume.occupancy[idx] = Math.min(volume.occupancy[idx], keep);
-      if (volume.occupancy[idx] < 0.5) volume.cell[idx] = 0;
+      const before = volume.occupancy[idx];
+      volume.occupancy[idx] = Math.min(before, keep);
+      if (volume.occupancy[idx] < 0.5 && before >= 0.5) { volume.cell[idx] = CUT_AIR; volume.water[idx] = 0; }
     }
   }
 }

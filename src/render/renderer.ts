@@ -3,6 +3,7 @@ import commonWgsl from './wgsl/common.wgsl?raw';
 import tissueWgsl from './wgsl/tissue.wgsl?raw';
 import simpleWgsl from './wgsl/simple.wgsl?raw';
 import postWgsl from './wgsl/post.wgsl?raw';
+import strandWgsl from './wgsl/strand.wgsl?raw';
 import { GpuContext, createShader } from './gpu';
 import { SurfaceExtractor } from './surface';
 import { OrbitCamera } from './camera';
@@ -46,6 +47,9 @@ export class Renderer {
   private tissuePipe: GPURenderPipeline; private tissueShadowPipe: GPURenderPipeline;
   private simplePipe: GPURenderPipeline; private simpleShadowPipe: GPURenderPipeline;
   private postPipe: GPURenderPipeline;
+  private strandPipe: GPURenderPipeline; private strandBG: GPUBindGroup; private strandBuf: GPUBuffer; private strandCount = 0;
+  /** strand vertex capacity (2 per strand) */
+  static readonly MAX_STRANDS = 4096;
   private tissueBG!: GPUBindGroup; private simpleFrameBG: GPUBindGroup;
   private tissueShadowBG!: GPUBindGroup; private simpleShadowBG: GPUBindGroup;
   private shadowFrameLayout: GPUBindGroupLayout;
@@ -144,6 +148,17 @@ export class Renderer {
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'less', depthBias: 2, depthBiasSlopeScale: 2 },
     });
+    const strandMod = createShader(d, 'strand', commonWgsl + strandWgsl);
+    const strandFrameLayout = d.createBindGroupLayout({ label: 'strandFrame', entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }] });
+    this.strandPipe = d.createRenderPipeline({
+      label: 'strands', layout: d.createPipelineLayout({ bindGroupLayouts: [strandFrameLayout] }),
+      vertex: { module: strandMod, entryPoint: 'vs_main', buffers: [{ arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }, { shaderLocation: 1, offset: 12, format: 'float32' }] }] },
+      fragment: { module: strandMod, entryPoint: 'fs_main', targets: [{ format: 'rgba16float', blend: { color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' } } }] },
+      primitive: { topology: 'line-list' },
+      depthStencil: { format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'less' },
+    });
+    this.strandBG = d.createBindGroup({ layout: strandFrameLayout, entries: [{ binding: 0, resource: { buffer: this.frameBuf } }] });
+    this.strandBuf = d.createBuffer({ label: 'strands', size: Renderer.MAX_STRANDS * 2 * 16, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
     this.postPipe = d.createRenderPipeline({
       label: 'post', layout: 'auto',
       vertex: { module: postMod, entryPoint: 'vs_main' },
@@ -176,6 +191,12 @@ export class Renderer {
     this.rebuildTissueBG();
   }
   uploadLattice(disp: Float32Array<ArrayBuffer>) { this.device.queue.writeBuffer(this.latDisp, 0, disp); }
+
+  /** Strand segments from Lattice.strandData (8 floats per strand: a.xyz, w, b.xyz, w). */
+  uploadStrands(data: Float32Array<ArrayBuffer>, count: number) {
+    this.strandCount = Math.min(count, Renderer.MAX_STRANDS);
+    if (this.strandCount > 0) this.device.queue.writeBuffer(this.strandBuf, 0, data, 0, this.strandCount * 8);
+  }
 
   addMesh(mb: MeshBuilder, label: string, color: [number, number, number], opts: { metallic?: number; rough?: number; kind?: number; emissive?: number; castsShadow?: boolean; model?: mat4 } = {}): SimpleDraw {
     const { buffer, count } = mb.toBuffer(this.device, label);
@@ -264,6 +285,7 @@ export class Renderer {
       pass.drawIndirect(this.surface.indirect, 0);
       pass.setPipeline(this.simplePipe); pass.setBindGroup(0, this.simpleFrameBG);
       for (const dr of this.draws) { pass.setBindGroup(1, dr.bindGroup); pass.setVertexBuffer(0, dr.buffer); pass.draw(dr.count); }
+      if (this.strandCount > 0) { pass.setPipeline(this.strandPipe); pass.setBindGroup(0, this.strandBG); pass.setVertexBuffer(0, this.strandBuf); pass.draw(this.strandCount * 2); }
       this.particles.draw(pass);
       pass.end();
     }

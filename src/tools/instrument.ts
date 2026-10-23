@@ -1,8 +1,8 @@
 import { mat4, vec3 } from 'gl-matrix';
 
-export type ToolKind = 'pencil' | 'forceps' | 'suction' | 'hook';
-export const TOOL_ORDER: ToolKind[] = ['pencil', 'forceps', 'suction', 'hook'];
-export const TOOL_LABEL: Record<ToolKind, string> = { pencil: 'Bovie pencil', forceps: 'Adson forceps', suction: 'Frazier suction', hook: 'Skin hook' };
+export type ToolKind = 'pencil' | 'forceps' | 'hemostat' | 'suction' | 'gauze' | 'hook';
+export const TOOL_ORDER: ToolKind[] = ['pencil', 'forceps', 'hemostat', 'suction', 'gauze', 'hook'];
+export const TOOL_LABEL: Record<ToolKind, string> = { pencil: 'Bovie pencil', forceps: 'Adson forceps', hemostat: 'Kelly hemostat', suction: 'Frazier suction', gauze: '4x4 gauze', hook: 'Skin hook' };
 
 /**
  * Shared hand-held instrument pose: the handle runs toward the surgeon's right hand (the
