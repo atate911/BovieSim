@@ -56,10 +56,12 @@ from the repo root to copy it into `Assets/BovieSim/Resources/BovieSim/Scenarios
 | `[` `]` and `;` `'` | Cut and coag watts -5/+5 (Shift: 1 W); or the FT10 panel buttons |
 | B / N / O, R | Blade / needle / ball electrode, roll the blade 45 degrees |
 | T | Toothed / smooth forceps |
+| Space (forceps closed) | Lift the jaws (traction on a grasped edge, delivering a freed lipoma) |
 | C / J / H | Cross-section mode / orientation (across view or across the blade) / hide |
 | RMB or Alt+LMB, MMB or Shift+LMB, wheel | Orbit, pan, zoom |
 | F1 / F2 | Scenario brief (goal, success, failure points, decisions, uncertainties) / controls |
 | F5 / F6 | Restart / next scenario (freeplay, hemostasis, lipoma) |
+| F11 / Esc | Toggle fullscreen / quit (built app only) |
 | Pen (Wacom) | Pressure sets electrode depth; tilt sets the instrument angle; Y flips tilt direction |
 
 The scenario can also be chosen on the `Bovie Sim` object (Scenario Id). Voxel Override (e.g. 0.4 mm)

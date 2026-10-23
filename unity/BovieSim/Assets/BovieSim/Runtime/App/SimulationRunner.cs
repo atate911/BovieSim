@@ -35,7 +35,7 @@ namespace BovieSim
         readonly SuctionTool suction = new SuctionTool(); readonly HookTool hook = new HookTool();
         ToolKind activeTool = ToolKind.Pencil; ElectrodeType pencilElectrode = ElectrodeType.Blade;
         bool slicePerp, lesionFreedReported, lesionDelivered, lesionBreachReported, ready;
-        float clusterRiseMm; string status = "Building anatomy…";
+        float clusterRiseMm, liftMm; string status = "Building anatomy…";
         Vector4[] lastDisp; bool latticeMoved;
 
         // ---- scene objects
@@ -168,6 +168,8 @@ namespace BovieSim
         // ------------------------------------------------------------------------------------------------
         void Update()
         {
+            if (Input.GetKeyDown(KeyCode.Escape) && !Application.isEditor) { Application.Quit(); return; }
+            if (Input.GetKeyDown(KeyCode.F11)) Screen.fullScreen = !Screen.fullScreen;
             if (Input.GetKeyDown(KeyCode.F5)) { Reload(scenarioId); return; }
             if (Input.GetKeyDown(KeyCode.F6)) { Reload(ScenarioIds[(Array.IndexOf(ScenarioIds, scenarioId) + 1) % ScenarioIds.Length]); return; }
             if (!ready) return;
@@ -208,7 +210,10 @@ namespace BovieSim
             else if (activeTool == ToolKind.Forceps)
             {
                 forceps.closed = pressed;
-                forceps.Place(hasHit, hit, camMm, tiltOn, input.tiltDeg);
+                // Space raises the closed jaws (traction: lifts a grasped edge or a freed lipoma); opening resets
+                if (forceps.closed && Input.GetKey(KeyCode.Space)) liftMm = Mathf.Min(liftMm + 8f * frameDt, 15f);
+                else if (!forceps.closed) liftMm = 0;
+                forceps.Place(hasHit, hit + Vector3.up * liftMm, camMm, tiltOn, input.tiltDeg);
                 physics.SetSecondaryTool(forceps.tipA, forceps.tipB, forceps.jawRadius, forceps.visible && forceps.closed ? 1 : 0);
                 // buzzing the forceps: closed jaws become the electrode; open jaws cannot be activated
                 if (forceps.visible && forceps.closed) { tool.AsForceps(forceps.tipA, forceps.tipB, forceps.jawRadius, forceps.axis); events.buzzing = gen.activation != Activation.None; }
@@ -467,8 +472,8 @@ namespace BovieSim
             if (hud.showHelp)
                 s += "\n\nZ/X pedal cut/coag · LMB hand-switch cut (Ctrl+LMB coag) on the pencil / grasp (forceps) / suck (suction) / hook\n" +
                      "Tab or Q tool · 1-4 cut mode · 5-6 coag mode · [ ] ; ' watts (Shift = 1 W) · B/N/O blade/needle/ball · R roll · T toothed\n" +
-                     "C section mode · J section orientation · H hide section · RMB or Alt+LMB orbit · MMB or Shift+LMB pan · wheel zoom\n" +
-                     "F1 brief · F5 restart · F6 next scenario (" + string.Join(", ", ScenarioIds) + ") · pen pressure sets depth, pen tilt sets the angle (Y flips tilt)";
+                     "Space lift (forceps closed) · C section mode · J section orientation · H hide section · RMB or Alt+LMB orbit · MMB or Shift+LMB pan · wheel zoom\n" +
+                     "F1 brief · F11 fullscreen · Esc quit (built app) · F5 restart · F6 next scenario (" + string.Join(", ", ScenarioIds) + ") · pen pressure sets depth, pen tilt sets the angle (Y flips tilt)";
             else s += "\nF2 controls";
             return s;
         }
