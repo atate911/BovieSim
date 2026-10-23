@@ -39,6 +39,9 @@ Detail adapts to the PC (see [docs/hardware.md](../docs/hardware.md)); updates a
   restart the editor; accept it (keys and mouse use the legacy input, the pen uses the Input System).
 
 ## First open
+`maintain open` (in the repo root) starts the exact editor this project names; `maintain setup` does
+steps 2-3 below from the command line with Unity closed. By hand:
+
 1. Unity Hub > Add > Add project from disk > `unity/BovieSim`. Hub only lists the project and asks
    nothing else; then click the project to open it with your 6000.6.x editor. Keep the Console open
    (Window > General > Console) to follow progress.
@@ -108,6 +111,8 @@ tools/check          blind compile / test harness used when no Unity editor is a
 ```
 
 ## Tests
+From the command line, with Unity closed: `maintain test` (runs `-runTests -testPlatform EditMode` and
+lists failures).
 `Window > General > Test Runner > EditMode > Run All`: diffusion against the Gaussian solution, field
 solve against a spherical electrode, Arrhenius and boiling bookkeeping, FT10 limits, bleed rules, blood
 flow, lattice gaping and lipoma freeing, scenario parsing, anatomy determinism and teaching coverage.

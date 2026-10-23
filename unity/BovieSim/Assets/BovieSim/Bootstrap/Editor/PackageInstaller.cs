@@ -15,7 +15,7 @@ namespace BovieSim.Bootstrap
     [InitializeOnLoad]
     public static class PackageInstaller
     {
-        static readonly string[] Required =
+        internal static readonly string[] Required =
         {
             "com.unity.render-pipelines.high-definition",
             "com.unity.test-framework",
@@ -29,7 +29,8 @@ namespace BovieSim.Bootstrap
 
         static PackageInstaller()
         {
-            EditorApplication.delayCall += EnsureBothInputHandlers;
+            if (Application.isBatchMode) return; // BatchEntry installs synchronously instead
+            EditorApplication.delayCall += () => EnsureBothInputHandlers(true);
             if (SessionState.GetBool(SessionKey, false)) return;
             SessionState.SetBool(SessionKey, true);
             EditorApplication.delayCall += Begin;
@@ -80,19 +81,21 @@ namespace BovieSim.Bootstrap
         /// Installing the Input System offers to switch Active Input Handling to "Input System Package (New)",
         /// which would make the legacy Input calls throw. The sim needs "Both" (2): set it and offer a restart.
         /// </summary>
-        static void EnsureBothInputHandlers()
+        /// <returns>true when the setting was changed (the editor must restart before it applies)</returns>
+        internal static bool EnsureBothInputHandlers(bool offerRestart)
         {
             var ps = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset");
-            if (ps == null || ps.Length == 0) return;
+            if (ps == null || ps.Length == 0) return false;
             var so = new SerializedObject(ps[0]);
             var p = so.FindProperty("activeInputHandler");
-            if (p == null || p.intValue == 2) return;
+            if (p == null || p.intValue == 2) return false;
             p.intValue = 2;
             so.ApplyModifiedPropertiesWithoutUndo();
             AssetDatabase.SaveAssets();
             Debug.Log("[Bovie Sim] Active Input Handling set to Both (legacy keys/mouse + Input System pen).");
-            if (EditorUtility.DisplayDialog("Bovie Sim", "Active Input Handling was changed to 'Both'. The editor must restart for this to take effect.", "Restart now", "Later"))
+            if (offerRestart && EditorUtility.DisplayDialog("Bovie Sim", "Active Input Handling was changed to 'Both'. The editor must restart for this to take effect.", "Restart now", "Later"))
                 EditorApplication.OpenProject(System.IO.Directory.GetCurrentDirectory());
+            return true;
         }
     }
 }

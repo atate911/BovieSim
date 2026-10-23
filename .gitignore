@@ -10,3 +10,5 @@ Thumbs.db
 .vs/
 .idea/
 public/textures/
+# Windows builds made by maintain build
+/Builds/

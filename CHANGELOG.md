@@ -37,6 +37,18 @@ after updating (the editor offers it automatically).
   blue drape bounce. Unity: ambient occlusion at wound scale (1.5 cm, not 25 cm); the scenario skin-tone and
   prep tint is now applied in the right colour space.
 
+## 0.4.1: Maintenance scripts
+
+- **`maintain.cmd`** in the repo root (double-click for a menu) keeps a local install healthy: `status`,
+  `check [--online] [--all]`, `update` (previews commits, changelog, setup and Unity-version changes and
+  the local files it touches, which it backs up first), `rollback list|VERSION|previous|latest`,
+  `open`, `setup`, `test`, `build`, `logs`, `doctor`, `clean`, `reset-settings` and `report`.
+- **`install.cmd` / `scripts/install.ps1`** clones the project on a new PC (installing Git and Unity Hub
+  with winget if missing), or turns a ZIP download into a clone and carries Unity's files across.
+- Unity batch entry points (`BovieSim.Bootstrap.BatchEntry`) so setup, tests and builds run without a
+  window; setup and the input-handling fix no longer show dialogs in batch mode.
+- CI runs the scripts under Windows PowerShell 5.1 and PowerShell 7 on Windows.
+
 ## 0.4.0: Round 2 (resolution, teaching view, replay, hardware) · Setup required
 
 - **Resolution scales with the PC.** Detail levels Low / Medium / High / Ultra (0.35 / 0.25 / 0.20 / 0.16 mm

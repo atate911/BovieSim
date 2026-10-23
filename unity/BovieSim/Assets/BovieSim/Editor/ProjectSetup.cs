@@ -41,6 +41,7 @@ namespace BovieSim.EditorTools
         {
             EditorApplication.delayCall += () =>
             {
+                if (Application.isBatchMode) return; // maintain.cmd runs setup through BatchCommands
                 if (SessionState.GetBool("BovieSim.SetupOffered", false)) return;
                 var existing = AssetDatabase.LoadAssetAtPath<SimAssets>(RegistryPath);
                 if (existing != null && existing.setupVersion >= SimAssets.CurrentSetupVersion) return;
@@ -53,7 +54,10 @@ namespace BovieSim.EditorTools
         }
 
         [MenuItem("Bovie Sim/Set Up Project", priority = 0)]
-        public static void Run()
+        public static void Run() { RunSetup(true); }
+
+        /// <summary>Runs the whole setup; true on success. Non-interactive runs (batch mode) report failure only in the log.</summary>
+        public static bool RunSetup(bool interactive)
         {
             downloadLog.Length = 0;
             try
@@ -129,11 +133,14 @@ namespace BovieSim.EditorTools
                 WriteDownloadLog();
                 AssetDatabase.SaveAssets();
                 Debug.Log("[Bovie Sim] Setup complete. Open " + ScenePath + " and press Play. If the HDRP Wizard reports issues (Window > Rendering > HDRP Wizard), use Fix All.");
+                return true;
             }
             catch (Exception e)
             {
                 Debug.LogException(e);
-                EditorUtility.DisplayDialog("Bovie Sim", "Setup failed: " + e.Message + "\nSee the Console for details.", "OK");
+                Debug.LogError("[Bovie Sim] Setup failed: " + e.Message);
+                if (interactive) EditorUtility.DisplayDialog("Bovie Sim", "Setup failed: " + e.Message + "\nSee the Console for details.", "OK");
+                return false;
             }
             finally { EditorUtility.ClearProgressBar(); }
         }

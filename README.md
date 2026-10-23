@@ -25,13 +25,35 @@ Unity project (CI fails if the copies drift).
 
 ### Quick start on Windows
 
+In PowerShell (installs Git and Unity Hub if missing, then clones to `E:\claude\bovie-sim`):
+
 ```
-cd E:\claude
-git clone https://github.com/atate911/boviesim bovie-sim
+irm https://raw.githubusercontent.com/atate911/BovieSim/main/scripts/install.ps1 | iex
 ```
 
-Then in Unity Hub: *Add project from disk* → `E:\claude\bovie-sim\unity\BovieSim`, open it, and follow
-the manual's *Open and set up the project* steps.
+or by hand: `git clone https://github.com/atate911/BovieSim E:\claude\bovie-sim`. A ZIP download can be
+turned into a clone with `install.cmd` inside it. Then:
+
+```
+cd E:\claude\bovie-sim
+maintain open      # opens the project in the Unity version it needs; follow the manual's setup steps
+```
+
+### Keeping it up to date
+
+`maintain.cmd` (double-click for a menu) looks after a local install:
+
+| Command | |
+|---|---|
+| `maintain status` / `check [--online] [--all]` | what is installed and what is missing; changes nothing |
+| `maintain update [--dry-run]` | shows the new commits, changelog, and whether setup or another Unity version is needed; asks; updates |
+| `maintain rollback list\|VERSION\|previous\|latest` | go back to an earlier version and return |
+| `maintain open` / `setup` / `test` / `build` | Unity: open in the right editor; Set Up Project, EditMode tests, Windows build from the command line |
+| `maintain doctor` / `clean` / `reset-settings` | fix common problems; delete Unity's Library cache; default settings |
+| `maintain logs` / `report` | logs and their errors; a zip of logs and PC facts for a problem report |
+
+It is PowerShell (`scripts/maintain.ps1`, Windows PowerShell 5.1 or later). Every run ends with an
+OK / WARN / FAIL verdict and is recorded in `%LOCALAPPDATA%\BovieSim\maintain.log`.
 
 ## Browser build
 
@@ -114,7 +136,7 @@ Locally:
 - [docs/textures.md](docs/textures.md): texture maps for drapes and instruments (CC0 downloads or your own, with prompts)
 - [docs/status.md](docs/status.md): what is built, verified and still missing
 - [docs/hardware.md](docs/hardware.md): detail levels, requirements, laptops with two GPUs
-- [docs/upgrading.md](docs/upgrading.md): updating, rolling back, and what developers bump
+- [docs/upgrading.md](docs/upgrading.md): updating (`maintain update`), rolling back, and what developers bump
 - [CHANGELOG.md](CHANGELOG.md): what changed in each version
 - [unity/BovieSim/Assets/BovieSim/Art/ATTRIBUTION.md](unity/BovieSim/Assets/BovieSim/Art/ATTRIBUTION.md): third-party assets
 

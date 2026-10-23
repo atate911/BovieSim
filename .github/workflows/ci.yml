@@ -48,3 +48,15 @@ jobs:
           UNITY_REFS: ${{ runner.temp }}/refs/lib/net45
           UNITY_SDK: ${{ runner.temp }}/sdk/lib
         run: unity/tools/check/check.sh
+
+  scripts:
+    name: Maintenance scripts (Windows PowerShell 5.1 and PowerShell 7)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Windows PowerShell 5.1
+        shell: cmd
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\tests\check-scripts.ps1
+      - name: PowerShell 7
+        shell: cmd
+        run: pwsh.exe -NoProfile -ExecutionPolicy Bypass -File scripts\tests\check-scripts.ps1
