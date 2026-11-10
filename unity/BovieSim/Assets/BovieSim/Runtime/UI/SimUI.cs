@@ -8,13 +8,13 @@ namespace BovieSim
     /// <summary>Per-frame values the runner hands to the interface.</summary>
     public sealed class HudData
     {
-        public string scenarioName = "", toolText = "", underTip = "—", capsuleText = "", volumeText = "";
+        public string scenarioName = "", toolText = "", leftText = "", underTip = "—", capsuleText = "", volumeText = "";
         public Activation activation; public int activeWatts; public bool remFault;
         public float zOhm = float.PositiveInfinity, powerW, vRms; public int contact;
         public float maxT = 37, vaporised, simTime, bloodLost, pooled, rimMm, charMm3;
         public int carbon, exposedArt, exposedVen, sealedVx, charPlug, rebleeds, tris; public bool capped;
         // blood layer and mechanics
-        public float oozeMl, clotMl, gauzeMl; public int oozeVoxels, strands, tornLinks, tornVoxels, dissectedVoxels;
+        public float oozeMl, clotMl, gauzeMl; public int oozeVoxels, strands, tornLinks, tornVoxels, dissectedVoxels, cutVoxels;
         // timing
         public float frameMs, cpuMs, gpuMs, fps; public int stateAge, heightsAge, surfaceAge;
         // section
@@ -162,7 +162,8 @@ namespace BovieSim
             actBanner = Text(act, "IDLE", 22, Muted, true); actBanner.style.width = 150f;
             var nums = Box(act, true); nums.style.flexGrow = 1f; nums.style.justifyContent = Justify.SpaceBetween;
             actZ = Num(nums, "Z"); actP = Num(nums, "P"); actV = Num(nums, "V");
-            Row(c, "tool", "Instrument");
+            Row(c, "tool", "Right hand");
+            Row(c, "left", "Left hand");
             Row(c, "under", "Under the tip");
             Row(c, "temp", "Hottest tissue");
             Row(c, "char", "Char / vaporised");
@@ -325,7 +326,7 @@ namespace BovieSim
             feed = Box(root);
             feed.style.position = Position.Absolute; feed.style.left = 16f; feed.style.bottom = 40f; feed.style.width = 560f;
             feed.style.justifyContent = Justify.FlexEnd;
-            var hint = Text(root, "F1 brief · F2 controls · F9 settings · V teaching view · K depth peel · P replay · Tab instrument · Z/X pedals", 12, Muted);
+            var hint = Text(root, "F1 brief · F2 controls · F9 settings · V teaching view · K depth peel · P replay · Tab / Shift+Tab instruments · right mouse: left hand · Z/X pedals", 12, Muted);
             hint.style.position = Position.Absolute; hint.style.left = 18f; hint.style.bottom = 14f;
         }
 
@@ -373,17 +374,19 @@ namespace BovieSim
             Heading(help, "Controls · F2");
             string[,] keys = {
                 { "Z / X", "Footswitch cut / coag (or the on-screen pedals)" },
-                { "Left mouse", "Pencil: hand-switch cut (Ctrl = coag). Forceps / hemostat: grasp (pen pressure pushes the hemostat tips in). Suction: on. Gauze: press. Hook: catch and drag" },
-                { "Space", "Forceps closed: lift (traction, delivering a freed lipoma). Hemostat closed: spread the jaws (blunt dissection of areolar and fatty planes)" },
+                { "Left mouse", "Right hand. Pencil: hand-switch cut (Ctrl = coag). Scalpel: hold to cut (pressure sets depth). Scissors: click snips, hold pushes the closed tips in. Forceps / hemostat: grasp. Suction: on. Gauze: press. Hook: catch and drag" },
+                { "Right mouse on the tissue", "Left hand (pick its instrument with Shift+Tab): press to catch or grasp, drag to pull, release and it stays holding. Press on it and drag to change the pull; click it to let go. Wheel while dragging lifts" },
+                { "W A S D · E / F", "While the left hand holds: slide its pull across the field · raise / lower it, with the mouse still on the right hand" },
+                { "Space", "Forceps closed: lift (traction, delivering a freed lipoma). Hemostat or scissors held closed: spread (blunt dissection of areolar and fatty planes)" },
                 { "Gauze · U", "Hold still to dab (soaks blood, tamponades, settles ooze); drag with pressure to wipe (lifts clot and stain, restarts ooze) · fresh pad" },
-                { "Tab or Q", "Next instrument: pencil, Adson forceps, Kelly hemostat, Frazier suction, 4x4 gauze, skin hook" },
+                { "Tab or Q · ` · Shift+Tab", "Right hand: next instrument (pencil, scalpel, scissors, forceps, hemostat, suction, gauze, hook) · previous · left hand: none, hook, forceps, suction" },
                 { "1-4 / 5-6", "Cut mode Pure, Blend, Low, Valleylab / coag Fulgurate, Spray" },
                 { "[ ]  ; '", "Cut / coag watts −5 +5 (Shift: 1 W)" },
                 { "B N O · R · T", "Blade, needle, ball · roll the blade 45° · toothed / smooth forceps" },
                 { "C · J · H · Shift+C", "Section display · across the view or across the blade · hide section · large section" },
                 { "- / =", "Section zoom out / in (up to the full 35 mm depth)" },
                 { "K · , .", "Depth peel of the field: off → block cut → dissection · deeper / shallower (Shift: 0.1 mm). Ctrl + wheel scrubs, Shift+K sweeps" },
-                { "Right drag · Middle drag · Wheel", "Orbit · pan · zoom (Alt+left orbits, Shift+left pans)" },
+                { "Right drag off the tissue · Middle drag · Wheel", "Orbit · pan · zoom (Alt+left always orbits, Shift+left pans). With an instrument in the left hand, a right press on the tissue is that hand" },
                 { "V · G · P", "Teaching view (off, temperature, damage) · tip gauge · pause and replay the last seconds" },
                 { "F1 · F2 · F3 · F9", "Scenario brief · this list · timing readout · settings (detail level, display, teaching)" },
                 { "F5 · F6 · F7 · F8", "Restart · next scenario · depth of field on/off · anti-aliasing mode" },
@@ -531,6 +534,7 @@ namespace BovieSim
             actV.text = on ? d.vRms.ToString("0") + " V" : "—";
             actP.style.color = on && d.powerW < 0.6f * d.activeWatts && d.contact > 0 ? WarnC : Ink;
             rows["tool"].text = d.toolText;
+            rows["left"].text = d.leftText;
             rows["under"].text = d.underTip;
             rows["temp"].text = d.maxT.ToString("0") + " °C"; rows["temp"].style.color = d.maxT >= 100 ? BadC : d.maxT >= 60 ? WarnC : Ink;
             rows["char"].text = d.charMm3.ToString("0.0") + " mm³ / " + d.vaporised.ToString("0") + " vx"; rows["char"].style.color = d.carbon > 0 ? BadC : Ink;
@@ -539,7 +543,7 @@ namespace BovieSim
             rows["seal"].text = d.sealedVx + " · " + d.charPlug + " · " + d.rebleeds; rows["seal"].style.color = d.charPlug > 0 ? WarnC : Ink;
             rows["ooze"].text = d.oozeMl.ToString("0.00") + " ml from " + d.oozeVoxels + " vx · clot " + d.clotMl.ToString("0.00") + " ml" + (d.gauzeMl > 0 ? " · gauze " + d.gauzeMl.ToString("0.00") + " ml" : "");
             rows["ooze"].style.color = d.clotMl > 0.3f ? WarnC : Ink;
-            rows["mech"].text = d.strands + " strands · " + d.tornLinks + " links / " + d.tornVoxels + " vx torn · " + d.dissectedVoxels + " vx dissected";
+            rows["mech"].text = d.strands + " strands · " + d.tornLinks + " links / " + d.tornVoxels + " vx torn · " + d.dissectedVoxels + " vx dissected" + (d.cutVoxels > 0 ? " · " + d.cutVoxels + " vx cut with steel" : "");
             rows["mech"].style.color = d.tornLinks > 0 ? WarnC : Ink;
             rows["rim"].text = d.rimMm > 0 ? d.rimMm.ToString("0.00") + " mm" : "no incision edge yet"; rows["rim"].style.color = d.rimMm >= 0.5f ? BadC : d.rimMm >= 0.4f ? WarnC : Ink;
             capsuleRow.style.display = string.IsNullOrEmpty(d.capsuleText) ? DisplayStyle.None : DisplayStyle.Flex;

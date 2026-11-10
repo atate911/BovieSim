@@ -14,6 +14,13 @@ namespace BovieSim
         public float pressure = 0.5f;
         public bool isPen; public Vector2 tiltDeg;
         public bool pedalCut, pedalCoag;
+        /// <summary>the left hand's button: right mouse button, or the pen's barrel button; pressed this frame</summary>
+        public bool rightHeld, rightDown;
+        /// <summary>wheel this frame (lifts what the left hand holds while its button is down)</summary>
+        public float wheel;
+        /// <summary>keys under the user's own left hand that trim the held instrument: slide (x: D - A, y: W - S) and raise / lower (E - F)</summary>
+        public Vector2 trimSlide; public float trimLift;
+        bool lastRight;
         /// <summary>flip if leaning the pen toward you tilts the instrument away from you</summary>
         public static bool invertTiltY;
 
@@ -24,11 +31,16 @@ namespace BovieSim
             ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
             pedalCut = Input.GetKey(KeyCode.Z);
             pedalCoag = Input.GetKey(KeyCode.X);
+            rightHeld = Input.GetMouseButton(1);
+            wheel = Input.mouseScrollDelta.y;
+            trimSlide = new Vector2((Input.GetKey(KeyCode.D) ? 1 : 0) - (Input.GetKey(KeyCode.A) ? 1 : 0), (Input.GetKey(KeyCode.W) ? 1 : 0) - (Input.GetKey(KeyCode.S) ? 1 : 0));
+            trimLift = (Input.GetKey(KeyCode.E) ? 1 : 0) - (Input.GetKey(KeyCode.F) ? 1 : 0);
             isPen = false; tiltDeg = Vector2.zero;
             pressure = leftHeld ? 0.5f : 0.35f;
             if (!ReadInputSystemPen()) ReadLegacyStylus();
             if (invertTiltY) tiltDeg.y = -tiltDeg.y;
             inside = mouse.x >= 0 && mouse.y >= 0 && mouse.x <= Screen.width && mouse.y <= Screen.height;
+            rightDown = rightHeld && !lastRight; lastRight = rightHeld;
         }
 
         bool ReadInputSystemPen()
@@ -44,6 +56,8 @@ namespace BovieSim
             var t = pen.tilt.ReadValue(); // -1..1 per axis, 1 = 90 degrees from vertical
             tiltDeg = new Vector2(t.x * 90f, t.y * 90f);
             leftHeld = tip || (Input.GetMouseButton(0) && !Input.GetKey(KeyCode.LeftAlt));
+            // the barrel button is the left hand: with it held, the tip drags the left hand's instrument, not the right's
+            if (pen.firstBarrelButton.isPressed) { rightHeld = true; leftHeld = false; }
             return true;
 #else
             return false;

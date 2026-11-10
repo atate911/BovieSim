@@ -73,9 +73,13 @@ from the repo root to copy it into `Assets/BovieSim/Resources/BovieSim/Scenarios
 |---|---|
 | Z / X (or the on-screen CUT / COAG pedals) | Footswitch cut / coag |
 | LMB on the pencil | Hand-switch cut; Ctrl+LMB hand-switch coag |
+| LMB with scalpel / scissors | Hold to cut, pen pressure sets the depth / click snips between the tips, hold pushes the closed tips in |
 | LMB with forceps / hemostat / suction / gauze / hook | Grasp (and buzz with a pedal) / close and push the jaws in / suck / press the pad / hook and retract |
-| Tab or Q | Next instrument: Bovie pencil, Adson forceps, Kelly hemostat, Frazier suction, 4x4 gauze, skin hook |
-| Space (hemostat closed) | Spread the jaws inside the tissue: blunt dissection of areolar and fatty planes |
+| Tab or Q, `` ` `` | Next / previous right-hand instrument: Bovie pencil, #15 scalpel, Metzenbaum scissors, Adson forceps, Kelly hemostat, Frazier suction, 4x4 gauze, skin hook |
+| Shift+Tab | Left-hand instrument: none, skin hook, Adson forceps, Frazier suction |
+| RMB on the tissue (pen: barrel button) | The left hand: its instrument goes there and takes hold, drag pulls, release and it stays holding. RMB on it and drag changes the pull, RMB click on it lets go; wheel while dragging lifts |
+| W A S D, E / F | While the left hand holds: slide its pull across the field, raise / lower it |
+| Space (hemostat or scissors closed) | Spread the jaws inside the tissue: blunt dissection of areolar and fatty planes |
 | Gauze | Hold still to dab (soaks liquid blood, tamponades, settles ooze); drag with pressure to wipe (lifts clot and stain, restarts ooze); `U` discards a soaked pad |
 | 1-4 / 5-6 | Cut mode Pure, Blend, Low, Valleylab / coag Fulgurate, Spray |
 | `[` `]` and `;` `'` | Cut and coag watts -5/+5 (Shift: 1 W); or the FT10 panel buttons |
@@ -86,7 +90,7 @@ from the repo root to copy it into `Assets/BovieSim/Resources/BovieSim/Scenarios
 | - / = | Section zoom out / in (16 × 10 mm up to the full 56 × 35 mm) |
 | Shift+C | Large section (800 px over the field) |
 | K / , . | Depth peel of the field: off, block cut, dissection / plane deeper, shallower (Shift: 0.1 mm). Ctrl + wheel scrubs it, Shift+K sweeps it, or drag the ruler |
-| RMB or Alt+LMB, MMB or Shift+LMB, wheel | Orbit, pan, zoom |
+| RMB off the tissue or Alt+LMB, MMB or Shift+LMB, wheel | Orbit, pan, zoom (with the left hand empty, RMB orbits anywhere) |
 | F1 / F2 / F3 | Scenario brief / controls / timing readout (frame, CPU, GPU ms; result ages) |
 | F7 / F8 | Depth of field on/off (off by default) / anti-aliasing SMAA, TAA, FXAA, off |
 | V / G / P | Teaching view on the tissue (temperature, damage) / tip gauge / pause and replay (Enter continues) |

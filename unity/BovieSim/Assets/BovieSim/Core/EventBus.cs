@@ -28,7 +28,8 @@ namespace BovieSim
         int lastCarbon; int coagAccum; float lastCoagReport = -1e9f; string lastSettings = ""; string lastTool = "";
         int lastExposed, lastSealed, lastCharPlug, lastRebleeds; bool poolWarned, obscuredWarned, lastSuction, lastBuzz; float lastMuscle = -1e9f;
         /// <summary>set by the app each frame</summary>
-        public bool suctionOn, buzzing, gauzeDab, gauzeWipe, gauzeSaturated;
+        public bool suctionOn, buzzing, gauzeDab, gauzeWipe, gauzeSaturated, instrumentContact;
+        int cutAccum; float lastCutT = -1e9f; bool lastContact;
         float lastViscera = -1e9f, lastBoil = -1e9f, lastSuctionClot = -1e9f, lastTorn = -1e9f, lastDissect = -1e9f, lastWipe = -1e9f, lastSpasm = -1e9f;
         bool clotWarned, oozeReported, lastGauzeDab, lastGauzeSat; int tornAccum, dissectAccum;
         float lastExposedNonzero; int lastSealedAtBleed, lastPlugAtBleed;
@@ -144,6 +145,13 @@ namespace BovieSim
             if (lastSettings.Length > 0 && settings != lastSettings) Emit(t, "generator.settingChanged", gen.cutMode + " " + gen.cutWatts + " W / " + gen.coagMode + " " + gen.coagWatts + " W");
             lastSettings = settings;
             if (toolName != lastTool) { if (lastTool.Length > 0) Emit(t, "tool.changed", toolName); lastTool = toolName; }
+            // steel: a scalpel stroke or a scissor snip is reported when it ends
+            cutAccum += r.cutVoxels;
+            if (r.cutVoxels > 0) lastCutT = t;
+            if (cutAccum > 0 && t - lastCutT > 0.4f) { Emit(t, "incision.made", cutAccum + " voxels divided with steel, no heat"); cutAccum = 0; }
+            // the active pencil on an instrument held in the other hand
+            if (active && instrumentContact && !lastContact) Emit(t, "instrument.contact", "active electrode on another instrument", Severity.Bad);
+            lastContact = active && instrumentContact;
         }
     }
 }

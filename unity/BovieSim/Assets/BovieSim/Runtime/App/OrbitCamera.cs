@@ -2,7 +2,11 @@ using UnityEngine;
 
 namespace BovieSim
 {
-    /// <summary>Orbit camera around a target in field millimetres. Right-drag orbit, wheel zoom, middle or Shift-drag pan (Ctrl + wheel is left to the depth peel).</summary>
+    /// <summary>
+    /// Orbit camera around a target in field millimetres. Right-drag orbit (unless the left hand has taken the right
+    /// button: a press on the tissue with an instrument in the left hand), Alt + left drag orbits always, wheel zoom,
+    /// middle or Shift-drag pan (Ctrl + wheel is left to the depth peel).
+    /// </summary>
     public sealed class OrbitCamera
     {
         public Vector3 targetMm = Vector3.zero;
@@ -21,12 +25,13 @@ namespace BovieSim
             }
         }
 
-        /// <param name="wheelZoom">false while the wheel is claimed by something else (Ctrl held: depth peel)</param>
-        public void HandleInput(bool overUi, bool wheelZoom = true)
+        /// <param name="wheelZoom">false while the wheel is claimed by something else (Ctrl held: depth peel; lifting a held instrument)</param>
+        /// <param name="rightClaimed">true when this frame's right-button press belongs to the left hand's instrument</param>
+        public void HandleInput(bool overUi, bool wheelZoom = true, bool rightClaimed = false)
         {
             if (!overUi)
             {
-                if (Input.GetMouseButtonDown(1) || (Input.GetMouseButtonDown(0) && (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt)))) { dragging = 1; last = Input.mousePosition; }
+                if ((Input.GetMouseButtonDown(1) && !rightClaimed) || (Input.GetMouseButtonDown(0) && (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt)))) { dragging = 1; last = Input.mousePosition; }
                 else if (Input.GetMouseButtonDown(2) || (Input.GetMouseButtonDown(0) && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)))) { dragging = 2; last = Input.mousePosition; }
                 float wheel = wheelZoom ? Input.mouseScrollDelta.y : 0f;
                 if (Mathf.Abs(wheel) > 0.01f) distanceMm = Mathf.Clamp(distanceMm * Mathf.Exp(-wheel * 0.1f), 25f, 600f);

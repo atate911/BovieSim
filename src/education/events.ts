@@ -16,6 +16,7 @@ export type SimEventType =
   | 'vessel.exposed' | 'bleed.start' | 'bleed.sealed' | 'bleed.charPlug' | 'vessel.rebleed' | 'vessel.spasm'
   | 'blood.poolConducts' | 'blood.boiling' | 'blood.clotted' | 'field.obscured' | 'suction.used' | 'suction.clot' | 'forceps.buzzed'
   | 'tissue.oozing' | 'tissue.torn' | 'plane.dissected' | 'gauze.dab' | 'gauze.wipe' | 'gauze.saturated' | 'viscera.heated'
+  | 'incision.made' | 'instrument.contact'
   | 'muscle.stimulated' | 'lesion.freed' | 'lesion.delivered' | 'lesion.breached';
 
 export interface SimEvent {
@@ -60,6 +61,8 @@ const TEACHING: Partial<Record<SimEventType, string>> = {
   'gauze.wipe': 'Wiping drags the clot off and restarts the ooze, and a small vessel that had spasmed shut can bleed again. Dab, do not wipe.',
   'gauze.saturated': 'The gauze is saturated and no longer absorbs. Discard it for a fresh one (U).',
   'viscera.heated': 'Heat is spreading into the viscus. Full-thickness injury here means a delayed perforation.',
+  'incision.made': 'Steel divides without heat: clean edges and no thermal rim, which is why skin is opened with the knife. The raw surfaces ooze and a divided vessel bleeds: control it with the pencil, then deepen.',
+  'instrument.contact': 'The active electrode touched another instrument. Current left through it and burned the tissue under it: an alternate-site burn, where you were not looking. Keep the pencil clear of other metal unless you mean to buzz it.',
 };
 
 export class EventBus {
@@ -179,10 +182,18 @@ export class EventBus {
     if (this.lastSettings && settings !== this.lastSettings) this.push(t, 'generator.settingChanged', `${gen.settings.cutMode} ${gen.settings.cutWatts} W / ${gen.settings.coagMode} ${gen.settings.coagWatts} W`);
     this.lastSettings = settings;
     if (toolName !== this.lastTool) { if (this.lastTool) this.push(t, 'tool.changed', toolName); this.lastTool = toolName; }
+    // steel: a scalpel stroke or a scissor snip is reported when it ends
+    this.cutAccum += r.cutVoxels;
+    if (r.cutVoxels > 0) this.lastCutT = t;
+    if (this.cutAccum > 0 && t - this.lastCutT > 0.4) { this.push(t, 'incision.made', `${this.cutAccum} voxels divided with steel, no heat`); this.cutAccum = 0; }
+    // the active pencil on an instrument held in the other hand
+    if (active && this.instrumentContact && !this.lastContact) this.push(t, 'instrument.contact', 'active electrode on another instrument', 'bad');
+    this.lastContact = active && this.instrumentContact;
     void frameDt;
   }
+  private cutAccum = 0; private lastCutT = -1e9; private lastContact = false;
 
   /** set by the app each frame */
-  suctionOn = false; buzzing = false; gauzeDab = false; gauzeWipe = false; gauzeSaturated = false;
+  suctionOn = false; buzzing = false; gauzeDab = false; gauzeWipe = false; gauzeSaturated = false; instrumentContact = false;
   recent(n: number): SimEvent[] { return this.events.slice(-n); }
 }

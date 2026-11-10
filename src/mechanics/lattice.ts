@@ -244,12 +244,68 @@ export class Lattice {
     return out;
   }
 
-  /** world -> material by fixed-point inversion of p_mat = p_world - disp(p_mat). */
+  /**
+   * Trilinear displacement at a material point and its gradient: g[3 * r + c] = d(disp_r) / d(p_c).
+   * The gradient is that of the cell the point lies in (zero beyond the lattice, where the point is clamped).
+   */
+  displacementGradientAt(p: vec3, outD: vec3, g: Float64Array) {
+    const [fx, fy, fz] = this.cellCoords(p);
+    const i0 = Math.min(Math.max(Math.floor(fx), 0), this.nx - 2), j0 = Math.min(Math.max(Math.floor(fy), 0), this.ny - 2), k0 = Math.min(Math.max(Math.floor(fz), 0), this.nz - 2);
+    const ux = fx - i0, uy = fy - j0, uz = fz - k0;
+    const tx = Math.min(Math.max(ux, 0), 1), ty = Math.min(Math.max(uy, 0), 1), tz = Math.min(Math.max(uz, 0), 1);
+    // outside the lattice the coordinate is clamped: the field is constant along that axis
+    const ix = ux === tx ? 1 / this.spacing : 0, iy = uy === ty ? 1 / this.spacing : 0, iz = uz === tz ? 1 / this.spacing : 0;
+    vec3.set(outD, 0, 0, 0); g.fill(0);
+    for (let dk = 0; dk < 2; dk++) for (let dj = 0; dj < 2; dj++) for (let di = 0; di < 2; di++) {
+      const n = this.index(i0 + di, j0 + dj, k0 + dk) * 3;
+      const wx = di ? tx : 1 - tx, wy = dj ? ty : 1 - ty, wz = dk ? tz : 1 - tz;
+      const gx = (di ? 1 : -1) * wy * wz * ix, gy = wx * (dj ? 1 : -1) * wz * iy, gz = wx * wy * (dk ? 1 : -1) * iz;
+      const w = wx * wy * wz;
+      for (let r = 0; r < 3; r++) {
+        const d = this.pos[n + r] - this.mat[n + r];
+        outD[r] += w * d; g[3 * r] += gx * d; g[3 * r + 1] += gy * d; g[3 * r + 2] += gz * d;
+      }
+    }
+  }
+
+  /**
+   * World -> material: where in the undeformed bed is the tissue that is now seen at `pw`? Solves
+   * material + disp(material) = pw by Newton's method on the trilinear field (Jacobian I + grad disp), which converges
+   * in a few steps even where a hook has stretched one cell to twice its size and squeezed the next to a fifth; a
+   * plain fixed-point iteration diverges there. Near a fold (the Jacobian close to singular) it falls back to a
+   * damped step. The pick kernel (`pickToMaterial` in sim.wgsl) and the Unity picker use the same scheme.
+   */
   worldToMaterial(pw: vec3, out = vec3.create()): vec3 {
-    vec3.copy(out, pw);
-    const d = vec3.create();
-    for (let it = 0; it < 3; it++) { this.displacementAt(out, d); vec3.sub(out, pw, d); }
-    return out;
+    const d = vec3.create(), m = vec3.create(), g = new Float64Array(9);
+    this.displacementAt(pw, d);
+    let mx = pw[0] - d[0], my = pw[1] - d[1], mz = pw[2] - d[2];
+    const lim = this.spacing;
+    for (let it = 0; it < 6; it++) {
+      vec3.set(m, mx, my, mz); this.displacementGradientAt(m, d, g);
+      const fx = mx + d[0] - pw[0], fy = my + d[1] - pw[1], fz = mz + d[2] - pw[2];
+      if (fx * fx + fy * fy + fz * fz < 1e-6) break;
+      // J = I + g; solve J * delta = -f by the adjugate
+      const a = 1 + g[0], b = g[1], c = g[2], e = g[3], f = 1 + g[4], h = g[5], p = g[6], q = g[7], r = 1 + g[8];
+      const c00 = f * r - h * q, c01 = h * p - e * r, c02 = e * q - f * p;
+      const det = a * c00 + b * c01 + c * c02;
+      let sx: number, sy: number, sz: number;
+      if (Math.abs(det) > 0.05) {
+        const id = 1 / det;
+        sx = -(c00 * fx + (c * q - b * r) * fy + (b * h - c * f) * fz) * id;
+        sy = -(c01 * fx + (a * r - c * p) * fy + (c * e - a * h) * fz) * id;
+        sz = -(c02 * fx + (b * p - a * q) * fy + (a * f - b * e) * fz) * id;
+      } else { sx = -0.5 * fx; sy = -0.5 * fy; sz = -0.5 * fz; }
+      const len = Math.hypot(sx, sy, sz);
+      if (len > lim) { const k = lim / len; sx *= k; sy *= k; sz *= k; }
+      mx += sx; my += sy; mz += sz;
+    }
+    return vec3.set(out, mx, my, mz);
+  }
+
+  /** Material -> world: where the tissue at a material point is seen. */
+  materialToWorld(pm: vec3, out = vec3.create()): vec3 {
+    const d = this.displacementAt(pm);
+    return vec3.add(out, pm, d);
   }
 
   /** nearest node (by deformed position) within radius, or -1 */

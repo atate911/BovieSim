@@ -127,6 +127,14 @@
     {
       "type": "viscera.heated",
       "text": "Heat is spreading into the viscus. Full-thickness injury here means a delayed perforation."
+    },
+    {
+      "type": "incision.made",
+      "text": "Steel divides without heat: clean edges and no thermal rim, which is why skin is opened with the knife. The raw surfaces ooze and a divided vessel bleeds: control it with the pencil, then deepen."
+    },
+    {
+      "type": "instrument.contact",
+      "text": "The active electrode touched another instrument. Current left through it and burned the tissue under it: an alternate-site burn, where you were not looking. Keep the pencil clear of other metal unless you mean to buzz it."
     }
   ]
 }

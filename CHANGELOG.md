@@ -4,6 +4,33 @@ All notable changes. Versions follow `MAJOR.MINOR.PATCH`; each release is a git 
 (see [docs/upgrading.md](docs/upgrading.md)). "Setup" means *Bovie Sim > Set Up Project* must be re-run
 after updating (the editor offers it automatically).
 
+## 0.8.0: Two hands (left hand on the right mouse button, scalpel, scissors)
+
+- **Two hands on one mouse.** Your right hand is the pointer, as before. Your left hand is the right mouse button
+  (a pen's barrel button): `Shift+Tab` gives it a skin hook, Adson forceps or Frazier suction. Press the right
+  button on the tissue and the instrument goes there and takes hold; drag to pull; let go and it stays, holding its
+  traction, while the pointer is your right hand again. Press on the held instrument and drag to change the pull,
+  press elsewhere to move it, click it to take it off; the wheel lifts while the button is down. While it holds,
+  `W A S D` slide the pull and `E` / `F` raise and lower it, so your own left hand trims the traction while the mouse
+  works. With the left hand empty the right button orbits as before; with an instrument in it, it orbits when
+  pressed off the tissue (`Alt` + left drag always orbits).
+- **What is under the cursor is what you see there.** The pick now follows the tissue as it is displaced: under a
+  retracted edge the pencil lands on the wound floor instead of on the skin that used to cover it, and every
+  instrument (electrode, jaws, suction, gauze, hemostat, blade) acts where it is seen. Before, instruments acted in
+  the undeformed bed and drew offset from displaced tissue.
+- **Instruments touch.** The active pencil on forceps held in the left hand makes their jaws the electrode: buzzing
+  a held vessel the way it is done. On a hook or the suction it burns the tissue under them (`instrument.contact`).
+- **#15 scalpel** (`Tab`): a mechanical cut with no heat. Hold the button, pen pressure sets the depth (0.5 to 5 mm),
+  the blade follows the direction of travel. The incision gapes, the raw surfaces ooze and cut vessels bleed by the
+  existing rules (`incision.made`).
+- **Metzenbaum scissors** (`Tab`): a click snips the tissue between the open tips; held closed in the tissue,
+  `Space` spreads them (blunt dissection with the hemostat's rules).
+- `` ` `` steps back through the right hand's instruments. Browser build: the hand switch (left button) now fires the
+  generator only with the pencil, as in Unity; before, closing forceps with the button also activated cut.
+- One new compute kernel (`mechCut`) in WGSL and HLSL; the lattice gains an exact world-to-material mapping (Newton's
+  method on its displacement field) shared by the browser pick kernel and the Unity picker. Unity: compiled and
+  unit-tested blind as before, not yet opened in an editor. No setup change.
+
 ## 0.7.0: Tissue realism (mechanics, blunt dissection, tearing, bleeding, blood) · Setup required
 
 - **Every tissue behaves like itself.** Areolar tissue, viscera and serosa join the table (17 types); each

@@ -80,7 +80,10 @@ around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temp
 |---|---|
 | Cut / coag footswitch | `Z` / `X`, or the on-screen pedals |
 | Hand switch | left mouse = cut, Ctrl + left = coag (pencil) |
-| Instrument | `Tab` or `Q` cycles pencil → Adson forceps → Kelly hemostat → Frazier suction → 4x4 gauze → skin hook; `T` toothed/smooth forceps |
+| Right-hand instrument | `Tab` or `Q` cycles pencil → #15 scalpel → Metzenbaum scissors → Adson forceps → Kelly hemostat → Frazier suction → 4x4 gauze → skin hook (`` ` `` goes back); `T` toothed/smooth forceps |
+| Left hand | `Shift+Tab` puts a skin hook, forceps or suction in the left hand. **Right button on the tissue**: it goes there and takes hold, drag pulls, release and it stays holding while the pointer returns to the right hand. Right-press on it and drag to change the pull, right-click it to let go; wheel while dragging lifts. While it holds, `W A S D` slide the pull and `E` / `F` raise and lower it |
+| Scalpel | hold the left button to cut; pen pressure sets the depth (0.5–5 mm); no heat: the raw edges ooze and cut vessels bleed |
+| Scissors | click snips between the open tips; hold pushes the closed tips in and `Space` spreads them (blunt dissection) |
 | Forceps | left button closes the jaws (grasp, pinch, lift); pedal with closed jaws buzzes the forceps |
 | Hemostat | left button closes the jaws and pushes the tips in (pen pressure sets depth); moving closed tips pushes along a plane; hold `Space` to spread the jaws and dissect bluntly; pedal with closed jaws buzzes |
 | Suction | left button drains liquid blood and pulls smoke at the tip (clot stays) |
@@ -92,7 +95,7 @@ around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temp
 | Electrode | `B` blade, `N` needle, `O` ball, `R` roll blade 45° |
 | Overlays | `V` surface overlay, `C` cross-section mode, `H` hide section |
 | Depth peel | `K` off → block cut → dissection; `,` `.` move the plane 0.5 mm (Shift: 0.1 mm); Ctrl + wheel scrubs it |
-| Camera | right-drag orbit, wheel zoom, Shift-drag pan |
+| Camera | right-drag orbit (off the tissue when the left hand holds an instrument; `Alt` + left drag always), wheel zoom, Shift-drag pan |
 
 ## Layout
 
@@ -100,7 +103,7 @@ around the lipoma, undermining plane beneath it; add them), `?debug=1|2|3` (temp
 src/core        tissue property table, voxel volume, scenario schema + anatomy generator, FT10 model
 src/physics     WGSL kernels (jacobi, heating, generator, bioheat, pick, slice), pipeline, CPU reference
 src/render      surface extraction, PBR tissue materials, drapes/instruments, particles, post
-src/tools       electrode, forceps, hemostat, suction, gauze, hook poses and geometry (instrument model in docs/tools.md)
+src/tools       electrode, scalpel, scissors, forceps, hemostat, suction, gauze, hook; two hands on one mouse (docs/tools.md)
 src/mechanics   XPBD lattice (per-tissue elasticity, yield strands, tearing, thermal shrink, lipoma delivery, muscle twitch)
 src/education   event bus (what happened, what it means)
 src/ui          FT10 panel, cross-section inspector, audio

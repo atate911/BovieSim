@@ -24,10 +24,10 @@ export class ForcepsTool {
   get span() { return this.closed ? this.closedMm : this.openMm; }
   get mid() { return vec3.lerp(vec3.create(), this.tipA, this.tipB, 0.5); }
 
-  place(hit: vec3 | null, cameraPos: vec3, tilt: { x: number; y: number } | null, penetration = 0.3) {
+  place(hit: vec3 | null, cameraPos: vec3, tilt: { x: number; y: number } | null, penetration = 0.3, leftHand = false) {
     if (!hit) { this.visible = false; mat4.copy(this.modelA, HIDDEN); mat4.copy(this.modelB, HIDDEN); return; }
     this.visible = true;
-    const axis = handAxis(hit, cameraPos, tilt);
+    const axis = handAxis(hit, cameraPos, tilt, leftHand);
     vec3.copy(this.axis, axis);
     const { x, z } = handFrame(axis);
     // jaws straddle the horizontal direction z; tips pushed slightly into tissue

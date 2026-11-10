@@ -5,8 +5,13 @@ export type ElectrodeType = 'blade' | 'needle' | 'ball' | 'forceps';
 /** Bovie pencil pose and electrode geometry in world mm. */
 export class ElectrodeTool {
   type: ElectrodeType = 'blade';
-  /** tip (distal end of the electrode) */
+  /** tip (distal end of the electrode), where it is seen: on the deformed tissue */
   readonly tip = vec3.create();
+  /**
+   * The same tip in material coordinates, where the voxel physics lives. Equal to `tip` until tissue is displaced
+   * (retraction, gaping); the app maps it through the lattice each frame after placing the instrument.
+   */
+  readonly physTip = vec3.create();
   /** unit axis from tip toward the handle */
   readonly axis = vec3.fromValues(0, 1, 0);
   /** blade width direction (edge spans +-halfWidth along it) */
@@ -32,7 +37,7 @@ export class ElectrodeTool {
   /** Use closed forceps jaws (tip a -> tip b, capsule radius r) as the electrode. */
   asForceps(a: vec3, b: vec3, r: number, handleAxis: vec3) {
     this.type = 'forceps'; this.visible = true;
-    vec3.copy(this.tip, a);
+    vec3.copy(this.tip, a); vec3.copy(this.physTip, a);
     const d = vec3.sub(vec3.create(), b, a); this.jawSpan = Math.max(vec3.length(d), 0.1); vec3.normalize(d, d);
     vec3.copy(this.wdir, d); vec3.copy(this.axis, handleAxis);
     vec3.cross(this.ndir, d, handleAxis); vec3.normalize(this.ndir, this.ndir);
@@ -64,7 +69,7 @@ export class ElectrodeTool {
     vec3.normalize(axis, axis);
     vec3.copy(this.axis, axis);
     // tip pushed into tissue along the axis by the pressure-dependent penetration
-    vec3.scaleAndAdd(this.tip, hit, axis, -this.penetration);
+    vec3.scaleAndAdd(this.tip, hit, axis, -this.penetration); vec3.copy(this.physTip, this.tip);
     // blade frame: width direction perpendicular to the axis, rolled about it
     const z0 = vec3.cross(vec3.create(), axis, [0, 1, 0]);
     if (vec3.length(z0) < 1e-3) vec3.set(z0, 0, 0, 1);

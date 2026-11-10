@@ -8,8 +8,9 @@
 //                clots with time and heat, boils under the electrode, and is lifted by suction or gauze
 //  dissect     : blunt dissection: a spreading or pushing instrument separates low-cohesion planes
 //  tearCarve   : links torn by the mechanics lattice carve the tissue they ran through
+//  mechCut     : steel: a scalpel blade or scissor blades divide whatever they pass through, with no heat
 //  probe       : samples the voxel state along lattice links (severed, damage, dryness, char)
-//  pick, slice : cursor hit point and the cross-section inspector
+//  pick, slice : cursor hit point (on the tissue as displaced by the lattice) and the cross-section inspector
 
 struct SimParams {
   box0: vec4i,     // subdomain origin i,j,k and size S
@@ -35,6 +36,13 @@ struct SimParams {
   tool2b: vec4f,   // secondary tool point B (mm), w = mode (0 none, 1 grasp, 2 suction, 3 gauze, 4 spread, 5 push)
   tool3: vec4f,    // secondary tool velocity (mm/s), w = pressure 0..1
   dis: vec4f,      // x blunt dissection cohesion threshold, y carve radius (mm), z gauze absorbs (1) or is saturated (0), w 0
+  // mechanical cut (scalpel blade, scissor snip): a thin box swept from cut0 to cut1, in material mm
+  cut0: vec4f,     // blade box centre at the previous pose, w = on (1) / off (0)
+  cut1: vec4f,     // blade box centre at the current pose, w 0
+  cutAxis: vec4f,  // unit axis (tip -> handle), w = half length (mm)
+  cutW: vec4f,     // unit direction along the edge, w = half width (mm)
+  cutN: vec4f,     // unit blade normal, w = half thickness (mm)
+  cbox0: vec4i,    // cut dispatch box origin (voxels), w = size
 };
 
 struct SimState {
@@ -71,7 +79,8 @@ struct SimState {
   oozeUlFixed: atomic<u32>,  // cumulative capillary ooze, microlitres
   pad7: u32, pad8: u32,
   spatterPts: array<vec4f, 4>, // boiling spatter sources: xyz (mm), w = microlitres
-  pad9: vec4u,
+  cutCount: atomic<u32>,    // voxels divided by a blade this frame
+  pad9: u32, pad10: u32, pad11: u32,
 };
 
 struct TissueProp { sigma: f32, k: f32, rho: f32, c: f32, wb: f32, water: f32, eaR: f32, lnA: f32, cohesion: f32, ooze: f32, tear: f32, pad: f32 };
@@ -881,6 +890,40 @@ fn tearCarve(@builtin(global_invocation_id) gid: vec3u) {
   }}}
 }
 
+// ------------------------------------------------------------------ mechanical cut (steel)
+/** Signed distance (mm) from a point to the blade box (half extents along cutAxis / cutW / cutN) centred at c. */
+fn cutBoxDistance(p: vec3f, centre: vec3f) -> f32 {
+  let rel = p - centre;
+  let q = vec3f(abs(dot(rel, sim.cutAxis.xyz)) - sim.cutAxis.w, abs(dot(rel, sim.cutW.xyz)) - sim.cutW.w, abs(dot(rel, sim.cutN.xyz)) - sim.cutN.w);
+  return length(max(q, vec3f(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+/**
+ * Steel against tissue, no heat: a scalpel blade (or closing scissor blades) sweeps from cut0 to cut1 and divides
+ * everything in its path. The voxels it passes through become cut air, so the faces it leaves are raw wound surfaces
+ * (they ooze, and a transected vessel bleeds); the voxels at the face keep fractional occupancy for a smooth wall.
+ */
+@compute @workgroup_size(4, 4, 4)
+fn mechCut(@builtin(global_invocation_id) gid: vec3u) {
+  let S = sim.cbox0.w;
+  if (i32(gid.x) >= S || i32(gid.y) >= S || i32(gid.z) >= S) { return; }
+  let i = sim.cbox0.x + i32(gid.x); let j = sim.cbox0.y + i32(gid.y); let k = sim.cbox0.z + i32(gid.z);
+  if (!inVolume(i, j, k)) { return; }
+  let idx = idx3(i, j, k);
+  if (!isTissue(idx)) { return; }
+  let p = worldOf(i, j, k);
+  let a = sim.cut0.xyz; let b = sim.cut1.xyz;
+  let n = clamp(i32(ceil(length(b - a) / (0.5 * info.hMm))), 1, 16);
+  var d = 1e9;
+  for (var s = 0; s <= n; s++) { d = min(d, cutBoxDistance(p, mix(a, b, f32(s) / f32(n)))); }
+  if (d >= info.hMm) { return; }
+  let keep = clamp(0.5 + d / info.hMm, 0.0, 1.0);
+  let o = min(occ[idx], keep);
+  if (o >= occ[idx]) { return; }
+  occ[idx] = o;
+  if (o < 0.5) { cells[idx] = packCellState(0u, S_VAPOR); water[idx] = 0.0; atomicAdd(&state.cutCount, 1u); }
+}
+
 // ------------------------------------------------------------------ constraint probe (mechanics)
 // For each lattice constraint segment (material mm endpoints) sample 5 points: severed if any
 // sample is air where the segment originally passed through tissue; omegaMax for shrinkage; max dryness
@@ -918,6 +961,75 @@ fn constraintProbe(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 // ------------------------------------------------------------------ pick
+// The cursor ray is marched through the field as it is seen: each sample is taken back to material coordinates
+// through the mechanics lattice (the same displacement the tissue is drawn with), so the hit is on the displaced
+// surface: under a retracted edge the ray reaches the wound floor, not the skin that used to cover it. The hit is
+// returned in world mm; the app maps instrument tips to material coordinates for the voxel kernels.
+struct PickLattice { nx: u32, ny: u32, nz: u32, pad: u32, origin: vec3f, spacing: f32 };
+@group(2) @binding(0) var<storage, read> pickDisp: array<vec4f>;
+@group(2) @binding(1) var<uniform> pickLat: PickLattice;
+
+/** Trilinear lattice displacement at a material point (mm): same field as the tissue vertex shader. */
+fn pickLatticeDisp(p: vec3f) -> vec3f {
+  if (pickLat.nx < 2u) { return vec3f(0.0); }
+  let f = (p - pickLat.origin) / pickLat.spacing;
+  let i0 = clamp(i32(floor(f.x)), 0, i32(pickLat.nx) - 2);
+  let j0 = clamp(i32(floor(f.y)), 0, i32(pickLat.ny) - 2);
+  let k0 = clamp(i32(floor(f.z)), 0, i32(pickLat.nz) - 2);
+  let t = clamp(f - vec3f(f32(i0), f32(j0), f32(k0)), vec3f(0.0), vec3f(1.0));
+  var d = vec3f(0.0);
+  for (var dk = 0; dk < 2; dk++) { for (var dj = 0; dj < 2; dj++) { for (var di = 0; di < 2; di++) {
+    let n = u32(i0 + di) + pickLat.nx * (u32(j0 + dj) + pickLat.ny * u32(k0 + dk));
+    let w = select(1.0 - t.x, t.x, di == 1) * select(1.0 - t.y, t.y, dj == 1) * select(1.0 - t.z, t.z, dk == 1);
+    d += pickDisp[n].xyz * w;
+  }}}
+  return d;
+}
+/** Displacement and its gradient at a material point: gx = d(disp)/dx and so on (zero along an axis the point is clamped on). */
+struct PickDispGrad { d: vec3f, gx: vec3f, gy: vec3f, gz: vec3f };
+fn pickDispGrad(p: vec3f) -> PickDispGrad {
+  var o: PickDispGrad;
+  o.d = vec3f(0.0); o.gx = vec3f(0.0); o.gy = vec3f(0.0); o.gz = vec3f(0.0);
+  let f = (p - pickLat.origin) / pickLat.spacing;
+  let i0 = clamp(i32(floor(f.x)), 0, i32(pickLat.nx) - 2);
+  let j0 = clamp(i32(floor(f.y)), 0, i32(pickLat.ny) - 2);
+  let k0 = clamp(i32(floor(f.z)), 0, i32(pickLat.nz) - 2);
+  let u = f - vec3f(f32(i0), f32(j0), f32(k0));
+  let t = clamp(u, vec3f(0.0), vec3f(1.0));
+  let inv = vec3f(select(0.0, 1.0, u.x == t.x), select(0.0, 1.0, u.y == t.y), select(0.0, 1.0, u.z == t.z)) / pickLat.spacing;
+  for (var dk = 0; dk < 2; dk++) { for (var dj = 0; dj < 2; dj++) { for (var di = 0; di < 2; di++) {
+    let n = u32(i0 + di) + pickLat.nx * (u32(j0 + dj) + pickLat.ny * u32(k0 + dk));
+    let d = pickDisp[n].xyz;
+    let wx = select(1.0 - t.x, t.x, di == 1); let wy = select(1.0 - t.y, t.y, dj == 1); let wz = select(1.0 - t.z, t.z, dk == 1);
+    o.d += d * (wx * wy * wz);
+    o.gx += d * (select(-1.0, 1.0, di == 1) * wy * wz * inv.x);
+    o.gy += d * (wx * select(-1.0, 1.0, dj == 1) * wz * inv.y);
+    o.gz += d * (wx * wy * select(-1.0, 1.0, dk == 1) * inv.z);
+  }}}
+  return o;
+}
+/**
+ * World -> material: solves material + disp(material) = pw by Newton's method on the trilinear field, with a damped
+ * step near a fold. Same scheme as Lattice.worldToMaterial, so the pencil lands where the cursor is seen to be.
+ */
+fn pickToMaterial(pw: vec3f) -> vec3f {
+  if (pickLat.nx < 2u) { return pw; }
+  var m = pw - pickLatticeDisp(pw);
+  for (var it = 0; it < 5; it++) {
+    let g = pickDispGrad(m);
+    let F = m + g.d - pw;
+    if (dot(F, F) < 1e-6) { break; }
+    let c0 = vec3f(1.0, 0.0, 0.0) + g.gx; let c1 = vec3f(0.0, 1.0, 0.0) + g.gy; let c2 = vec3f(0.0, 0.0, 1.0) + g.gz;
+    let det = dot(c0, cross(c1, c2));
+    var st = -0.5 * F;
+    if (abs(det) > 0.05) { st = -vec3f(dot(cross(c1, c2), F), dot(cross(c2, c0), F), dot(cross(c0, c1), F)) / det; }
+    let len = length(st);
+    if (len > pickLat.spacing) { st *= pickLat.spacing / len; }
+    m += st;
+  }
+  return m;
+}
+
 @compute @workgroup_size(1)
 fn pick() {
   let o = sim.ray.xyz; let d = normalize(sim.rayDir.xyz);
@@ -927,7 +1039,7 @@ fn pick() {
   var hc = 0u; var hi = 0u;
   for (var n = 0; n < 4000; n++) {
     let p = o + d * t;
-    let v = voxelOfWorld(p);
+    let v = voxelOfWorld(pickToMaterial(p));
     if (inVolume(v.x, v.y, v.z)) {
       let idx = idx3(v.x, v.y, v.z);
       if (occ[idx] >= 0.5 && cellType(cells[idx]) != T_AIR) { hit = vec4f(p, 1.0); hc = cells[idx]; hi = idx; break; }

@@ -215,12 +215,75 @@ namespace BovieSim
             return o;
         }
 
+        /// <summary>
+        /// Trilinear displacement at a material point and its gradient: g[3 * r + c] = d(disp_r) / d(p_c). The gradient is
+        /// that of the cell the point lies in (zero along an axis on which the point is clamped at the lattice edge).
+        /// </summary>
+        public Vector3 DisplacementGradientAt(Vector3 p, double[] g)
+        {
+            float fx = (p.x - origin.x) / spacing, fy = (p.y - origin.y) / spacing, fz = (p.z - origin.z) / spacing;
+            int i0 = Math.Min(Math.Max((int)Math.Floor(fx), 0), nx - 2), j0 = Math.Min(Math.Max((int)Math.Floor(fy), 0), ny - 2), k0 = Math.Min(Math.Max((int)Math.Floor(fz), 0), nz - 2);
+            float ux = fx - i0, uy = fy - j0, uz = fz - k0;
+            float tx = Mathf.Clamp01(ux), ty = Mathf.Clamp01(uy), tz = Mathf.Clamp01(uz);
+            float ix = ux == tx ? 1f / spacing : 0, iy = uy == ty ? 1f / spacing : 0, iz = uz == tz ? 1f / spacing : 0;
+            double dx = 0, dy = 0, dz = 0;
+            for (int n9 = 0; n9 < 9; n9++) g[n9] = 0;
+            for (int dk = 0; dk < 2; dk++)
+                for (int dj = 0; dj < 2; dj++)
+                    for (int di = 0; di < 2; di++)
+                    {
+                        int n = Index(i0 + di, j0 + dj, k0 + dk) * 3;
+                        float wx = di == 1 ? tx : 1 - tx, wy = dj == 1 ? ty : 1 - ty, wz = dk == 1 ? tz : 1 - tz;
+                        float gx = (di == 1 ? 1 : -1) * wy * wz * ix, gy = wx * (dj == 1 ? 1 : -1) * wz * iy, gz = wx * wy * (dk == 1 ? 1 : -1) * iz;
+                        float w = wx * wy * wz;
+                        float d0 = pos[n] - mat[n], d1 = pos[n + 1] - mat[n + 1], d2 = pos[n + 2] - mat[n + 2];
+                        dx += w * d0; dy += w * d1; dz += w * d2;
+                        g[0] += gx * d0; g[1] += gy * d0; g[2] += gz * d0;
+                        g[3] += gx * d1; g[4] += gy * d1; g[5] += gz * d1;
+                        g[6] += gx * d2; g[7] += gy * d2; g[8] += gz * d2;
+                    }
+            return new Vector3((float)dx, (float)dy, (float)dz);
+        }
+
+        /// <summary>
+        /// World -> material: where in the undeformed bed is the tissue that is now seen at pw? Solves
+        /// material + disp(material) = pw by Newton's method on the trilinear field (Jacobian I + grad disp), which
+        /// converges in a few steps even where a hook has stretched one cell to twice its size and squeezed the next to a
+        /// fifth (a plain fixed-point iteration diverges there); near a fold it falls back to a damped step. Same scheme
+        /// as src/mechanics/lattice.ts and the browser's pick kernel.
+        /// </summary>
         public Vector3 WorldToMaterial(Vector3 pw)
         {
-            var o = pw;
-            for (int it = 0; it < 3; it++) o = pw - DisplacementAt(o);
-            return o;
+            var d = DisplacementAt(pw);
+            double mx = pw.x - d.x, my = pw.y - d.y, mz = pw.z - d.z;
+            var g = new double[9];
+            double lim = spacing;
+            for (int it = 0; it < 6; it++)
+            {
+                d = DisplacementGradientAt(new Vector3((float)mx, (float)my, (float)mz), g);
+                double fx = mx + d.x - pw.x, fy = my + d.y - pw.y, fz = mz + d.z - pw.z;
+                if (fx * fx + fy * fy + fz * fz < 1e-6) break;
+                double a = 1 + g[0], b = g[1], c = g[2], e = g[3], f = 1 + g[4], h = g[5], p = g[6], q = g[7], r = 1 + g[8];
+                double c00 = f * r - h * q, c01 = h * p - e * r, c02 = e * q - f * p;
+                double det = a * c00 + b * c01 + c * c02;
+                double sx, sy, sz;
+                if (Math.Abs(det) > 0.05)
+                {
+                    double id = 1 / det;
+                    sx = -(c00 * fx + (c * q - b * r) * fy + (b * h - c * f) * fz) * id;
+                    sy = -(c01 * fx + (a * r - c * p) * fy + (c * e - a * h) * fz) * id;
+                    sz = -(c02 * fx + (b * p - a * q) * fy + (a * f - b * e) * fz) * id;
+                }
+                else { sx = -0.5 * fx; sy = -0.5 * fy; sz = -0.5 * fz; }
+                double len = Math.Sqrt(sx * sx + sy * sy + sz * sz);
+                if (len > lim) { double k = lim / len; sx *= k; sy *= k; sz *= k; }
+                mx += sx; my += sy; mz += sz;
+            }
+            return new Vector3((float)mx, (float)my, (float)mz);
         }
+
+        /// <summary>Material -> world: where the tissue at a material point is seen.</summary>
+        public Vector3 MaterialToWorld(Vector3 pm) { return pm + DisplacementAt(pm); }
 
         public int NearestNode(Vector3 pw, float radius = 4f)
         {

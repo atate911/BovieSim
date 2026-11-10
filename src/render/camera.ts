@@ -13,10 +13,18 @@ export class OrbitCamera {
   readonly viewProj = mat4.create();
   readonly position = vec3.create();
   private dragging: 'orbit' | 'pan' | null = null;
+  /**
+   * Asked on a right-button press: true when the left hand takes it (an instrument is in the left hand and the
+   * pointer is on tissue). Otherwise the right button orbits as usual. Alt + left drag always orbits.
+   */
+  claimRight: (() => boolean) | null = null;
+  /** false while an instrument is being lifted with the wheel (it then does not zoom) */
+  zoomEnabled = true;
   private last = [0, 0];
 
   attach(el: HTMLElement) {
     el.addEventListener('pointerdown', (e) => {
+      if (e.button === 2 && this.claimRight && this.claimRight()) { el.setPointerCapture(e.pointerId); e.preventDefault(); return; }
       if (e.button === 2 || (e.button === 0 && e.altKey)) { this.dragging = 'orbit'; }
       else if (e.button === 1 || (e.button === 0 && e.shiftKey)) { this.dragging = 'pan'; }
       else return;
@@ -42,7 +50,7 @@ export class OrbitCamera {
     const end = () => { this.dragging = null; };
     el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
     // Ctrl + wheel is the depth peel (main.ts); plain wheel zooms
-    el.addEventListener('wheel', (e) => { e.preventDefault(); if (e.ctrlKey) return; this.distance = Math.min(600, Math.max(25, this.distance * Math.exp(e.deltaY * 0.001))); }, { passive: false });
+    el.addEventListener('wheel', (e) => { e.preventDefault(); if (e.ctrlKey || !this.zoomEnabled) return; this.distance = Math.min(600, Math.max(25, this.distance * Math.exp(e.deltaY * 0.001))); }, { passive: false });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 

@@ -70,28 +70,35 @@ namespace BovieSim
             return Mathf.Lerp(Mathf.Lerp(a, b, tx), Mathf.Lerp(c, d, tx), tz);
         }
 
-        /// <summary>First intersection of a ray (field mm) with the tissue top.</summary>
-        public bool Raycast(Vector3 origin, Vector3 dir, out Vector3 hit)
+        /// <summary>
+        /// First intersection of a ray (field mm) with the tissue top. With `toMaterial` (the lattice's world-to-material
+        /// map) the ray is marched through the field as it is seen: each sample is taken back to the undeformed bed before
+        /// it is compared with the height map, so under a retracted edge the ray reaches the wound floor, not the skin
+        /// that used to cover it. The hit is the world point on the displaced surface.
+        /// </summary>
+        public bool Raycast(Vector3 origin, Vector3 dir, out Vector3 hit, System.Func<Vector3, Vector3> toMaterial = null)
         {
             hit = Vector3.zero;
             if (maxTop <= NoTissue + 1) return false;
             dir.Normalize();
             // clip the ray to the bed's box (x, z extents; y from below the deepest cut to above the top)
             float t0 = 0f, t1 = 2000f;
-            if (!Slab(origin.x, dir.x, -halfX, halfX, ref t0, ref t1)) return false;
-            if (!Slab(origin.z, dir.z, -halfZ, halfZ, ref t0, ref t1)) return false;
-            if (!Slab(origin.y, dir.y, -200f, maxTop + 0.5f, ref t0, ref t1)) return false;
+            // displaced tissue can stand above and beside where it lies in the bed: widen the box when following it
+            float pad = toMaterial != null ? 20f : 0f;
+            if (!Slab(origin.x, dir.x, -halfX - pad, halfX + pad, ref t0, ref t1)) return false;
+            if (!Slab(origin.z, dir.z, -halfZ - pad, halfZ + pad, ref t0, ref t1)) return false;
+            if (!Slab(origin.y, dir.y, -200f, maxTop + 0.5f + pad, ref t0, ref t1)) return false;
             float step = h * 0.5f, prev = t0;
             for (float t = t0; t <= t1; t += step)
             {
                 var p = origin + dir * t;
-                if (p.y <= HeightAt(p.x, p.z))
+                if (Below(p, toMaterial))
                 {
                     float lo = prev, hi = t;
                     for (int it = 0; it < 10; it++)
                     {
                         float m = (lo + hi) * 0.5f; var q = origin + dir * m;
-                        if (q.y <= HeightAt(q.x, q.z)) hi = m; else lo = m;
+                        if (Below(q, toMaterial)) hi = m; else lo = m;
                     }
                     hit = origin + dir * hi;
                     return true;
@@ -99,6 +106,14 @@ namespace BovieSim
                 prev = t;
             }
             return false;
+        }
+
+        /// <summary>True when the point, taken back to the undeformed bed, lies in tissue (inside the bed and under its top).</summary>
+        bool Below(Vector3 p, System.Func<Vector3, Vector3> toMaterial)
+        {
+            if (toMaterial != null) p = toMaterial(p);
+            if (p.x < -halfX || p.x > halfX || p.z < -halfZ || p.z > halfZ) return false;
+            return p.y <= HeightAt(p.x, p.z);
         }
 
         static bool Slab(float o, float d, float lo, float hi, ref float t0, ref float t1)

@@ -25,5 +25,7 @@ namespace BovieSim
         public float gauzeSoakUl;
         /// <summary>viscera voxels above 45 C this step; cumulative vaporised viscera (voxels)</summary>
         public int visceraHeatVoxels; public float visceraVapVoxels;
+        /// <summary>voxels divided by a blade (scalpel, scissors) this frame</summary>
+        public int cutVoxels;
     }
 }

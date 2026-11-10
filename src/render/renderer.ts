@@ -278,6 +278,8 @@ export class Renderer {
     this.rebuildTissueBG();
   }
   uploadLattice(disp: Float32Array<ArrayBuffer>) { this.device.queue.writeBuffer(this.latDisp, 0, disp); }
+  /** The lattice info uniform and displacement buffer, for the physics pick (call again after `attachLattice`). */
+  get latticeBuffers(): { info: GPUBuffer; disp: GPUBuffer } { return { info: this.latInfo, disp: this.latDisp }; }
 
   /** Strand segments from Lattice.strandData (8 floats per strand: a.xyz, w, b.xyz, w). */
   uploadStrands(data: Float32Array<ArrayBuffer>, count: number) {

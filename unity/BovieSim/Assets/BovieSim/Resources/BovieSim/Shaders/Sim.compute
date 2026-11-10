@@ -24,6 +24,7 @@
 #pragma kernel CoaptMark
 #pragma kernel Dissect
 #pragma kernel TearCarve
+#pragma kernel MechCut
 #pragma kernel ConstraintProbe
 #pragma kernel Pick
 #pragma kernel Slice
@@ -55,6 +56,13 @@ float4 _Tool2;     // secondary tool point A (mm), w = radius (mm)
 float4 _Tool2B;    // secondary tool point B (mm), w = mode (0 none, 1 grasp, 2 suction, 3 gauze, 4 spread, 5 push)
 float4 _Tool3;     // secondary tool velocity (mm/s) or, in modes 4/5, the jaws' entry point (mm); w = pressure 0..1
 float4 _Dis;       // x blunt dissection cohesion threshold, y carve radius (mm), z gauze absorbs (1) or is saturated (0), w 0
+// mechanical cut (scalpel blade, scissor snip): a thin box swept from _Cut0 to _Cut1, in material mm
+float4 _Cut0;      // blade box centre at the previous pose, w = on (1) / off (0)
+float4 _Cut1;      // blade box centre at the current pose
+float4 _CutAxis;   // unit axis tip->handle, w = half length (mm)
+float4 _CutW;      // unit direction along the edge, w = half width (mm)
+float4 _CutN;      // unit blade normal, w = half thickness (mm)
+int4 _CBox0;       // cut dispatch box origin (voxels), w = size
 int _DropCount;
 int _SegCount;
 int _TearCount;
@@ -114,6 +122,7 @@ RWStructuredBuffer<uint> _RimHist;     // 16 bins: distance (voxels) from a dama
 #define ST_VISCVAP 72
 #define ST_OOZEUL 73
 #define ST_SPATTERPTS 76
+#define ST_CUT 92
 
 static const float SIGMA_BLOOD = 0.7;
 static const float BLOOD_RHO_C = 1050.0 * 3617.0;
@@ -926,6 +935,45 @@ void TearCarve(uint3 gid : SV_DispatchThreadID)
         _Occ[idx] = 0.0; _Water[idx] = 0.0;
         _Cells[idx] = PackCellState(0u, S_VAPOR);
         InterlockedAdd(_State[ST_TORN], 1u, dummy);
+    }
+}
+
+// ------------------------------------------------------------------ mechanical cut (steel)
+// Signed distance (mm) from a point to the blade box (half extents along _CutAxis / _CutW / _CutN) centred at c.
+float CutBoxDistance(float3 p, float3 centre)
+{
+    float3 rel = p - centre;
+    float3 q = float3(abs(dot(rel, _CutAxis.xyz)) - _CutAxis.w, abs(dot(rel, _CutW.xyz)) - _CutW.w, abs(dot(rel, _CutN.xyz)) - _CutN.w);
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+// Steel against tissue, no heat: a scalpel blade (or closing scissor blades) sweeps from _Cut0 to _Cut1 and divides
+// everything in its path. The voxels it passes through become cut air, so the faces it leaves are raw wound surfaces
+// (they ooze, and a transected vessel bleeds); the voxels at the face keep fractional occupancy for a smooth wall.
+[numthreads(4, 4, 4)]
+void MechCut(uint3 gid : SV_DispatchThreadID)
+{
+    int S = _CBox0.w;
+    if ((int)gid.x >= S || (int)gid.y >= S || (int)gid.z >= S) return;
+    int i = _CBox0.x + (int)gid.x, j = _CBox0.y + (int)gid.y, k = _CBox0.z + (int)gid.z;
+    if (!InVolume(i, j, k)) return;
+    uint idx = Idx3(i, j, k);
+    if (!IsTissue(idx)) return;
+    float3 p = WorldOf(i, j, k);
+    float3 a = _Cut0.xyz, b = _Cut1.xyz;
+    int n = clamp((int)ceil(length(b - a) / (0.5 * HMM)), 1, 16);
+    float d = 1e9;
+    for (int s = 0; s <= n; s++) d = min(d, CutBoxDistance(p, lerp(a, b, s / (float)n)));
+    if (d >= HMM) return;
+    float keep = saturate(0.5 + d / HMM);
+    float o = min(_Occ[idx], keep);
+    if (o >= _Occ[idx]) return;
+    _Occ[idx] = o;
+    if (o < 0.5)
+    {
+        uint dummy;
+        _Cells[idx] = PackCellState(0u, S_VAPOR); _Water[idx] = 0.0;
+        InterlockedAdd(_State[ST_CUT], 1u, dummy);
     }
 }
 
