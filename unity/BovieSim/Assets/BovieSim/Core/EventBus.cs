@@ -27,10 +27,11 @@ namespace BovieSim
         int lastContactType = -1; bool lastActive; float noContactSince = -1; bool noContactReported;
         int lastCarbon; int coagAccum; float lastCoagReport = -1e9f; string lastSettings = ""; string lastTool = "";
         int lastExposed, lastSealed, lastCharPlug, lastRebleeds; bool poolWarned, obscuredWarned, lastSuction, lastBuzz; float lastMuscle = -1e9f;
-        int cutAccum; float lastCutT = -1e9f; bool oozeWarned; float lastOozeT = -1e9f;
-        int bluntAccum; float lastPlane = -1e9f, resistT, lastResist = -1e9f, lastStretch = -1e9f, lastTorn = -1e9f, lastNerve = -1e9f, lastT = -1f; bool lastContact;
         /// <summary>set by the app each frame</summary>
-        public bool suctionOn, buzzing, instrumentContact;
+        public bool suctionOn, buzzing, gauzeDab, gauzeWipe, gauzeSaturated;
+        float lastViscera = -1e9f, lastBoil = -1e9f, lastSuctionClot = -1e9f, lastTorn = -1e9f, lastDissect = -1e9f, lastWipe = -1e9f, lastSpasm = -1e9f;
+        bool clotWarned, oozeReported, lastGauzeDab, lastGauzeSat; int tornAccum, dissectAccum;
+        float lastExposedNonzero; int lastSealedAtBleed, lastPlugAtBleed;
 
         public EventBus(string teachingJson)
         {
@@ -74,6 +75,8 @@ namespace BovieSim
                     else if (tt == Tissue.Muscle) Emit(t, "tissue.muscleContact", name);
                     else if (tt == Tissue.Artery || tt == Tissue.Vein) Emit(t, "tissue.vesselContact", name, Severity.Warn);
                     else if (tt == Tissue.Nerve) Emit(t, "tissue.nerveContact", name, Severity.Bad);
+                    else if (tt == Tissue.Areolar) Emit(t, "tissue.areolarContact", name);
+                    else if (tt == Tissue.Viscera || tt == Tissue.Serosa) Emit(t, "tissue.visceraContact", name, Severity.Warn);
                 }
             }
             else if (!active) lastContactType = -1;
@@ -113,29 +116,34 @@ namespace BovieSim
             }
             lastBuzz = active && buzzing;
             if (active && mode != null && !mode.isCut && r.muscleHeatVoxels > 20 && t - lastMuscle > 1.5f) { Emit(t, "muscle.stimulated", r.muscleHeatVoxels + " muscle voxels in the current path", Severity.Warn); lastMuscle = t; }
+            if (active && r.visceraHeatVoxels > 40 && t - lastViscera > 2.0f) { Emit(t, "viscera.heated", r.visceraHeatVoxels + " viscera voxels above 45 °C", Severity.Bad); lastViscera = t; }
+            // blood under the electrode boils and coagulates; clot resists suction
+            if (active && r.boilColumns > 0 && t - lastBoil > 2.0f) { Emit(t, "blood.boiling", r.boilColumns + " columns of blood boiling under the electrode", Severity.Warn); lastBoil = t; }
+            if (r.clotMl > 0.3f && !clotWarned) { Emit(t, "blood.clotted", r.clotMl.ToString("0.0") + " ml of clot in the field"); clotWarned = true; }
+            if (r.clotMl < 0.1f) clotWarned = false;
+            if (suctionOn && r.clotMl > 0.2f && r.poolAtTipMm > 0.2f && t - lastSuctionClot > 4.0f) { Emit(t, "suction.clot", "clot under the suction tip", Severity.Warn); lastSuctionClot = t; }
+            // raw surfaces ooze, tissue tears, planes open
+            if (r.oozeVoxels > 10 && !oozeReported) { Emit(t, "tissue.oozing", r.oozeVoxels + " raw-surface voxels oozing"); oozeReported = true; }
+            if (r.oozeVoxels == 0) oozeReported = false;
+            tornAccum += r.tornVoxels;
+            if (tornAccum > 0 && t - lastTorn > 1.0f) { Emit(t, "tissue.torn", tornAccum + " voxels torn", Severity.Warn); tornAccum = 0; lastTorn = t; }
+            dissectAccum += r.dissectedVoxels;
+            if (dissectAccum > 150 && t - lastDissect > 2.0f) { Emit(t, "plane.dissected", dissectAccum + " voxels separated bluntly"); dissectAccum = 0; lastDissect = t; }
+            // gauze: dab vs wipe, saturation
+            if (gauzeDab && !lastGauzeDab) Emit(t, "gauze.dab", "pressure on the field");
+            lastGauzeDab = gauzeDab;
+            if (gauzeWipe && t - lastWipe > 3.0f) { Emit(t, "gauze.wipe", "wiping the raw surface", Severity.Warn); lastWipe = t; }
+            if (gauzeSaturated && !lastGauzeSat) Emit(t, "gauze.saturated", "gauze full", Severity.Warn);
+            lastGauzeSat = gauzeSaturated;
+            // a small vessel that was bleeding has stopped without being sealed: spasm / thrombosis
+            if (exposed == 0 && lastExposedNonzero > 0 && r.sealedVoxels == lastSealedAtBleed && r.charPlugVoxels == lastPlugAtBleed && !suctionOn && t - lastSpasm > 5.0f)
+            { Emit(t, "vessel.spasm", "bleeding stopped on its own"); lastSpasm = t; }
+            if (exposed > 0) { lastExposedNonzero = t; lastSealedAtBleed = r.sealedVoxels; lastPlugAtBleed = r.charPlugVoxels; } else lastExposedNonzero = 0;
 
             string settings = gen.SettingsKey;
             if (lastSettings.Length > 0 && settings != lastSettings) Emit(t, "generator.settingChanged", gen.cutMode + " " + gen.cutWatts + " W / " + gen.coagMode + " " + gen.coagWatts + " W");
             lastSettings = settings;
             if (toolName != lastTool) { if (lastTool.Length > 0) Emit(t, "tool.changed", toolName); lastTool = toolName; }
-
-            // steel: a scalpel stroke or scissor snip is reported when it ends
-            float frameDt = lastT >= 0 ? Math.Max(0, t - lastT) : 0; lastT = t;
-            cutAccum += r.cutVoxels;
-            if (r.cutVoxels > 0) lastCutT = t;
-            if (cutAccum > 0 && t - lastCutT > 0.4f) { Emit(t, "incision.made", cutAccum + " voxels divided, no heat"); cutAccum = 0; }
-            if (r.oozeVoxels > 0) { lastOozeT = t; if (!oozeWarned) { Emit(t, "skin.oozing", r.oozeVoxels + " dermal edge voxels oozing"); oozeWarned = true; } }
-            else if (t - lastOozeT > 5) oozeWarned = false;
-            // blunt dissection: the plane opening, or something that will not spread
-            bluntAccum += r.bluntVoxels;
-            if (bluntAccum > 60 && t - lastPlane > 1.5f) { Emit(t, "plane.developed", bluntAccum + " voxels of fat separated"); bluntAccum = 0; lastPlane = t; }
-            if (r.bluntResist > 30 && r.bluntVoxels < 5) resistT += frameDt; else resistT = 0;
-            if (resistT > 0.5f && t - lastResist > 3) { Emit(t, "plane.resists", r.bluntResist + " voxels resist the spread", Severity.Warn); lastResist = t; resistT = 0; }
-            if (r.vesselStretch > 3 && t - lastStretch > 2) { Emit(t, "vessel.stretched", r.vesselStretch + " vessel voxels in the spread", Severity.Warn); lastStretch = t; }
-            if (r.vesselTorn > 0 && t - lastTorn > 1) { Emit(t, "vessel.torn", r.vesselTorn + " vessel voxels torn by blunt dissection", Severity.Bad); lastTorn = t; }
-            if (r.nerveStretch > 3 && t - lastNerve > 2) { Emit(t, "nerve.stretched", r.nerveStretch + " nerve voxels in the spread", Severity.Warn); lastNerve = t; }
-            if (active && instrumentContact && !lastContact) Emit(t, "instrument.contact", "active electrode on another instrument", Severity.Bad);
-            lastContact = active && instrumentContact;
         }
     }
 }

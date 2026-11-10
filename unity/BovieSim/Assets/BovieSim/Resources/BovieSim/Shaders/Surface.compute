@@ -18,14 +18,14 @@
 
 #include "SimCommon.hlsl"
 
-#define NUM_BUCKETS 18
+#define NUM_BUCKETS 20
 #define VERTEX_STRIDE 56
-#define COUNT_STRIDE 19   // 18 buckets + raw total
+#define COUNT_STRIDE 21   // 20 buckets + raw total
 
 StructuredBuffer<float> _Occ;
 RWStructuredBuffer<float> _OccS;         // smoothed occupancy (written by SmoothOcc, read by the marching passes)
 StructuredBuffer<uint> _Cells;
-StructuredBuffer<float4> _BloodCols;     // per column: h, age, surfY, hNext
+StructuredBuffer<float4> _BloodCols;     // 2 per column: (h, age, surfY, hNext), (clot, temp, stain, topK)
 StructuredBuffer<float> _Temp;           // temperature (C)
 StructuredBuffer<float> _OmegaR;         // Arrhenius damage
 int4 _Brick0;                            // brick origin (cells), w = base index into the count buffers
@@ -70,12 +70,12 @@ float EffOcc(uint idx, int i, int j, int k)
     return o * f;
 }
 
-/** Tissue class 0..7 x state -> bucket. Must match SurfaceRenderer.BucketMaterial order. */
+/** Tissue class 0..8 x state -> bucket. Must match SurfaceRenderer.BucketMaterial order (SimAssets.TissueBuckets = 20). */
 uint BucketOf(uint c)
 {
     uint ty = CellType(c), st = CellState(c);
-    if (st == S_CARBON) return 17u;
-    if (st == S_DESIC) return 16u;
+    if (st == S_CARBON) return 19u;
+    if (st == S_DESIC) return 18u;
     uint cls;
     if (ty == T_EPI) cls = 0u;
     else if (ty == T_DERMIS) cls = 1u;
@@ -84,8 +84,9 @@ uint BucketOf(uint c)
     else if (ty == T_MUSCLE) cls = 5u;
     else if (ty == T_ARTERY || ty == T_BLOOD) cls = 6u;
     else if (ty == T_VEIN) cls = 7u;
-    else cls = 4u; // septum, fasciae, capsule, nerve: fibrous
-    return st == S_COAG ? 8u + cls : cls;
+    else if (ty == T_VISCERA) cls = 8u;
+    else cls = 4u; // septum, fasciae, capsule, nerve, areolar, serosa: fibrous
+    return st == S_COAG ? 9u + cls : cls;
 }
 
 float OccAt(int i, int j, int k)
@@ -260,7 +261,7 @@ void ScanBuckets(uint3 gid : SV_DispatchThreadID)
 // ------------------------------------------------------------------ blood pool surface
 float BloodTop(int i, int j)
 {
-    float4 b = _BloodCols[(uint)clamp(i, 0, NX - 1) + (uint)NX * (uint)clamp(j, 0, NY - 1)];
+    float4 b = _BloodCols[((uint)clamp(i, 0, NX - 1) + (uint)NX * (uint)clamp(j, 0, NY - 1)) * 2u];
     // hidden below the tissue surface where there is no visible blood
     return b.x > _BloodShowMm ? b.z + b.x : b.z - 0.6;
 }

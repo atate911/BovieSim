@@ -42,9 +42,9 @@ namespace BovieSim
             physics.RequestSurfaceHeights(data =>
             {
                 inFlight = false;
-                if (data.Length < heights.Length) return;
+                if (data.Length < heights.Length * 2) return;
                 float top = NoTissue;
-                for (int n = 0; n < heights.Length; n++) { float y = data[n].z; heights[n] = y; if (y > top) top = y; }
+                for (int n = 0; n < heights.Length; n++) { float y = data[n * 2].z; heights[n] = y; if (y > top) top = y; }
                 maxTop = top;
                 heightsAgeFrames = Time.frameCount - requestFrame;
             });

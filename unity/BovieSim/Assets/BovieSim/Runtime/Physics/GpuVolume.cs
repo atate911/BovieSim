@@ -9,7 +9,7 @@ namespace BovieSim
         public readonly Volume cpu;
         public readonly ComputeBuffer cells, occupancy, water, omega, heat;
         public readonly ComputeBuffer temp, tempNext, potential, potentialNext;
-        /// <summary>per surface column: h, age, surfaceY, hNext</summary>
+        /// <summary>per surface column, 2 float4: (h, age, surfaceY, hNext), (clot, temp, stain, topK)</summary>
         public readonly ComputeBuffer blood;
 
         public GpuVolume(Volume v)
@@ -25,8 +25,10 @@ namespace BovieSim
             tempNext = new ComputeBuffer(n, 4); tempNext.SetData(v.temp);
             potential = new ComputeBuffer(n, 4);
             potentialNext = new ComputeBuffer(n, 4);
-            blood = new ComputeBuffer(v.nx * v.ny, 16);
-            blood.SetData(new Vector4[v.nx * v.ny]);
+            blood = new ComputeBuffer(v.nx * v.ny * 2, 16);
+            var init = new Vector4[v.nx * v.ny * 2];
+            for (int c = 0; c < v.nx * v.ny; c++) init[c * 2 + 1] = new Vector4(0, 37, 0, -1);
+            blood.SetData(init);
         }
 
         public void SetVolumeInfo(ComputeShader cs)

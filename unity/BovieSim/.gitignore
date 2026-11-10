@@ -24,3 +24,6 @@
 # registry of generated materials (recreated by Bovie Sim > Set Up Project)
 /Assets/BovieSim/Resources/BovieSim/SimAssets.asset
 /Assets/BovieSim/Resources/BovieSim/SimAssets.asset.meta
+# purchased instrument packs (licensed, not redistributable): drop FBX + textures here, see docs/textures.md
+/Assets/BovieSim/Models/
+/Assets/BovieSim/Models.meta

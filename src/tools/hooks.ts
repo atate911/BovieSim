@@ -9,11 +9,11 @@ export class HookTool {
   visible = true;
   /** attached lattice node, -1 when free */
   node = -1;
-  place(hit: vec3 | null, cameraPos: vec3, tilt: { x: number; y: number } | null, dragTarget: vec3 | null, leftHand = false) {
+  place(hit: vec3 | null, cameraPos: vec3, tilt: { x: number; y: number } | null, dragTarget: vec3 | null) {
     const anchor = dragTarget ?? hit;
     if (!anchor) { this.visible = false; mat4.copy(this.model, HIDDEN); return; }
     this.visible = true;
-    const axis = handAxis(anchor, cameraPos, tilt, leftHand);
+    const axis = handAxis(anchor, cameraPos, tilt);
     vec3.copy(this.axis, axis);
     vec3.copy(this.tip, anchor);
     const { x, z } = handFrame(axis);

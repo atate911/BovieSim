@@ -26,7 +26,7 @@
   plug vs rebleed rules; blood height field with downhill flow, clotting, pool conduction penalty;
   droplet jets; suction. Hemostasis drill scenario with a pre-carved trench crossing a 1.0 mm artery
   and a 0.6 mm vein.
-- Instruments: Adson forceps (grasp, buzz, lift), Frazier suction, skin hook; Tab cycles tools (0.6.0 adds the scalpel, scissors and a second hand).
+- Instruments: Adson forceps (grasp, buzz, lift), Frazier suction, skin hook; Tab cycles tools.
 - Mechanics: XPBD lattice with per-layer compliance and skin pre-tension; GPU probe severs and
   shrinks links from the voxel state; incisions gape; lipoma cluster frees and delivers; muscle
   twitch on coag; rendered tissue follows the lattice.
@@ -96,31 +96,72 @@
   blanched footprint on the cut face. Section sampled trilinearly at 640 × 400.
 - Not yet verified in Unity (compiled and unit-tested here only).
 
-## Two hands and steel (0.6.0)
-- Non-dominant hand on the same pointer: hold Space to drive it (forceps, hook or suction), release to latch it
-  holding its traction; the pointer returns to the dominant hand (`src/tools/hands.ts`, `Core/Hands.cs`, unit-tested
-  state machine). Both instruments stay on the field; the pencil buzzes forceps it touches and diverts current through
-  a hook or suction it touches (`instrument.contact`).
-- #15 scalpel (sharp mechanical cut, pressure-set depth, swept blade) and Metzenbaum scissors (snip; Ctrl + hold
-  spreads) through one `mechCut` kernel in WGSL and HLSL: sharp divides everything with fractional occupancy at the
-  face; blunt parts fat, tears vessels up to 0.3 mm, keeps larger vessels in their fat cuff (tented) and is resisted
-  by septa, fasciae, skin, muscle and the capsule. Fresh dermal edges ooze from the plexus until they clot (two
-  minutes on average) or are coagulated; pre-made wounds start sealed. Events: `incision.made`, `skin.oozing`,
-  `plane.developed`, `plane.resists`, `vessel.stretched`, `vessel.torn`, `nerve.stretched`, `instrument.contact`.
-- Verified headless (0.5 mm, software GPU): a 30 mm scalpel stroke divides 500 voxels with no heat (max T unchanged,
-  nothing vaporised), transects a vein, oozes from 148 dermal edge voxels and gapes 0.7 mm between nodes 3 mm apart
-  (2.75 mm deep, the mouse depth); a 7 mm scissors spread in the fat beside the lipoma (trench to the capsule
-  pre-carved) separates 270 voxels, cuts 21 of 303 capsule links, tents a vessel (66 voxels, no bleeding from it)
-  and reports 594 resisting voxels on the capsule; a skin hook in the non-dominant hand latched on a trench edge
-  pulls its node 3.5 mm aside and widens the gap from 7.3 to 8.9 mm while the pencil is free.
-- Unity: same kernels (26 entry points compile), C# port compiles against the reference assemblies, 36 EditMode tests
-  pass under Mono. Not yet verified in Unity.
+## Surgical field (0.6.0)
+- Drapes: folded fenestrated sheet (incise film, reinforcement pad, loose blue drape) built from one shared
+  heightfield (`src/render/meshes.ts`, `MeshFactory.Drapes`); three materials in Unity, three procedural fabric
+  kinds in the browser build.
+- Lights: two dome-sized surgical light heads; soft shadows with contact-sharp penumbrae (PCSS in both clients),
+  dome-widened highlights, emissive lamp heads for reflections, contact shadows and wound-scale AO in Unity.
+- Ray tracing (Unity, DXR): shadows + AO / + reflections / + GI and subsurface by tier, Auto from the detail level;
+  HDRP asset and DirectX 12 configured by Set Up Project; tissue bricks as dynamic ray-tracing geometry.
+- Colour: PBR Neutral tone mapping and sRGB output in the browser build; sRGB-correct scenario skin tint in Unity.
+- Squared field: four towels with Backhaus clips over a seeded, irregular drape (warped swells, waves, bunching,
+  creases); skin line network, mottling and sponge-stroke prep film. Generated instrument models (pencil with
+  switches, electrodes, Frazier, hook) and a purchased forceps pack import through Set Up Project.
+- Texture maps: optional albedo / normal / roughness sets per slot (drape, pad, steel, plastic) in both clients,
+  CC0 downloads (`npm run fetch:textures`, Set Up Project) or user-made (docs/textures.md); normal maps derived
+  from colour when absent. Procedural fallbacks: satin brushed steel reflecting the lit field and lamp domes,
+  nonwoven drape with fibre texture, bonding dots, rolled hem and package creases.
+- Verified: browser build headless at 0.5 mm (drape, soft shadows, tone mapping); Unity C# compile check and
+  EditMode tests under Mono. **Not yet verified in Unity**: HDRP rendering, DXR on real hardware, performance.
+
+## Sprint 5: tissue behaviour, bleeding and blood (0.7.0)
+- Tissue table: areolar tissue, viscera and serosa added (17 types); every tissue carries mechanical properties
+  (compliance, J-curve knee, yield, tear, cohesion, coag shrink and stiffening, capillary ooze). The cell word
+  now holds a 3-bit state, a 5-bit exposure clock and two kinds of air (cut vs bluntly dissected).
+- Anatomy: areolar planes on both faces of Scarpa's fascia, above the deep fascia and around the lipoma
+  capsule; optional organ (muscle, serosa, viscera) with subserosal vessels and a placed bleeder; pre-carved
+  floors can follow a layer; carved voxels are cut air.
+- Lattice: per-tissue nonlinear elasticity measured from the settled in-situ state, plastic yield with strand
+  rendering (stringy areolar tissue and fat), tearing on total elongation with GPU carving of the torn path,
+  per-tissue thermal shrink, coag stiffening, desiccation brittleness, char friability, muscle anisotropy,
+  vessel recoil, depth-weighted anchoring.
+- Kernels: vessels bleed only from open lumens (cut-air adjacency); spasm/thrombosis of small vessels and
+  rebleeding on disturbance through the exposure clock; capillary ooze from every raw perfused surface with
+  decay, coag arrest, tamponade and wipe; blood columns with clot fraction, temperature and stain; thin-film
+  flow; blood boils, spatters and cooks to coagulum under the electrode; suction lifts liquid only; gauze
+  absorbs, tamponades and wipes; `dissect` and `tearCarve` kernels; probe returns dryness and char.
+- Instruments: Kelly hemostat (grasp, buzz, push, spread) and 4x4 gauze; strands drawn as line primitives.
+- Scenario: `viscera` (serosal bleeder on an exposed viscus, perforation objectives). Teaching text for 13
+  new events. Tests: 50 (mechanics orderings, yield/tear/strand behaviour, thermal brittleness, anisotropy,
+  bleeding/spasm/ooze rules, thin-film flow, clot mass, clotting kinetics, suction/clot, dissection thresholds,
+  anatomy).
+- Lattice integration fixed: XPBD multipliers reset every substep and the damping / anchoring / attachment
+  rates rescaled to the substep; before this the stiff fascia links pumped energy into the lesion beds until
+  they tore themselves apart at rest (thousands of torn links in a few seconds with no instrument).
+- Verified headless (0.5 mm, software GPU): the hemostasis trench walls ooze from ~3 400 raw voxels and both
+  pre-cut vessels bleed from the start; a pressed gauze over the artery cuts 4 s blood loss from 1.5 to
+  0.3 ml and soaks what it covers; suction held in the trench takes 1.1 of 1.4 ml in 5 s and leaves no clot
+  behind; a hemostat spread in the lipoma ring trench separates ~650 voxels and tears 3 links (160 voxels);
+  35 W fulgurate held in the pool boils it, cooks 0.31 ml of coagulum, seals 74 vessel voxels and char-plugs
+  the artery (pooled = lost: spatter conserves blood); a 30 W pure-cut stroke through intact skin on the
+  freeplay bed vaporises ~140 voxels, seals the dermal plexus it crosses and leaves the lattice untouched
+  (0 yielded, 0 torn); the viscera scenario builds with serosa over parenchyma and its placed bleeder.
+- Suction: a pool levels far faster than the film model moves it, so the sucker also draws the mobile blood of
+  the same pool within three tip radii (falling off with distance); the wetting film and stain stay.
+- Unity client: the whole model ported (C# core, HLSL kernels incl. `Dissect` / `TearCarve`, blood columns as
+  two float4, 20 material buckets with a viscera class, Kelly hemostat and gauze instruments, strand ribbons,
+  spatter, the new events and HUD rows, `viscera` scenario, 41 EditMode tests); every kernel compiles with
+  glslang and all C# compiles and passes under Mono, but it has not yet been opened in a Unity editor or run
+  on a real GPU (Set Up Project must be re-run: setup version 9 bakes the new buckets and the strand material).
 
 ## Known gaps (next)
-- A vessel bared along its side by a cut bleeds like a transected end (blunt spreading now keeps larger vessels in
-  their cuff). Blunt dissection does not yet open a visible cleft on the capsule in the section unless fat is removed.
-- The non-dominant hand has no second pointing device yet (latch only); touch and gamepad input are the next step.
-- Hemostat, Allis, Senn and ties remain decision points only.
+- Blood is a height field: blood from a vertical wound wall is assigned to the column above the voxel and runs
+  down into the wound instead of clinging to the wall.
+- Mechanical constants are literature-informed estimates, not bench-calibrated; the strand look and the
+  dissection propagation rate (one voxel layer per frame) need the surgeon's eye.
+- Vessel ends recoil through lattice pre-tension only; the voxel end does not retract into the fat.
+- Visceral organ is a generic bowel/liver parenchyma without a lumen; no peristalsis.
 - The depth peel is display-only: an instrument used while peeled still acts on the hidden tissue above the plane,
   so the tip floats over the cut face.
 - Picking and tool placement use material coordinates: with large deformation the instrument

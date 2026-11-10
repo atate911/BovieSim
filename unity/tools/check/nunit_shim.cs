@@ -9,6 +9,7 @@ namespace NUnit.Framework {
     public static void Less(double a, double b, string m = "") { if (!(a < b)) F(a + " !< " + b + " " + m); }
     public static void Greater(double a, double b, string m = "") { if (!(a > b)) F(a + " !> " + b + " " + m); }
     public static void LessOrEqual(double a, double b, string m = "") { if (!(a <= b)) F(a + " !<= " + b + " " + m); }
+    public static void GreaterOrEqual(double a, double b, string m = "") { if (!(a >= b)) F(a + " !>= " + b + " " + m); }
     public static void AreEqual(double e, double a, double tol, string m = "") { if (!(Math.Abs(e - a) <= tol)) F("expected " + e + " got " + a + " " + m); }
     public static void AreEqual(object e, object a, string m = "") { if (!Equals(Convert.ToDouble(e), Convert.ToDouble(a))) F("expected " + e + " got " + a + " " + m); }
     public static void IsTrue(bool c, string m = "") { if (!c) F("expected true " + m); }

@@ -94,7 +94,7 @@ namespace BovieSim
             levelNote = Text(settingsCard, "", 13, Muted); levelNote.style.whiteSpace = WhiteSpace.Normal; levelNote.style.marginBottom = 8f;
             Sub(settingsCard, "Display and teaching");
             var t = Box(settingsCard, true); t.pickingMode = PickingMode.Position; t.style.flexWrap = Wrap.Wrap;
-            foreach (var key in new[] { "teachingMoments", "tipGauge", "depthOfField", "antialiasing", "invertTiltY", "showTiming" })
+            foreach (var key in new[] { "teachingMoments", "tipGauge", "depthOfField", "antialiasing", "rayTracing", "invertTiltY", "showTiming" })
             {
                 var k = key;
                 var b = Btn(t, key, () => { if (SettingToggled != null) SettingToggled(k); });
@@ -104,13 +104,14 @@ namespace BovieSim
             settingsCard.style.display = DisplayStyle.None;
         }
 
-        public void RefreshSettings(UserSettings s, DetailLevel running, string reason, DetailLevel chosen)
+        public void RefreshSettings(UserSettings s, DetailLevel running, string reason, DetailLevel chosen, string rayTracingText)
         {
             settingsCard.style.display = showSettings ? DisplayStyle.Flex : DisplayStyle.None;
             if (!showSettings) return;
             var cur = DetailSettings.For(running);
             hwLabel.text = HardwareProfile.Gpu + " · " + (HardwareProfile.VramMb / 1024f).ToString("0.#") + " GB video memory · " + SystemInfo.graphicsDeviceType + "\n" +
-                           "Running at " + running + " (" + cur.voxelMm.ToString("0.00") + " mm voxels, target " + (cur.frameBudgetMs > 20 ? "30" : "60") + " fps): " + reason;
+                           "Running at " + running + " (" + cur.voxelMm.ToString("0.00") + " mm voxels, target " + (cur.frameBudgetMs > 20 ? "30" : "60") + " fps): " + reason + "\n" +
+                           HardwareProfile.RayTracingNote();
             foreach (var kv in levelButtons) SetActive(kv.Value, kv.Key == chosen, Accent);
             levelNote.text = chosen != DetailLevel.Auto && chosen != running || chosen == DetailLevel.Auto && reason == "chosen in Settings"
                 ? "Restart the scenario (F5) to apply the new detail level."
@@ -120,6 +121,7 @@ namespace BovieSim
             SetToggle("depthOfField", "Depth of field: " + OnOff(s.depthOfField), s.depthOfField);
             string[] aa = { "SMAA", "TAA", "FXAA", "off" };
             SetToggle("antialiasing", "Anti-aliasing: " + aa[Mathf.Clamp(s.antialiasing, 0, 3)], true);
+            SetToggle("rayTracing", "Ray tracing: " + rayTracingText, s.rayTracing != "Off");
             SetToggle("invertTiltY", "Pen tilt: " + (s.invertTiltY ? "flipped" : "normal"), s.invertTiltY);
             SetToggle("showTiming", "Timing readout: " + OnOff(s.showTiming), s.showTiming);
         }

@@ -51,6 +51,6 @@ fn fs_main(in: VSOut) -> @location(0) vec4f {
   let n = fbm3(vec3f(in.uv * 2.5, frame.cameraPos.w * 0.4 + in.alpha * 7.0), 2);
   let a = soft * in.alpha * (0.55 + 0.6 * n);
   // front lighting from the surgical light
-  let lit = in.color * (0.65 + 0.35 * max(frame.lightDir.y, 0.0)) * frame.lightColor.rgb;
+  let lit = in.color * (0.65 + 0.35 * max(normalize(frame.lightPos.xyz).y, 0.0)) * frame.lightColor.rgb;
   return vec4f(lit * a, a); // premultiplied
 }

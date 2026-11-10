@@ -314,7 +314,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
       <h3>Choosing a scenario and quality</h3>
       <ul>
         <li><kbd>F6</kbd> moves to the next scenario; <kbd>F5</kbd> restarts the current one.</li>
-        <li>To start in a particular scenario or change detail, stop Play, select the <code>Bovie Sim</code> object in the Hierarchy and set <i>Scenario Id</i> (<code>freeplay</code>, <code>hemostasis</code> or <code>lipoma</code>) or <i>Voxel Override</i> (0 = full 0.25 mm detail; 0.4–0.5 runs faster).</li>
+        <li>To start in a particular scenario or change detail, stop Play, select the <code>Bovie Sim</code> object in the Hierarchy and set <i>Scenario Id</i> (<code>freeplay</code>, <code>hemostasis</code>, <code>lipoma</code> or <code>viscera</code>) or <i>Voxel Override</i> (0 = full 0.25 mm detail; 0.4–0.5 runs faster).</li>
       </ul>
       <h3>After updating the project</h3>
       <p>When you update (<code>maintain update</code>, see <a href="#updating">Updating</a>), Unity may say the project setup is out of date. Choose <b>Set up</b> in the dialog, or run <i>Bovie Sim → Set Up Project</i>, or with Unity closed run <code>maintain setup</code>; then open <code>Main</code> again. This rebuilds the generated materials, interface theme and scene.</p>
@@ -337,9 +337,9 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
       <h3>Control a bleeder</h3>
       <ol class="steps">
         <li><div><b>Find one.</b> If you cut across a perforator, the feed reports <code>bleed.start</code> and blood starts to pool. Bright red and pulsing is arterial.</div></li>
-        <li><div><b>Clear the field.</b> Press <kbd>Shift</kbd>+<kbd>Tab</kbd> three times to put the suction in your left hand. Hold <kbd>Space</kbd> and hold the left mouse button over the pool until you can see the vessel end; let go of both.</div></li>
-        <li><div><b>Grasp.</b> Press <kbd>Shift</kbd>+<kbd>Tab</kbd> twice more to put the forceps in your left hand. Hold <kbd>Space</kbd>, press the left mouse button with the jaws on the vessel end and keep it pressed while you release <kbd>Space</kbd>: the forceps stay, latched, holding the vessel. Release the button.</div></li>
-        <li><div><b>Buzz.</b> With the pencil in your right hand, touch its tip to the forceps and press <kbd>X</kbd> (coag pedal) for about a second. The feed reports <code>forceps.buzzed</code> and then <code>bleed.sealed</code>. (Single-handed: press <kbd>Tab</kbd> until the forceps are in your right hand, grasp, and press <kbd>X</kbd> while holding.)</div></li>
+        <li><div><b>Clear the field.</b> Press <kbd>Tab</kbd> three times for the suction. Hold the left mouse button over the pool until you can see the vessel end.</div></li>
+        <li><div><b>Grasp.</b> Press <kbd>Tab</kbd> four times to get back round to the forceps. Hold the left mouse button with the jaws on the vessel end.</div></li>
+        <li><div><b>Buzz.</b> Keep holding and press <kbd>X</kbd> (coag pedal) for about a second. The feed reports <code>forceps.buzzed</code> and then <code>bleed.sealed</code>. Release.</div></li>
       </ol>
       <h3>Make the classic mistakes</h3>
       <ul>
@@ -348,7 +348,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
       </ul>
       <p>Press <kbd>F5</kbd> to start again, or <kbd>F6</kbd> to move on to the hemostasis drill.</p>
       <h3>Delivering the lipoma</h3>
-      <p>In the lipoma scenario, work as you would at the table. <b>Incise</b> with the scalpel (<kbd>Tab</kbd> once): hold the left mouse button and draw a line over the lump; pen pressure sets the depth. The edges gape and the dermis oozes for a minute or two (<code>skin.oozing</code>); a touch of coag on a persistent point is enough. <b>Retract</b>: put the skin hook in your left hand (<kbd>Shift</kbd>+<kbd>Tab</kbd> twice), hold <kbd>Space</kbd>, catch an edge and pull it aside, then release <kbd>Space</kbd> so it stays. <b>Deepen</b> with the pencil in cut mode until the shiny capsule shows. <b>Find the plane</b> with the scissors (<kbd>Tab</kbd>): hold <kbd>Ctrl</kbd> and the left mouse button with the tips against the capsule to spread. Fat parts (<code>plane.developed</code>); a septum or the capsule will not (<code>plane.resists</code>), so snip it with a click or divide it with the pencil, then spread again beyond it. A vessel tented in the spread (<code>vessel.stretched</code>) is grasped and buzzed before it is divided. The status readout counts the capsule links still attached. When it shows <i>FREE</i>, grasp the lipoma with the forceps and roll the wheel to lift it. It is delivered once it rises 4 mm out of its bed.</p>
+      <p>In the lipoma scenario, incise the skin over the lump, deepen to the shiny capsule, then cut around it, staying on the capsule surface and going deeper each pass, or push and spread the hemostat along the loose areolar plane around the capsule to shell it out bluntly. A needle (<kbd>N</kbd>) at lower power gives more control. The status readout counts the capsule links still attached. When it shows <i>FREE</i>, change to the forceps, grasp the lipoma and hold <kbd>Space</kbd> to lift it. It is delivered once it rises 4 mm out of its bed.</p>
     </section>
 
     <section id="screen">
@@ -370,7 +370,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
         <li><b class="n">4</b><span><b>Objectives.</b> The scenario's success criteria, live: each shows its current value and an OK, NEAR, FAIL or DONE badge.</span></li>
         <li><b class="n">5</b><span><b>Section view.</b> A live cross-section through the tip, rendered at 1280 × 800, with display buttons, zoom up to the full 35 mm depth, <b>Large</b> to float it over the field, <b>Peel 3D</b> (see <a href="#depth">Beneath the surface</a>), depth scale, layer labels, a colour legend, isotherms and the damage outline.</span></li>
         <li><b class="n">6</b><span><b>FT10 panel.</b> Laid out like the generator's touchscreen: yellow CUT and blue COAG tiles with the power and up/down arrows, a row of mode buttons under each, REM status, impedance, and on-screen footswitch pedals.</span></li>
-        <li><b class="n">7</b><span><b>The field.</b> Tissue under a two-head surgical light, with the instrument in your hand.</span></li>
+        <li><b class="n">7</b><span><b>The field.</b> Tissue under a two-head surgical light, framed by the fenestrated blue drape, with the instrument in your hand.</span></li>
       </ol>
       <p>Press <kbd>F3</kbd> for a timing readout: frame time, CPU and GPU time, and how many frames old each result is. The instrument itself follows the cursor in the same frame.</p>
     </section>
@@ -388,14 +388,13 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>Cut watts −5 / +5 (hold <kbd>Shift</kbd> for 1 W)</td></tr>
           <tr><td><kbd>;</kbd> <kbd>'</kbd></td><td>Coag watts −5 / +5 (hold <kbd>Shift</kbd> for 1 W)</td></tr>
           <tr class="grp"><td colspan="2">Instruments</td></tr>
-          <tr><td><kbd>Tab</kbd> or <kbd>Q</kbd></td><td>Next right-hand instrument: Bovie pencil → #15 scalpel → Metzenbaum scissors → Adson forceps → Frazier suction → skin hook</td></tr>
-          <tr><td><kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Next left-hand instrument: none → Adson forceps → skin hook → Frazier suction</td></tr>
-          <tr><td><kbd>Space</kbd> (hold)</td><td>The pointer drives the left hand: left mouse grasps or catches, drag pulls. Release <kbd>Space</kbd> and the instrument stays where it is, latched, holding its traction. Hold <kbd>Space</kbd> again to move it; press and release to re-grasp or let go.</td></tr>
+          <tr><td><kbd>Tab</kbd> or <kbd>Q</kbd></td><td>Next instrument: Bovie pencil → Adson forceps → Kelly hemostat → Frazier suction → 4x4 gauze → skin hook</td></tr>
           <tr><td><kbd>B</kbd> <kbd>N</kbd> <kbd>O</kbd></td><td>Pencil electrode: blade, needle, ball</td></tr>
           <tr><td><kbd>R</kbd></td><td>Roll the blade 45°</td></tr>
           <tr><td><kbd>T</kbd></td><td>Toothed / smooth forceps</td></tr>
-          <tr><td>Mouse wheel while holding</td><td>Lift the held tissue (traction on a grasped edge, delivering a freed lipoma). Letting go lowers it again.</td></tr>
-          <tr><td>Left mouse</td><td>Scalpel: hold to cut (pen pressure sets the depth, 0.5 to 5 mm). Scissors: click to snip between the open tips; <kbd>Ctrl</kbd> + hold to spread. Forceps: close jaws (grasp). Suction: on. Hook: catch the skin and drag to retract.</td></tr>
+          <tr><td><kbd>Space</kbd></td><td>Forceps closed: lift (traction on a grasped edge, delivering a freed lipoma); opening the jaws lowers them again. Hemostat closed: spread the jaws inside the tissue to dissect bluntly.</td></tr>
+          <tr><td>Left mouse</td><td>Forceps: close jaws (grasp). Hemostat: close jaws and push the tips in (pen pressure sets depth); moving closed tips pushes along a plane. Suction: on. Gauze: press the pad (dab to soak and tamponade; drag to wipe). Hook: catch the skin and drag to retract.</td></tr>
+          <tr><td><kbd>U</kbd></td><td>Discard the soaked gauze for a fresh one</td></tr>
           <tr><td>Pen</td><td>Pressure sets depth; tilt sets angle; <kbd>Y</kbd> flips the tilt direction</td></tr>
           <tr class="grp"><td colspan="2">View</td></tr>
           <tr><td>Right mouse drag, or <kbd>Alt</kbd> + left drag</td><td>Orbit around the field</td></tr>
@@ -414,7 +413,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           <tr><td><kbd>F9</kbd></td><td>Settings: detail level, display and teaching options</td></tr>
           <tr><td><kbd>F7</kbd> / <kbd>F8</kbd></td><td>Depth of field on or off (off by default) / anti-aliasing: SMAA (default), TAA, FXAA, off</td></tr>
           <tr><td><kbd>F5</kbd></td><td>Restart the scenario from the beginning</td></tr>
-          <tr><td><kbd>F6</kbd></td><td>Next scenario: Free play → Hemostasis drill → Lipoma excision</td></tr>
+          <tr><td><kbd>F6</kbd></td><td>Next scenario: Free play → Hemostasis drill → Lipoma excision → Visceral surface</td></tr>
           <tr><td><kbd>F11</kbd> / <kbd>Esc</kbd></td><td>Fullscreen on or off / quit (built app only)</td></tr>
         </tbody>
       </table></div>
@@ -465,24 +464,15 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
         <div>
           <h3>Adson forceps</h3>
           <p>Hold the left mouse button to close the jaws. Closed jaws can:</p>
-          <ul><li><b>Grasp</b> a vessel and press its walls together.</li><li><b>Buzz</b>: press a pedal while grasping and the jaws become the electrode, or, with the forceps in your left hand, touch the active pencil to them. This is how you seal a vessel.</li><li><b>Lift</b> tissue: roll the wheel while the jaws are closed. A freed lipoma comes up with them.</li></ul>
+          <ul><li><b>Grasp</b> a vessel and press its walls together.</li><li><b>Buzz</b>: press a pedal while grasping and the jaws become the electrode. This is how you seal a vessel.</li><li><b>Lift</b> tissue: hold <kbd>Space</kbd> while the jaws are closed. A freed lipoma comes up with them.</li></ul>
+          <p><b>Kelly hemostat.</b> Close the jaws on the left button and the curved tips push into the tissue; the harder you press the pen, the deeper (up to 3.4 mm). Moving the closed tips pushes them along the loosest planes (areolar tissue, fat, the lipoma capsule plane). Hold <kbd>Space</kbd> with the jaws closed and they open inside the tissue: fat lobules part along their septa, areolar tissue draws out into strands that thin and snap, and vessels crossing the plane stay as bridges until you tear or cut them. A torn vessel bleeds. Closed jaws can be buzzed like the forceps.</p>
+          <p><b>4x4 gauze.</b> Press the pad with the left button. Held still it soaks up liquid blood, presses the capillaries closed and stops any vessel end under it while you hold; after a few seconds the ooze settles. Dragged with pressure it wipes: clot and stain come off, but the raw surface starts oozing again and a small vessel that had stopped on its own can rebleed. The pad reddens as it fills (8 ml); <kbd>U</kbd> swaps in a fresh one.</p>
+          <p><b>Suction</b> lifts liquid blood only. Clotted blood stays: wipe it off with gauze, then find the vessel under it.</p>
           <p>Open jaws cannot be activated. <kbd>T</kbd> switches toothed and smooth.</p>
         </div>
         <div>
-          <h3>#15 scalpel</h3>
-          <p>Steel, no heat. Hold the left mouse button and draw: the blade follows the direction of travel and pen pressure sets how deep it sits (0.5 to 5 mm; the mouse gives about 2.8 mm, through the dermis into fat). The edges are clean with no thermal rim, the incision gapes, a transected vessel bleeds and the cut dermis oozes for a minute or two until it clots or you coagulate it.</p>
-        </div>
-        <div>
-          <h3>Metzenbaum scissors</h3>
-          <p>Two uses. <b>Snip</b>: a click divides the tissue between the open tips along the blades. <b>Spread</b>: hold <kbd>Ctrl</kbd> and the left mouse button; the closed tips go in (pressure sets how far) and open. Fat parts and the plane opens on a lipoma capsule; a septum, a fascia, skin or the capsule itself will not spread and must be cut; a small vessel tears and oozes; a larger vessel or a nerve is tented in the spread, a warning to see it and control it before you divide it.</p>
-        </div>
-        <div>
-          <h3>Two hands</h3>
-          <p>Your right hand is the pointer. Hold <kbd>Space</kbd> and the pointer becomes your left hand, holding whatever <kbd>Shift</kbd>+<kbd>Tab</kbd> chose: forceps, hook or suction. Press to grasp or catch, drag to pull, roll the wheel to lift. Release <kbd>Space</kbd> and that instrument stays on the field, latched, holding its traction, while the pointer goes back to your right hand. Hold <kbd>Space</kbd> again to adjust it. Touching the active pencil to another instrument has consequences: forceps buzz the vessel they hold; a hook or suction diverts the current into the tissue under it, an alternate-site burn (<code>instrument.contact</code>).</p>
-        </div>
-        <div>
           <h3>Frazier suction</h3>
-          <p>Hold the left mouse button to suck. It drains blood within about 2.5 mm of the tip and pulls in smoke. Clear the pool before you look for the bleeder.</p>
+          <p>Hold the left mouse button to suck. It drains the blood under the tip and draws the rest of the pool toward it from a few millimetres around, and pulls in smoke. It lifts liquid only: clot, and the stain on raw tissue, stay. Clear the pool before you look for the bleeder.</p>
         </div>
         <div>
           <h3>Skin hook</h3>
@@ -548,7 +538,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           </dl>
         </article>
       </div>
-      <p><b>In the lipoma case</b>, the status readout shows how many capsule links are still intact. Spreading on the capsule and dividing what resists cuts them; once most are cut it reads <i>FREE</i> and the event feed reports <code>lesion.freed</code>. Grasp with the forceps and roll the wheel to lift: <code>lesion.delivered</code> fires when it has risen 4 mm out of its bed.</p>
+      <p><b>In the lipoma case</b>, the status readout shows how many capsule links are still intact. Once most of them are cut, it reads <i>FREE</i> and the event feed reports <code>lesion.freed</code>. Grasp with the forceps and hold <kbd>Space</kbd> to lift: <code>lesion.delivered</code> fires when it has risen 4 mm out of its bed.</p>
     </section>
 
     <section id="feedback">
@@ -636,7 +626,7 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
         </tbody>
       </table></div>
       <p><b>Auto</b> picks the level from the graphics card. Finer voxels show thinner thermal margins and smoother cuts; the region solved around the electrode, solver iterations, shadows and ambient occlusion scale with the level too. A new level applies when you restart the scenario (<kbd>F5</kbd>). If the PC stays over its frame budget, a banner offers to restart one level lower.</p>
-      <p>Settings also switch teaching moments, the tip gauge, depth of field, anti-aliasing, the pen tilt direction and the timing readout. They are saved for your Windows user and survive updates. More detail on hardware is in <code>docs/hardware.md</code> in the repository.</p>
+      <p>Settings also switch teaching moments, the tip gauge, depth of field, anti-aliasing, ray tracing (Auto follows the detail level; Off, Shadows, Reflections or Full on a DirectX 12 PC with an RTX or RX&nbsp;6000-class card), the pen tilt direction and the timing readout. They are saved for your Windows user and survive updates. More detail on hardware is in <code>docs/hardware.md</code> in the repository.</p>
     </section>
 
     <div class="part-head">Part 3<span>Help</span></div>
@@ -690,9 +680,10 @@ It installs Git and Unity Hub with <code>winget</code> if they are missing (Wind
           <tr><td>Keys and mouse do nothing, or an <code>InvalidOperationException</code> about the Input class</td><td><i>Project Settings → Player → Active Input Handling</i> must be <b>Both</b>. Set it and restart the editor.</td></tr>
           <tr><td>Pen moves the cursor but pressure and tilt do nothing</td><td>Tick <i>Use Windows Ink</i> in the Wacom settings. Check <code>com.unity.inputsystem</code> is installed in <i>Window → Package Manager</i>.</td></tr>
           <tr><td>Package import errors mentioning long paths</td><td>Move the project to a short path such as <code>E:\claude\bovie-sim</code>, outside OneDrive.</td></tr>
-          <tr><td>Slow or stuttering</td><td>Press <kbd>F9</kbd> and choose a lower detail level, then <kbd>F5</kbd>. <kbd>F3</kbd> shows frame, CPU and GPU times. Keep depth of field off (<kbd>F7</kbd>).</td></tr>
+          <tr><td>Slow or stuttering</td><td>Press <kbd>F9</kbd> and choose a lower detail level, then <kbd>F5</kbd>; set ray tracing to Off or Shadows. <kbd>F3</kbd> shows frame, CPU and GPU times. Keep depth of field off (<kbd>F7</kbd>).</td></tr>
           <tr><td>Laptop runs slowly although it has a good graphics card</td><td>Windows may be using the integrated GPU. <code>maintain doctor</code> sets Unity and any build in <code>Builds</code> to the graphics card; by hand: <i>Settings → System → Display → Graphics</i>, add Unity (and <code>BovieSim.exe</code>) and choose <i>High performance</i>. F9 shows which GPU is in use.</td></tr>
           <tr><td>"Cannot start: … compute shaders …"</td><td>The graphics card or driver is too old, or you are in remote desktop / a virtual machine. Update the driver or run on the PC itself.</td></tr>
+          <tr><td>Ray tracing shows "not available"</td><td>The editor or build must run on DirectX 12 (<i>Project Settings → Player → Graphics APIs for Windows</i>: Direct3D12 first, then restart Unity) on an RTX, RX&nbsp;6000 or Arc card with a current driver. <i>Window → Rendering → HDRP Wizard → HDRP + DXR</i>, <i>Fix All</i>.</td></tr>
           <tr><td>No sky image or drape texture</td><td>The downloads were blocked; the sim falls back to built-in ones. Put any <code>.hdr</code> file into <code>Assets/BovieSim/Generated/Downloads</code> and run Set Up Project again.</td></tr>
           <tr><td>Instrument tilts the wrong way with the pen</td><td>Press <kbd>Y</kbd>.</td></tr>
           <tr><td>Keys do nothing in the editor while playing</td><td>Click inside the Game view to give it keyboard focus.</td></tr>

@@ -21,6 +21,10 @@ namespace BovieSim
         public int replayWidth;
         public bool ssao, softShadows;
         public int shadowResolution;
+        /// <summary>screen-space reflections (raster) on steel and wet tissue</summary>
+        public bool ssr;
+        /// <summary>ray-tracing tier when the user leaves it on Auto and the GPU supports DXR: 0 off, 1 shadows + AO, 2 + reflections, 3 + global illumination and subsurface</summary>
+        public int rayTracing;
         /// <summary>section image scale (1 = 640 x 400 pixels); the section is shown 556 px wide at 1080p, so 2 oversamples it</summary>
         public float sliceScale;
         public string Name { get { return level.ToString(); } }
@@ -29,10 +33,10 @@ namespace BovieSim
         {
             switch (l)
             {
-                case DetailLevel.Low: return new DetailSettings { level = l, voxelMm = 0.35f, maxSubdomain = 48, relaxSweeps = 30, bricksPerFrame = 24, frameBudgetMs = 16.7f, replaySeconds = 2f, replayWidth = 640, ssao = false, softShadows = false, shadowResolution = 512, sliceScale = 1.5f };
-                case DetailLevel.Medium: return new DetailSettings { level = l, voxelMm = 0.25f, maxSubdomain = 64, relaxSweeps = 40, bricksPerFrame = 48, frameBudgetMs = 16.7f, replaySeconds = 3f, replayWidth = 960, ssao = true, softShadows = true, shadowResolution = 1024, sliceScale = 2f };
-                case DetailLevel.High: return new DetailSettings { level = l, voxelMm = 0.2f, maxSubdomain = 80, relaxSweeps = 48, bricksPerFrame = 96, frameBudgetMs = 16.7f, replaySeconds = 4f, replayWidth = 1280, ssao = true, softShadows = true, shadowResolution = 2048, sliceScale = 2.5f };
-                default: return new DetailSettings { level = DetailLevel.Ultra, voxelMm = 0.16f, maxSubdomain = 96, relaxSweeps = 56, bricksPerFrame = 128, frameBudgetMs = 33.3f, replaySeconds = 4f, replayWidth = 1280, ssao = true, softShadows = true, shadowResolution = 2048, sliceScale = 2.5f };
+                case DetailLevel.Low: return new DetailSettings { level = l, voxelMm = 0.35f, maxSubdomain = 48, relaxSweeps = 30, bricksPerFrame = 24, frameBudgetMs = 16.7f, replaySeconds = 2f, replayWidth = 640, ssao = false, softShadows = false, shadowResolution = 512, ssr = false, rayTracing = 0, sliceScale = 1.5f };
+                case DetailLevel.Medium: return new DetailSettings { level = l, voxelMm = 0.25f, maxSubdomain = 64, relaxSweeps = 40, bricksPerFrame = 48, frameBudgetMs = 16.7f, replaySeconds = 3f, replayWidth = 960, ssao = true, softShadows = true, shadowResolution = 1024, ssr = false, rayTracing = 1, sliceScale = 2f };
+                case DetailLevel.High: return new DetailSettings { level = l, voxelMm = 0.2f, maxSubdomain = 80, relaxSweeps = 48, bricksPerFrame = 96, frameBudgetMs = 16.7f, replaySeconds = 4f, replayWidth = 1280, ssao = true, softShadows = true, shadowResolution = 2048, ssr = true, rayTracing = 2, sliceScale = 2.5f };
+                default: return new DetailSettings { level = DetailLevel.Ultra, voxelMm = 0.16f, maxSubdomain = 96, relaxSweeps = 56, bricksPerFrame = 128, frameBudgetMs = 33.3f, replaySeconds = 4f, replayWidth = 1280, ssao = true, softShadows = true, shadowResolution = 2048, ssr = true, rayTracing = 3, sliceScale = 2.5f };
             }
         }
     }
@@ -47,6 +51,16 @@ namespace BovieSim
     {
         public static string Gpu { get { return SystemInfo.graphicsDeviceName; } }
         public static int VramMb { get { return SystemInfo.graphicsMemorySize; } }
+        /// <summary>DirectX Raytracing available: needs the DirectX 12 API and an RTX / RX 6000-class card with a current driver.</summary>
+        public static bool RayTracingSupported { get { return SystemInfo.supportsRayTracing; } }
+        /// <summary>One line for the settings panel on why ray tracing is or is not available.</summary>
+        public static string RayTracingNote()
+        {
+            if (RayTracingSupported) return "Ray tracing available (" + SystemInfo.graphicsDeviceType + ")";
+            bool dx12 = SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Direct3D12;
+            return dx12 ? "Ray tracing not available: the graphics card or driver has no DirectX Raytracing support"
+                        : "Ray tracing not available: needs DirectX 12 (" + SystemInfo.graphicsDeviceType + " in use) and an RTX / RX 6000-class card";
+        }
 
         /// <summary>Null when the PC can run the simulator, otherwise the reason it cannot.</summary>
         public static string Unsupported()

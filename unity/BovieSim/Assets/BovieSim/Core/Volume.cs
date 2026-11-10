@@ -4,8 +4,8 @@ namespace BovieSim
 {
     /// <summary>
     /// CPU copy of the voxel volume. Axes: i -> world X (mm), j -> world Z (mm), k -> world Y (up).
-    /// World origin is the centre of the nominal skin surface; tissue lies at Y <= 0.
-    /// `cell` packs: bits 0-7 tissue type, 8-15 state, 16-23 aux, 24-31 flags (see Cell).
+    /// World origin is the centre of the nominal skin surface; tissue lies at Y &lt;= 0.
+    /// `cell` packs: bits 0-7 tissue type, 8-10 state, 11-15 exposure clock, 16-23 aux, 24-31 flags (see Cell).
     /// </summary>
     public sealed class Volume
     {
@@ -67,13 +67,24 @@ namespace BovieSim
         public const uint FlagCharPlug = 1u << 28;
         public const uint FlagBloodCover = 1u << 29;
         public const uint FlagRebled = 1u << 30;
+        /// <summary>the blood covering this surface voxel has clotted into coagulum</summary>
+        public const uint FlagClotCover = 1u << 31;
+        public const uint StateMask = 0x700u, ClockMask = 0xf800u;
+        public const int ClockMax = 31;
 
         public static uint Pack(Tissue type, TissueState state = TissueState.Normal, int aux = 0, uint flags = 0)
         {
-            return ((uint)type & 0xff) | (((uint)state & 0xff) << 8) | (((uint)aux & 0xff) << 16) | flags;
+            return ((uint)type & 0xff) | (((uint)state & 0x7) << 8) | (((uint)aux & 0xff) << 16) | flags;
         }
         public static Tissue Type(uint c) { return (Tissue)(c & 0xff); }
-        public static TissueState State(uint c) { return (TissueState)((c >> 8) & 0xff); }
+        public static TissueState State(uint c) { return (TissueState)((c >> 8) & 0x7); }
+        public static int Clock(uint c) { return (int)((c >> 11) & 0x1f); }
         public static int Aux(uint c) { return (int)((c >> 16) & 0xff); }
+        public static uint WithState(uint c, TissueState s) { return (c & ~StateMask) | (((uint)s & 0x7) << 8); }
+        public static uint WithClock(uint c, int k) { k = k < 0 ? 0 : k > 31 ? 31 : k; return (c & ~ClockMask) | (((uint)k & 0x1f) << 11); }
+        /// <summary>air made by cutting, vaporising or tearing: a raw wound surface</summary>
+        public static readonly uint CutAir = Pack(Tissue.Air, TissueState.Vaporized);
+        /// <summary>air made by blunt dissection: a separated plane</summary>
+        public static readonly uint DissectedAir = Pack(Tissue.Air, TissueState.Dissected);
     }
 }

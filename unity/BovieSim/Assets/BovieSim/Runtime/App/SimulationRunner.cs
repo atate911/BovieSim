@@ -16,7 +16,7 @@ namespace BovieSim
     /// </summary>
     public sealed class SimulationRunner : MonoBehaviour
     {
-        public static readonly string[] ScenarioIds = { "freeplay", "hemostasis", "lipoma" };
+        public static readonly string[] ScenarioIds = { "freeplay", "hemostasis", "lipoma", "viscera" };
         /// <summary>survives a scene reload so F6 can switch scenarios</summary>
         static string requestedScenario;
 
@@ -36,20 +36,17 @@ namespace BovieSim
         GpuVolume gpu; PhysicsPipeline physics; SurfaceRenderer surface; Particles particles;
         readonly FT10 gen = new FT10();
         EventBus events; SimUI ui; SurfacePicker picker; readonly HudData hud = new HudData(); ActivationAudio audioOut; OrbitCamera orbit; readonly InputState input = new InputState();
-        readonly ElectrodeTool tool = new ElectrodeTool(); readonly ScalpelTool scalpel = new ScalpelTool(); readonly ScissorsTool scissors = new ScissorsTool();
-        readonly ForcepsTool forceps = new ForcepsTool(); readonly SuctionTool suction = new SuctionTool(); readonly HookTool hook = new HookTool();
-        // the non-dominant hand has its own instruments, so a latched hold keeps its pose while the pointer uses the same kind
-        readonly HandController hands = new HandController();
-        readonly ForcepsTool forcepsB = new ForcepsTool(); readonly SuctionTool suctionB = new SuctionTool(); readonly HookTool hookB = new HookTool();
-        ToolKind activeTool = ToolKind.Pencil; HandBKind toolB = HandBKind.None; ElectrodeType pencilElectrode = ElectrodeType.Blade;
-        /// <summary>last pick for each hand, the lattice node each holds, the frozen traction target of a latched hand B, lifts from the wheel</summary>
-        bool hasHitA, hasHitB; Vector3 hitA, hitB; int nodeA = -1, nodeB = -1; Vector3 targetB; float liftA, liftB;
-        /// <summary>secondary tool slot chosen this frame (forceps jaws or suction tip), and whether hand B's instrument is on the field</summary>
-        Vector3 t2A, t2B; float t2R; int t2Mode; bool showB;
+        readonly ElectrodeTool tool = new ElectrodeTool(); readonly ForcepsTool forceps = new ForcepsTool();
+        readonly SuctionTool suction = new SuctionTool(); readonly HookTool hook = new HookTool();
+        readonly HemostatTool hemostat = new HemostatTool(); readonly GauzeTool gauze = new GauzeTool();
+        readonly int[] hemoNodes = { -1, -1 }; StrandRenderer strands; MaterialPropertyBlock gauzeMpb; MeshRenderer gauzeRenderer;
+        ToolKind activeTool = ToolKind.Pencil; ElectrodeType pencilElectrode = ElectrodeType.Blade;
         bool slicePerp, lesionFreedReported, lesionDelivered, lesionBreachReported, ready;
-        float clusterRiseMm; string status = "Building anatomy…";
+        float clusterRiseMm, liftMm; string status = "Building anatomy…";
         Vector4[] lastDisp; bool latticeMoved;
         float maxRimMm, maxCharMm3; int layerColumn = -1;
+        /// <summary>cumulative vaporised viscera, mm3 (scenario metric)</summary>
+        float visceraVapMm3;
         HDAdditionalCameraData hdCam; bool dofOn;
         readonly System.Diagnostics.Stopwatch frameWatch = new System.Diagnostics.Stopwatch();
         readonly FrameTiming[] frameTimings = new FrameTiming[1]; float cpuMs, gpuMs;
@@ -67,10 +64,14 @@ namespace BovieSim
 
         // ---- scene objects
         Transform field;
-        GameObject pencil, scalpelGo, scissorsGoA, scissorsGoB, forcepsArmA, forcepsArmB, frazier, hookGo, forcepsBArmA, forcepsBArmB, frazierB, hookGoB, drapes;
-        MeshFilter electrodeFilter; Mesh bladeMesh, needleMesh, ballMesh;
+        GameObject pencil, forcepsA, forcepsB, hemoA, hemoB, frazier, gauzeGo, hookGo, drapes;
+        MeshFilter electrodeFilter; MeshRenderer electrodeRenderer; Mesh bladeMesh, needleMesh, ballMesh; Material[] bladeMats, needleMats, ballMats;
         MeshRenderer cutButton, coagButton; MaterialPropertyBlock buttonMpb;
         Light arcLight; DepthOfField dof;
+        // render-side effects driven by detail level and the ray-tracing tier (runtime copies of the volume profile)
+        ScreenSpaceAmbientOcclusion ao; ScreenSpaceReflection ssr; GlobalIllumination gi; SubSurfaceScattering sssRt; ContactShadows contactShadows;
+        readonly System.Collections.Generic.List<HDAdditionalLightData> headLights = new System.Collections.Generic.List<HDAdditionalLightData>();
+        int rtTier; string rtText = "";
         SimAssets assets;
         int frames; float fps, fpsT;
 
@@ -146,6 +147,7 @@ namespace BovieSim
             surface = new SurfaceRenderer(surfCs, gpu, field, SkinCorrectedMaterials(), assets.blood);
             surface.maxBricksPerFrame = detail.bricksPerFrame;
             particles = new Particles(assets.particlesAlpha, assets.particlesAdditive);
+            strands = new StrandRenderer(field, assets.strand != null ? assets.strand : assets.blood);
             if (assets.teachingOverlay != null) { overlayMat = new Material(assets.teachingOverlay); surface.SetOverlay(overlayMat, false); }
             if (scenario.preCarve != null && scenario.preCarve.Count > 0) physics.MarkWound(new[] { 0, 0, 0 }, new[] { volume.nx, volume.ny, volume.nz });
             if (lattice != null)
@@ -185,7 +187,12 @@ namespace BovieSim
             orbit = new OrbitCamera(viewCamera, field);
             audioOut = gameObject.AddComponent<ActivationAudio>();
             if (postVolume == null) postVolume = FindAnyObjectByType<UnityEngine.Rendering.Volume>();
-            if (postVolume != null && postVolume.sharedProfile != null) postVolume.sharedProfile.TryGet(out dof);
+            if (postVolume != null && postVolume.sharedProfile != null)
+            {
+                // the volume's runtime copy: focus and ray-tracing changes must not be written into the generated asset
+                var prof = postVolume.profile;
+                prof.TryGet(out dof); prof.TryGet(out ao); prof.TryGet(out ssr); prof.TryGet(out gi); prof.TryGet(out sssRt); prof.TryGet(out contactShadows);
+            }
             if (dof != null) dof.active = dofOn; // off by default: blur reads as lag when the view moves
             ApplyRenderDetail();
             status = "";
@@ -195,7 +202,8 @@ namespace BovieSim
         /// <summary>
         /// Epidermis textures are baked for one skin tone and prep; tint runtime copies of those materials so the
         /// skin matches this scenario's tone and prep (chlorhexidine, povidone-iodine or none). The ratio is taken in
-        /// linear space because HDRP multiplies the base map by _BaseColor there.
+        /// linear space because HDRP multiplies the base map by _BaseColor there, then converted back to sRGB because
+        /// Unity gamma-decodes every non-HDR colour property on upload in a linear-colour-space project.
         /// </summary>
         Material[] SkinCorrectedMaterials()
         {
@@ -203,7 +211,7 @@ namespace BovieSim
             Color want = TissuePalette.Skin(scenario.skin.tone) * TissuePalette.Prep(scenario.skin.prep);
             Color baked = TissuePalette.Skin(TissuePalette.BakedTone) * TissuePalette.Prep(TissuePalette.BakedPrep);
             Color w = want.linear, b = baked.linear;
-            var k = new Color(Mathf.Clamp(w.r / Mathf.Max(b.r, 1e-3f), 0, 2), Mathf.Clamp(w.g / Mathf.Max(b.g, 1e-3f), 0, 2), Mathf.Clamp(w.b / Mathf.Max(b.b, 1e-3f), 0, 2), 1);
+            var k = new Color(Mathf.Clamp(w.r / Mathf.Max(b.r, 1e-3f), 0, 2), Mathf.Clamp(w.g / Mathf.Max(b.g, 1e-3f), 0, 2), Mathf.Clamp(w.b / Mathf.Max(b.b, 1e-3f), 0, 2), 1).gamma;
             foreach (int bucket in new[] { 0, 8 }) // epidermis, and coagulated epidermis (half strength: blanching hides the stain)
             {
                 if (mats[bucket] == null) continue;
@@ -214,39 +222,66 @@ namespace BovieSim
             return mats;
         }
 
-        GameObject MakePart(string name, Mesh mesh, Material mat, Transform parent)
+        GameObject MakePart(string name, Mesh mesh, Material mat, Transform parent) { return MakePart(name, mesh, new[] { mat }, parent); }
+
+        GameObject MakePart(string name, Mesh mesh, Material[] mats, Transform parent)
         {
             var go = new GameObject(name);
             go.transform.SetParent(parent, false);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = mat;
+            mr.sharedMaterials = mats;
+            // instruments move, drapes do not: HDRP keeps their ray-tracing acceleration structures accordingly
+            mr.rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.DynamicTransform;
             return go;
         }
 
         void BuildInstruments()
         {
-            drapes = MakePart("Drapes", MeshFactory.Drapes(volume.SizeX / 2, volume.SizeZ / 2), assets.drape, field);
+            int drapeSeed = scenario.vessels != null ? scenario.vessels.seed : 0;
+            drapes = MakePart("Drapes", MeshFactory.Drapes(volume.SizeX / 2, volume.SizeZ / 2, drapeSeed), new[] { assets.drapeFilm, assets.drapePad, assets.drape }, field);
+            drapes.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            // four towels square the window on top of the drape, held by Backhaus clips at the corners
+            var towelMat = assets.towel != null ? assets.towel : assets.drapePad;
+            for (int k = 0; k < 4; k++)
+                MakePart("Towel " + k, MeshFactory.Towel(k, volume.SizeX / 2, volume.SizeZ / 2, drapeSeed), towelMat, field).GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            var clipMesh = MeshFactory.TowelClip();
+            for (int i = 0; i < 4; i++)
+            {
+                Vector3 cpos, cdir; MeshFactory.TowelClipPose(i, volume.SizeX / 2, volume.SizeZ / 2, drapeSeed, out cpos, out cdir);
+                var clip = MakePart("Towel clip " + i, clipMesh, assets.packSteel != null ? assets.packSteel : assets.steel, field);
+                clip.transform.localPosition = cpos;
+                clip.transform.localRotation = Quaternion.LookRotation(Vector3.up, cdir); // local +Z (the clip's up) to +Y, local +Y along the diagonal
+                clip.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            }
+            BuildLampDomes();
+            BuildDressing();
+            // modelled instruments (Assets/BovieSim/Models, fitted by ProjectSetup.ImportToolModels) replace the procedural parts they cover
             pencil = new GameObject("Bovie pencil"); pencil.transform.SetParent(field, false);
-            MakePart("Body", MeshFactory.PencilBody(), assets.pencilBody, pencil.transform);
-            cutButton = MakePart("Cut button", MeshFactory.PencilButton(44, 58), assets.pencilCutButton, pencil.transform).GetComponent<MeshRenderer>();
-            coagButton = MakePart("Coag button", MeshFactory.PencilButton(62, 76), assets.pencilCoagButton, pencil.transform).GetComponent<MeshRenderer>();
-            bladeMesh = MeshFactory.Blade(); needleMesh = MeshFactory.Needle(); ballMesh = MeshFactory.Ball();
-            electrodeFilter = MakePart("Electrode", bladeMesh, assets.steel, pencil.transform).GetComponent<MeshFilter>();
-            scalpelGo = MakePart("Scalpel", MeshFactory.Scalpel(), assets.steel, field);
-            scissorsGoA = MakePart("Metzenbaum A", MeshFactory.ScissorsBlade(scissors.jawLength, scissors.shankLength), assets.steel, field);
-            scissorsGoB = MakePart("Metzenbaum B", MeshFactory.ScissorsBlade(scissors.jawLength, scissors.shankLength), assets.steel, field);
-            // arm A sits on the -Z side of the jaw centre and arm B on +Z: their teeth (1 x 2) face each other
-            forcepsArmA = MakePart("Adson forceps A", MeshFactory.ForcepsArm(forceps.armLength, true, 1), assets.steel, field);
-            forcepsArmB = MakePart("Adson forceps B", MeshFactory.ForcepsArm(forceps.armLength, false, 2), assets.steel, field);
-            frazier = MakePart("Frazier suction", MeshFactory.Frazier(), assets.steel, field);
-            hookGo = MakePart("Skin hook", MeshFactory.SkinHook(), assets.steel, field);
-            // the non-dominant hand's set
-            forcepsBArmA = MakePart("Adson forceps (left) A", MeshFactory.ForcepsArm(forcepsB.armLength, true, 1), assets.steel, field);
-            forcepsBArmB = MakePart("Adson forceps (left) B", MeshFactory.ForcepsArm(forcepsB.armLength, false, 2), assets.steel, field);
-            frazierB = MakePart("Frazier suction (left)", MeshFactory.Frazier(), assets.steel, field);
-            hookGoB = MakePart("Skin hook (left)", MeshFactory.SkinHook(), assets.steel, field);
-            foreach (var go in new[] { pencil, scalpelGo, scissorsGoA, scissorsGoB, forcepsArmA, forcepsArmB, frazier, hookGo, forcepsBArmA, forcepsBArmB, frazierB, hookGoB })
+            ToolModel pb = assets.pencilModel, pc = assets.pencilCutModel, pg = assets.pencilCoagModel;
+            if (pb != null && pb.IsSet) MakePart("Body", pb.mesh, pb.materials, pencil.transform); else MakePart("Body", MeshFactory.PencilBody(), assets.pencilBody, pencil.transform);
+            cutButton = (pc != null && pc.IsSet ? MakePart("Cut button", pc.mesh, pc.materials, pencil.transform) : MakePart("Cut button", MeshFactory.PencilButton(44, 58), assets.pencilCutButton, pencil.transform)).GetComponent<MeshRenderer>();
+            coagButton = (pg != null && pg.IsSet ? MakePart("Coag button", pg.mesh, pg.materials, pencil.transform) : MakePart("Coag button", MeshFactory.PencilButton(62, 76), assets.pencilCoagButton, pencil.transform)).GetComponent<MeshRenderer>();
+            var steelOnly = new[] { assets.steel };
+            bladeMesh = assets.bladeModel != null && assets.bladeModel.IsSet ? assets.bladeModel.mesh : MeshFactory.Blade(); bladeMats = assets.bladeModel != null && assets.bladeModel.IsSet ? assets.bladeModel.materials : steelOnly;
+            needleMesh = assets.needleModel != null && assets.needleModel.IsSet ? assets.needleModel.mesh : MeshFactory.Needle(); needleMats = assets.needleModel != null && assets.needleModel.IsSet ? assets.needleModel.materials : steelOnly;
+            ballMesh = assets.ballModel != null && assets.ballModel.IsSet ? assets.ballModel.mesh : MeshFactory.Ball(); ballMats = assets.ballModel != null && assets.ballModel.IsSet ? assets.ballModel.materials : steelOnly;
+            var electrodeGo = MakePart("Electrode", bladeMesh, bladeMats, pencil.transform);
+            electrodeFilter = electrodeGo.GetComponent<MeshFilter>(); electrodeRenderer = electrodeGo.GetComponent<MeshRenderer>();
+            // arm A sits on the -Z side of the jaw centre and arm B on +Z. Each arm's local +Z (HandPose: cross(x, arm axis))
+            // points away from the jaw centre, so arm A's teeth go to local -Z and arm B's to local +Z to face each other.
+            // An instrument pack in Assets/BovieSim/Models replaces the procedural arms (ProjectSetup.ImportInstrumentPack).
+            bool packForceps = assets.forcepsArmA != null && assets.forcepsArmB != null && assets.packSteel != null;
+            forcepsA = MakePart("Adson forceps A", packForceps ? assets.forcepsArmA : MeshFactory.ForcepsArm(forceps.armLength, false, 1), packForceps ? assets.packSteel : assets.steel, field);
+            forcepsB = MakePart("Adson forceps B", packForceps ? assets.forcepsArmB : MeshFactory.ForcepsArm(forceps.armLength, true, 2), packForceps ? assets.packSteel : assets.steel, field);
+            var hArm = MeshFactory.HemostatArm(hemostat.armLength);
+            hemoA = MakePart("Kelly hemostat A", hArm, assets.steel, field);
+            hemoB = MakePart("Kelly hemostat B", hArm, assets.steel, field);
+            frazier = assets.frazierModel != null && assets.frazierModel.IsSet ? MakePart("Frazier suction", assets.frazierModel.mesh, assets.frazierModel.materials, field) : MakePart("Frazier suction", MeshFactory.Frazier(), assets.steel, field);
+            gauzeGo = MakePart("Gauze", MeshFactory.Gauze(gauze.radius), assets.drape != null ? assets.drape : assets.pencilBody, field);
+            gauzeRenderer = gauzeGo.GetComponent<MeshRenderer>(); gauzeMpb = new MaterialPropertyBlock();
+            hookGo = assets.skinHookModel != null && assets.skinHookModel.IsSet ? MakePart("Skin hook", assets.skinHookModel.mesh, assets.skinHookModel.materials, field) : MakePart("Skin hook", MeshFactory.SkinHook(), assets.steel, field);
+            foreach (var go in new[] { pencil, forcepsA, forcepsB, hemoA, hemoB, frazier, gauzeGo, hookGo })
                 foreach (var r in go.GetComponentsInChildren<MeshRenderer>()) r.shadowCastingMode = ShadowCastingMode.On;
             buttonMpb = new MaterialPropertyBlock();
 
@@ -260,6 +295,41 @@ namespace BovieSim
             arcLight.intensity = 0;
             arcLight.shadows = LightShadows.None;
             arcLight.enabled = false;
+        }
+
+        /// <summary>Pack instruments resting on the drape beside the field (visual only), seated on the drape's own height.</summary>
+        void BuildDressing()
+        {
+            if (assets.dressing == null) return;
+            float ax = volume.SizeX / 2 - 2.5f, az = volume.SizeZ / 2 - 2.5f;
+            foreach (var d in assets.dressing)
+            {
+                if (d == null || d.mesh == null) continue;
+                var go = MakePart(d.name, d.mesh, d.material != null ? d.material : assets.packSteel != null ? assets.packSteel : assets.steel, field);
+                float y = MeshFactory.DrapeHeight(d.positionMm.x, d.positionMm.z, ax, az, 6f, scenario.vessels != null ? scenario.vessels.seed : 0);
+                go.transform.localPosition = new Vector3(d.positionMm.x, y + 0.3f, d.positionMm.z);
+                go.transform.localRotation = Quaternion.Euler(0, d.yawDeg, 0);
+                go.GetComponent<MeshRenderer>().rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            }
+        }
+
+        /// <summary>
+        /// The operating-light heads themselves: an emissive dome on each surgical light so steel instruments and wet
+        /// tissue reflect the lamps (screen-space or ray-traced reflections), as they do in theatre.
+        /// </summary>
+        void BuildLampDomes()
+        {
+            if (assets.lampDome == null) return;
+            var mesh = MeshFactory.LampDome();
+            foreach (var n in new[] { "Surgical light A", "Surgical light B" })
+            {
+                var lightGo = GameObject.Find(n); if (lightGo == null || lightGo.transform.Find("Dome") != null) continue;
+                var dome = MakePart("Dome", mesh, assets.lampDome, lightGo.transform);
+                dome.transform.localRotation = Quaternion.Euler(90, 0, 0); // mesh +Y (the emissive face) toward the light's forward axis, i.e. the field
+                var mr = dome.GetComponent<MeshRenderer>();
+                mr.shadowCastingMode = ShadowCastingMode.Off;
+                mr.rayTracingMode = UnityEngine.Experimental.Rendering.RayTracingMode.Static;
+            }
         }
 
         // ------------------------------------------------------------------------------------------------
@@ -277,44 +347,162 @@ namespace BovieSim
             bool overUi = ui.PointerOverUi(input.mouse);
             // Ctrl + wheel scrubs the depth peel; the plain wheel zooms
             bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-            // the wheel lifts an instrument that is holding tissue (traction); otherwise it zooms
-            bool lifting = (input.spaceHeld && hands.engagedB) || (!input.spaceHeld && nodeA >= 0);
-            orbit.HandleInput(overUi, !ctrlHeld && !lifting);
+            orbit.HandleInput(overUi, !ctrlHeld);
             if (ctrlHeld && !overUi) { float wheel = Input.mouseScrollDelta.y; if (Mathf.Abs(wheel) > 0.01f) StepPeel(-wheel * 0.25f); }
-            else if (lifting && !overUi && Mathf.Abs(input.wheel) > 0.01f) { if (input.spaceHeld) liftB = Mathf.Clamp(liftB + input.wheel * 0.5f, 0, 15); else liftA = Mathf.Clamp(liftA + input.wheel * 0.5f, 0, 15); }
             HandleKeys();
             ApplyPeel(frameDt);
 
-            // ---- the button, and which hand it belongs to: Space hands the pointer to the non-dominant hand
+            // ---- generator activation: footswitch (keys or on-screen) or hand switch on the pencil
             bool lmb = input.leftHeld && !overUi && !orbit.Dragging;
-            hands.Update(input.spaceHeld, lmb);
-            bool pressedA = hands.pressedA;
-            bool handCut = activeTool == ToolKind.Pencil && pressedA && !input.ctrl;
-            bool handCoag = activeTool == ToolKind.Pencil && pressedA && input.ctrl;
+            bool handCut = activeTool == ToolKind.Pencil && lmb && !input.ctrl;
+            bool handCoag = activeTool == ToolKind.Pencil && lmb && input.ctrl;
             gen.activation = input.pedalCut || ui.pedalCut || handCut ? Activation.Cut : input.pedalCoag || ui.pedalCoag || handCoag ? Activation.Coag : Activation.None;
 
             var r = physics.readout;
-            // same-frame pick on the CPU height map (the GPU pick answers a few frames late); the pick serves one hand at a time
+            // same-frame pick on the CPU height map (the GPU pick answers a few frames late)
             Vector3 rayO, rayD; PickRay(out rayO, out rayD);
             Vector3 hit = Vector3.zero;
             bool hasHit = input.inside && picker.Raycast(rayO, rayD, out hit);
-            if (hands.followB) { hasHitB = hasHit; hitB = hit; } else if (!input.spaceHeld) { hasHitA = hasHit; hitA = hit; }
-            tool.pressure = input.pressure; tool.tilt = input.tiltDeg; scalpel.pressure = input.pressure; scissors.pressure = input.pressure;
+            bool pressed = lmb;
+            tool.pressure = input.pressure; tool.tilt = input.tiltDeg;
             var camMm = orbit.PositionMm;
             bool tiltOn = input.HasTilt;
             bool suctionOn = false; Vector3 suctionAt = Vector3.zero;
-            events.buzzing = false; events.suctionOn = false; events.instrumentContact = false;
-            if (lattice != null) lattice.attachments.Clear();
+            events.buzzing = false; events.suctionOn = false; events.gauzeDab = false; events.gauzeWipe = false; events.gauzeSaturated = gauze.Saturated;
 
-            // ---- instrument placement (physics in material space; display shifted by the lattice displacement in PoseInstruments)
-            PlaceHandB(camMm, tiltOn);
-            PlaceHandA(frameDt, camMm, tiltOn, pressedA, ref suctionOn, ref suctionAt);
+            // ---- tool placement (physics in material space; display shifted by the lattice displacement below)
+            pencil.SetActive(activeTool == ToolKind.Pencil);
+            forcepsA.SetActive(activeTool == ToolKind.Forceps); forcepsB.SetActive(activeTool == ToolKind.Forceps);
+            hemoA.SetActive(activeTool == ToolKind.Hemostat); hemoB.SetActive(activeTool == ToolKind.Hemostat);
+            frazier.SetActive(activeTool == ToolKind.Suction); gauzeGo.SetActive(activeTool == ToolKind.Gauze); hookGo.SetActive(activeTool == ToolKind.Hook);
+            if (activeTool != ToolKind.Hemostat && activeTool != ToolKind.Gauze) physics.SetSecondaryMotion(Vector3.zero, 0, 1);
+            if (activeTool != ToolKind.Hemostat) { hemoNodes[0] = -1; hemoNodes[1] = -1; }
+            if (activeTool == ToolKind.Pencil)
+            {
+                tool.type = pencilElectrode;
+                tool.Place(hasHit, hit, camMm, tiltOn);
+                physics.SetSecondaryTool(Vector3.zero, Vector3.zero, 0, 0);
+                if (lattice != null) lattice.attachments.Clear();
+                hook.node = -1;
+            }
+            else if (activeTool == ToolKind.Forceps)
+            {
+                forceps.closed = pressed;
+                // Space raises the closed jaws (traction: lifts a grasped edge or a freed lipoma); opening resets
+                if (forceps.closed && Input.GetKey(KeyCode.Space)) liftMm = Mathf.Min(liftMm + 8f * frameDt, 15f);
+                else if (!forceps.closed) liftMm = 0;
+                forceps.Place(hasHit, hit + Vector3.up * liftMm, camMm, tiltOn, input.tiltDeg);
+                physics.SetSecondaryTool(forceps.tipA, forceps.tipB, forceps.jawRadius, forceps.visible && forceps.closed ? 1 : 0);
+                // buzzing the forceps: closed jaws become the electrode; open jaws cannot be activated
+                if (forceps.visible && forceps.closed) { tool.AsForceps(forceps.tipA, forceps.tipB, forceps.jawRadius, forceps.axis); events.buzzing = gen.activation != Activation.None; }
+                else { tool.visible = false; gen.activation = Activation.None; }
+                // forceps lift: closed jaws carry the nearest node (and with it a freed lipoma)
+                if (lattice != null)
+                {
+                    if (forceps.closed && forceps.visible)
+                    {
+                        if (hook.node < 0) hook.node = lattice.NearestNode(forceps.Mid, 3);
+                        lattice.attachments.Clear();
+                        if (hook.node >= 0) lattice.attachments.Add(new Attachment { node = hook.node, target = forceps.Mid + forceps.axis * 1.0f, strength = 0.2f });
+                    }
+                    else { hook.node = -1; lattice.attachments.Clear(); }
+                }
+            }
+            else if (activeTool == ToolKind.Hemostat)
+            {
+                // closed jaws grasp (and can be buzzed); held closed and moving, the tips push through a plane; closed and
+                // spread (Space), the jaws open inside the tissue and dissect it bluntly
+                hemostat.closed = pressed;
+                hemostat.Animate(Input.GetKey(KeyCode.Space), frameDt);
+                hemostat.Place(hasHit, hit, camMm, tiltOn, input.tiltDeg, input.pressure);
+                int mode2 = 0;
+                if (hemostat.visible && hemostat.closed)
+                {
+                    if (hemostat.spreading && hemostat.spread > 0.05f) { mode2 = 4; physics.SetDissect(true, hemostat.jawRadius); }
+                    else if (!hemostat.spreading && hemostat.spread < 0.05f && hemostat.Travel() > 0.08f) { mode2 = 5; physics.SetDissect(false, hemostat.jawRadius); }
+                    else mode2 = 1;
+                }
+                if (mode2 == 5) physics.SetSecondaryTool(hemostat.prevMid, hemostat.Mid, hemostat.jawRadius, 5);
+                else physics.SetSecondaryTool(hemostat.tipA, hemostat.tipB, hemostat.jawRadius, mode2);
+                // the jaws entered the tissue at the surface hit: the dissected sheet runs from there to the tips
+                physics.SetSecondaryMotion(hasHit ? hit : hemostat.Mid, 0, 1);
+                if (hemostat.visible && hemostat.closed && !hemostat.spreading && hemostat.spread < 0.05f) { tool.AsForceps(hemostat.tipA, hemostat.tipB, hemostat.jawRadius, hemostat.axis); events.buzzing = gen.activation != Activation.None; }
+                else { tool.visible = false; gen.activation = Activation.None; }
+                // spreading pushes the two sides of the plane apart; a grasp carries the nearest node
+                if (lattice != null)
+                {
+                    lattice.attachments.Clear();
+                    if (hemostat.closed && hemostat.visible)
+                    {
+                        if (hemoNodes[0] < 0) { hemoNodes[0] = lattice.NearestNode(hemostat.tipA, 3); hemoNodes[1] = lattice.NearestNode(hemostat.tipB, 3); }
+                        if (hemostat.spreading)
+                        {
+                            if (hemoNodes[0] >= 0) lattice.attachments.Add(new Attachment { node = hemoNodes[0], target = hemostat.tipA, strength = 0.3f });
+                            if (hemoNodes[1] >= 0 && hemoNodes[1] != hemoNodes[0]) lattice.attachments.Add(new Attachment { node = hemoNodes[1], target = hemostat.tipB, strength = 0.3f });
+                        }
+                        else if (hemoNodes[0] >= 0) lattice.attachments.Add(new Attachment { node = hemoNodes[0], target = hemostat.Mid + hemostat.axis * 0.5f, strength = 0.2f });
+                    }
+                    else { hemoNodes[0] = -1; hemoNodes[1] = -1; }
+                }
+                hook.node = -1;
+            }
+            else if (activeTool == ToolKind.Gauze)
+            {
+                gauze.Place(hasHit, hit, camMm, tiltOn, input.tiltDeg, pressed, input.pressure, frameDt);
+                bool on = gauze.visible && pressed;
+                physics.SetSecondaryTool(gauze.centre, gauze.centre, gauze.radius, on ? 3 : 0);
+                physics.SetSecondaryMotion(gauze.velocity, on ? gauze.pressure : 0, gauze.Absorb);
+                gauze.soakedUl = Mathf.Min(gauze.capacityUl, gauze.soakedUl + r.gauzeSoakUl);
+                float speed = gauze.velocity.magnitude;
+                events.gauzeDab = on && speed < 15; events.gauzeWipe = on && speed >= 15;
+                tool.visible = false; gen.activation = Activation.None;
+                // the pressed pad compresses the surface under it
+                if (lattice != null)
+                {
+                    lattice.attachments.Clear();
+                    if (on) foreach (int n in lattice.NodesWithin(gauze.centre, gauze.radius))
+                        lattice.attachments.Add(new Attachment { node = n, target = new Vector3(lattice.pos[n * 3], lattice.mat[n * 3 + 1] - 1.0f * gauze.pressure, lattice.pos[n * 3 + 2]), strength = 0.15f });
+                }
+                hook.node = -1;
+            }
+            else if (activeTool == ToolKind.Suction)
+            {
+                suction.on = pressed;
+                suction.Place(hasHit, hit, camMm, tiltOn, input.tiltDeg);
+                physics.SetSecondaryTool(suction.tip, suction.tip, suction.drainRadius, suction.visible && suction.on ? 2 : 0);
+                if (suction.visible && suction.on) { suctionOn = true; suctionAt = suction.tip; events.suctionOn = true; }
+                tool.visible = false; gen.activation = Activation.None;
+                if (lattice != null) lattice.attachments.Clear();
+                hook.node = -1;
+            }
+            else
+            {
+                // skin hook: press to attach the nearest lattice node, drag to retract, release to let go
+                bool dragging = false; Vector3 dragTarget = Vector3.zero;
+                if (pressed && lattice != null)
+                {
+                    if (hook.node < 0 && hasHit) hook.node = lattice.NearestNode(hit, 4);
+                    if (hook.node >= 0)
+                    {
+                        Vector3 ro, rd; PickRay(out ro, out rd);
+                        float planeY = lattice.mat[hook.node * 3 + 1] + 1.5f;
+                        float tHit = Mathf.Abs(rd.y) > 1e-4f ? (planeY - ro.y) / rd.y : -1;
+                        lattice.attachments.Clear();
+                        if (tHit > 0) { dragging = true; dragTarget = ro + rd * tHit; lattice.attachments.Add(new Attachment { node = hook.node, target = dragTarget, strength = 0.25f }); }
+                    }
+                }
+                else { hook.node = -1; if (lattice != null) lattice.attachments.Clear(); }
+                hook.Place(dragging || hasHit, dragging ? dragTarget : hit, camMm, tiltOn, input.tiltDeg);
+                physics.SetSecondaryTool(Vector3.zero, Vector3.zero, 0, 0);
+                tool.visible = false; gen.activation = Activation.None;
+            }
 
             var mode = gen.ActiveMode;
             audioOut.Set(mode != null ? mode.toneHz : 500, mode != null && !gen.remFault);
 
             // ---- bleeding droplets, steam, smoke and arcs from the last readout
             for (int n = 0; n < r.bleedCount; n++) { var bp = r.bleedPoints[n]; particles.Bleed(new Vector3(bp.x, bp.y, bp.z), bp.w, frameDt); }
+            for (int n = 0; n < r.spatterCount; n++) { var sp = r.spatterPoints[n]; particles.Spatter(new Vector3(sp.x, sp.y, sp.z), sp.w); }
             if (mode != null && r.hasHit && r.contactVoxels > 0 && tool.visible)
             {
                 var tip = tool.tip;
@@ -334,7 +522,7 @@ namespace BovieSim
             particles.Update(frameDt, suctionOn, suctionAt, volume.SurfaceY);
             physics.pendingDrops.AddRange(particles.landings);
             particles.landings.Clear();
-            string toolName = (activeTool == ToolKind.Pencil ? tool.type.ToString().ToLowerInvariant() : activeTool.ToString().ToLowerInvariant()) + (toolB != HandBKind.None ? " + " + toolB.ToString().ToLowerInvariant() : "");
+            string toolName = activeTool == ToolKind.Pencil ? tool.type.ToString().ToLowerInvariant() : activeTool.ToString().ToLowerInvariant();
             events.Update(physics.simTime, r, gen, toolName);
 
             // ---- mechanics: apply the last probe (severed / shrunk links), muscle twitch, step, upload
@@ -345,7 +533,6 @@ namespace BovieSim
             // tissue changes where the electrode works every frame; the cooling region changes slowly (state, colour)
             int[] bmin, bmax;
             if (physics.ActiveBox(out bmin, out bmax)) surface.MarkVoxelBox(bmin, bmax);
-            if (physics.CutBox(out bmin, out bmax)) surface.MarkVoxelBox(bmin, bmax);
             if (Time.frameCount % 8 == 0 && physics.ThermalBox(out bmin, out bmax)) surface.MarkVoxelBox(bmin, bmax);
             surface.Update(hasHit ? hit : tool.tip);
             picker.Refresh(physics, hot || latticeMoved);
@@ -381,10 +568,13 @@ namespace BovieSim
 
         void StepMechanics(ModeSpec mode, SimReadout r, float frameDt)
         {
-            byte[] sev; float[] om;
-            if (physics.TakeProbe(out sev, out om)) lattice.ApplyProbe(sev, om);
+            byte[] flags; float[] om, dry;
+            if (physics.TakeProbe(out flags, out om, out dry)) lattice.ApplyProbe(flags, om, dry);
             if (mode != null && !mode.isCut && r.muscleHeatVoxels > 20 && tool.visible) lattice.Stimulate(tool.tip, Mathf.Min(2, 0.5f + r.iRms * 2), physics.simTime);
             lattice.Step(frameDt, physics.simTime);
+            // links torn by traction carve the tissue they ran through; yielded links show as strands
+            physics.pendingTears.AddRange(lattice.TakeTears());
+            strands.Update(lattice);
             // rebuild only the bricks around nodes that moved visibly since they were last extracted
             latticeMoved = false;
             for (int n = 0; n < lattice.count; n++)
@@ -417,144 +607,6 @@ namespace BovieSim
             }
         }
 
-        /// <summary>
-        /// The non-dominant hand: forceps, hook or suction. Live while Space is held (it follows the pointer; the button
-        /// grasps or catches), latched where it was left otherwise, keeping its attachment and its frozen target.
-        /// </summary>
-        void PlaceHandB(Vector3 camMm, bool tiltOn)
-        {
-            t2Mode = 0;
-            if (toolB == HandBKind.None) { hands.ReleaseB(); nodeB = -1; }
-            if (!hands.engagedB) { nodeB = -1; liftB = 0; }
-            showB = toolB != HandBKind.None && hands.stateB != HandBState.Parked;
-            if (!showB) return;
-            bool follow = hands.followB;
-            bool hb = follow && hasHitB;
-            if (toolB == HandBKind.Forceps)
-            {
-                forcepsB.closed = hands.engagedB;
-                if (follow) forcepsB.Place(hb, hitB + Vector3.up * liftB, camMm, tiltOn, input.tiltDeg, 0.3f, true);
-                if (follow && !forcepsB.visible) { showB = false; return; }
-                if (forcepsB.closed && forcepsB.visible)
-                {
-                    if (lattice != null)
-                    {
-                        if (hands.regrabB || nodeB < 0) nodeB = lattice.NearestNode(forcepsB.Mid, 3);
-                        if (follow) targetB = forcepsB.Mid + forcepsB.axis * 1.0f;
-                        if (nodeB >= 0) lattice.attachments.Add(new Attachment { node = nodeB, target = targetB, strength = 0.2f });
-                    }
-                    t2A = forcepsB.tipA; t2B = forcepsB.tipB; t2R = forcepsB.jawRadius; t2Mode = 1;
-                }
-            }
-            else if (toolB == HandBKind.Hook)
-            {
-                if (lattice != null)
-                {
-                    if (hands.engagedB && hb && (hands.regrabB || nodeB < 0)) nodeB = lattice.NearestNode(hitB, 4);
-                    if (hands.engagedB && nodeB >= 0 && follow)
-                    {
-                        // drag target: cursor ray intersected with the horizontal plane 1.5 mm above the node's start height, plus the lift
-                        Vector3 ro, rd; PickRay(out ro, out rd);
-                        float planeY = lattice.mat[nodeB * 3 + 1] + 1.5f;
-                        float tHit = Mathf.Abs(rd.y) > 1e-4f ? (planeY - ro.y) / rd.y : -1;
-                        if (tHit > 0) targetB = ro + rd * tHit + Vector3.up * liftB;
-                    }
-                    if (hands.engagedB && nodeB >= 0) lattice.attachments.Add(new Attachment { node = nodeB, target = targetB, strength = 0.25f });
-                }
-                bool holding = hands.engagedB && nodeB >= 0;
-                if (follow) hookB.Place(holding || hb, holding ? targetB : hitB, camMm, tiltOn, input.tiltDeg, true);
-                if (follow && !hookB.visible) { showB = false; return; }
-            }
-            else
-            {
-                suctionB.on = hands.engagedB;
-                if (follow) suctionB.Place(hb, hitB, camMm, tiltOn, input.tiltDeg, true);
-                if (follow && !suctionB.visible) { showB = false; return; }
-                if (suctionB.visible && suctionB.on) { t2A = suctionB.tip; t2B = suctionB.tip; t2R = suctionB.drainRadius; t2Mode = 2; }
-            }
-        }
-
-        /// <summary>The dominant hand's instrument, and the electrode (pencil, buzzed forceps, or a touched retractor).</summary>
-        void PlaceHandA(float frameDt, Vector3 camMm, bool tiltOn, bool pressedA, ref bool suctionOn, ref Vector3 suctionAt)
-        {
-            bool electrode = false;
-            switch (activeTool)
-            {
-                case ToolKind.Pencil:
-                    tool.type = pencilElectrode;
-                    tool.Place(hasHitA, hitA, camMm, tiltOn);
-                    electrode = tool.visible;
-                    break;
-                case ToolKind.Scalpel:
-                    scalpel.Place(hasHitA, hitA, camMm, tiltOn, input.tiltDeg, pressedA);
-                    if (scalpel.visible && scalpel.cutting) physics.SetMechCut(1, scalpel.sweeping ? scalpel.prevCentre : scalpel.Centre, scalpel.Centre, scalpel.axis, scalpel.wdir, scalpel.ndir, scalpel.HalfLength, scalpel.halfWidth, scalpel.halfThickness, 0);
-                    break;
-                case ToolKind.Scissors:
-                    var action = pressedA && input.ctrl ? ScissorsTool.Action.Spread : hands.pressEdgeA ? ScissorsTool.Action.Snip : ScissorsTool.Action.None;
-                    scissors.Place(hasHitA, hitA, camMm, tiltOn, input.tiltDeg, action, frameDt);
-                    if (scissors.visible && scissors.snip) physics.SetMechCut(1, scissors.Centre, scissors.Centre, scissors.axis, scissors.wdir, scissors.ndir, scissors.HalfLength, Mathf.Max(scissors.open, 2) / 2, 0.15f, 0);
-                    else if (scissors.visible && scissors.spreading) physics.SetMechCut(2, scissors.Centre, scissors.Centre, scissors.axis, scissors.wdir, scissors.ndir, scissors.HalfLength, scissors.open / 2, 0.4f, scissors.spreadRadius);
-                    break;
-                case ToolKind.Forceps:
-                    forceps.closed = pressedA;
-                    if (!forceps.closed) { nodeA = -1; liftA = 0; }
-                    forceps.Place(hasHitA, hitA + Vector3.up * liftA, camMm, tiltOn, input.tiltDeg);
-                    if (forceps.visible && forceps.closed)
-                    {
-                        if (t2Mode == 0) { t2A = forceps.tipA; t2B = forceps.tipB; t2R = forceps.jawRadius; t2Mode = 1; }
-                        // closed jaws carry the nearest node (and with it a freed lipoma)
-                        if (lattice != null)
-                        {
-                            if (nodeA < 0) nodeA = lattice.NearestNode(forceps.Mid, 3);
-                            if (nodeA >= 0) lattice.attachments.Add(new Attachment { node = nodeA, target = forceps.Mid + forceps.axis * 1.0f, strength = 0.2f });
-                        }
-                        // buzzing single-handed: the closed jaws are the electrode (a pedal activation)
-                        tool.AsForceps(forceps.tipA, forceps.tipB, forceps.jawRadius, forceps.axis); electrode = true;
-                        events.buzzing = gen.activation != Activation.None;
-                    }
-                    break;
-                case ToolKind.Suction:
-                    suction.on = pressedA;
-                    suction.Place(hasHitA, hitA, camMm, tiltOn, input.tiltDeg);
-                    if (suction.visible && suction.on)
-                    {
-                        suctionOn = true; suctionAt = suction.tip; events.suctionOn = true;
-                        if (t2Mode == 0) { t2A = suction.tip; t2B = suction.tip; t2R = suction.drainRadius; t2Mode = 2; }
-                    }
-                    break;
-                default:
-                    // skin hook: press to attach the nearest lattice node, drag to retract, release to let go
-                    bool dragging = false; Vector3 dragTarget = Vector3.zero;
-                    if (pressedA && lattice != null)
-                    {
-                        if (nodeA < 0 && hasHitA) nodeA = lattice.NearestNode(hitA, 4);
-                        if (nodeA >= 0)
-                        {
-                            Vector3 ro, rd; PickRay(out ro, out rd);
-                            float planeY = lattice.mat[nodeA * 3 + 1] + 1.5f;
-                            float tHit = Mathf.Abs(rd.y) > 1e-4f ? (planeY - ro.y) / rd.y : -1;
-                            if (tHit > 0) { dragging = true; dragTarget = ro + rd * tHit + Vector3.up * liftA; lattice.attachments.Add(new Attachment { node = nodeA, target = dragTarget, strength = 0.25f }); }
-                        }
-                    }
-                    else { nodeA = -1; liftA = 0; }
-                    hook.Place(dragging || hasHitA, dragging ? dragTarget : hitA, camMm, tiltOn, input.tiltDeg);
-                    break;
-            }
-            if (activeTool != ToolKind.Forceps && activeTool != ToolKind.Hook) nodeA = -1;
-            // the pencil against the other hand's instrument: buzzing the forceps, or an alternate-site burn under a retractor
-            if (activeTool == ToolKind.Pencil && tool.visible && showB && gen.activation != Activation.None)
-            {
-                if (toolB == HandBKind.Forceps && forcepsB.closed && HandPose.MetalDistance(tool.tip, forcepsB.Mid, forcepsB.axis, 45, 1.6f) < 1.0f)
-                { tool.AsForceps(forcepsB.tipA, forcepsB.tipB, forcepsB.jawRadius, forcepsB.axis); events.buzzing = true; }
-                else if (toolB == HandBKind.Hook && hookB.visible && HandPose.MetalDistance(tool.tip, hookB.tip, hookB.axis, 40, 1.0f) < 1.0f)
-                { tool.AsForceps(hookB.tip, hookB.tip + hookB.axis * 1.5f, 0.4f, hookB.axis); events.instrumentContact = true; }
-                else if (toolB == HandBKind.Suction && suctionB.visible && HandPose.MetalDistance(tool.tip, suctionB.tip, suctionB.axis, 50, 1.7f) < 1.0f)
-                { tool.AsForceps(suctionB.tip, suctionB.tip + suctionB.axis * 2.0f, 1.5f, suctionB.axis); events.instrumentContact = true; }
-            }
-            if (!electrode) { tool.visible = false; gen.activation = Activation.None; }
-            physics.SetSecondaryTool(t2A, t2B, t2R, t2Mode);
-        }
-
         /// <summary>Cursor ray in field millimetres.</summary>
         void PickRay(out Vector3 originMm, out Vector3 dirMm)
         {
@@ -567,57 +619,63 @@ namespace BovieSim
 
         void PoseInstruments(ModeSpec mode)
         {
-            bool pen = activeTool == ToolKind.Pencil && tool.visible;
-            pencil.SetActive(pen);
-            if (pen)
+            if (activeTool == ToolKind.Pencil)
             {
-                electrodeFilter.sharedMesh = pencilElectrode == ElectrodeType.Needle ? needleMesh : pencilElectrode == ElectrodeType.Ball ? ballMesh : bladeMesh;
-                // mesh frame: +Y along the handle axis, +Z the blade face normal (includes roll)
-                HandPose.Apply(pencil.transform, tool.tip + DisplayOffset(tool.tip), tool.axis, tool.ndir);
+                pencil.SetActive(tool.visible);
+                if (tool.visible)
+                {
+                    var wantMesh = pencilElectrode == ElectrodeType.Needle ? needleMesh : pencilElectrode == ElectrodeType.Ball ? ballMesh : bladeMesh;
+                    if (electrodeFilter.sharedMesh != wantMesh) { electrodeFilter.sharedMesh = wantMesh; electrodeRenderer.sharedMaterials = pencilElectrode == ElectrodeType.Needle ? needleMats : pencilElectrode == ElectrodeType.Ball ? ballMats : bladeMats; }
+                    // mesh frame: +Y along the handle axis, +Z the blade face normal (includes roll)
+                    HandPose.Apply(pencil.transform, tool.tip + DisplayOffset(tool.tip), tool.axis, tool.ndir);
+                }
+                SetButtonGlow(cutButton, gen.activation == Activation.Cut, new Color(1f, 0.85f, 0.2f));
+                SetButtonGlow(coagButton, gen.activation == Activation.Coag, new Color(0.25f, 0.55f, 1f));
             }
-            SetButtonGlow(cutButton, gen.activation == Activation.Cut, new Color(1f, 0.85f, 0.2f));
-            SetButtonGlow(coagButton, gen.activation == Activation.Coag, new Color(0.25f, 0.55f, 1f));
-            bool sc = activeTool == ToolKind.Scalpel && scalpel.visible;
-            scalpelGo.SetActive(sc);
-            if (sc) HandPose.Apply(scalpelGo.transform, scalpel.tip + DisplayOffset(scalpel.tip), scalpel.axis, scalpel.ndir);
-            bool sz = activeTool == ToolKind.Scissors && scissors.visible;
-            scissorsGoA.SetActive(sz); scissorsGoB.SetActive(sz);
-            if (sz)
+            else if (activeTool == ToolKind.Forceps)
             {
-                var off = DisplayOffset(scissors.tip);
-                HandPose.Apply(scissorsGoA.transform, scissors.tipA + off, scissors.armAy, scissors.armAz);
-                HandPose.Apply(scissorsGoB.transform, scissors.tipB + off, scissors.armBy, scissors.armBz);
+                forcepsA.SetActive(forceps.visible); forcepsB.SetActive(forceps.visible);
+                if (forceps.visible)
+                {
+                    var off = DisplayOffset(forceps.Mid);
+                    HandPose.Apply(forcepsA.transform, forceps.tipA + off, forceps.armAy, forceps.armAz);
+                    HandPose.Apply(forcepsB.transform, forceps.tipB + off, forceps.armBy, forceps.armBz);
+                }
             }
-            bool fc = activeTool == ToolKind.Forceps && forceps.visible;
-            forcepsArmA.SetActive(fc); forcepsArmB.SetActive(fc);
-            if (fc)
+            else if (activeTool == ToolKind.Hemostat)
             {
-                var off = DisplayOffset(forceps.Mid);
-                HandPose.Apply(forcepsArmA.transform, forceps.tipA + off, forceps.armAy, forceps.armAz);
-                HandPose.Apply(forcepsArmB.transform, forceps.tipB + off, forceps.armBy, forceps.armBz);
+                hemoA.SetActive(hemostat.visible); hemoB.SetActive(hemostat.visible);
+                if (hemostat.visible)
+                {
+                    var off = DisplayOffset(hemostat.Mid);
+                    HandPose.Apply(hemoA.transform, hemostat.tipA + off, hemostat.armAy, hemostat.armAz);
+                    HandPose.Apply(hemoB.transform, hemostat.tipB + off, hemostat.armBy, hemostat.armBz);
+                }
             }
-            bool su = activeTool == ToolKind.Suction && suction.visible;
-            frazier.SetActive(su);
-            if (su) HandPose.Apply(frazier.transform, suction.tip + DisplayOffset(suction.tip), suction.axis, suction.frameZ);
-            bool hk = activeTool == ToolKind.Hook && hook.visible;
-            hookGo.SetActive(hk);
-            // while dragging, the hook tip is already at the deformed target
-            if (hk) HandPose.Apply(hookGo.transform, hook.tip + (nodeA >= 0 ? Vector3.zero : DisplayOffset(hook.tip)), hook.axis, hook.frameZ);
-            // the non-dominant hand
-            bool fb = showB && toolB == HandBKind.Forceps && forcepsB.visible;
-            forcepsBArmA.SetActive(fb); forcepsBArmB.SetActive(fb);
-            if (fb)
+            else if (activeTool == ToolKind.Gauze)
             {
-                var off = DisplayOffset(forcepsB.Mid);
-                HandPose.Apply(forcepsBArmA.transform, forcepsB.tipA + off, forcepsB.armAy, forcepsB.armAz);
-                HandPose.Apply(forcepsBArmB.transform, forcepsB.tipB + off, forcepsB.armBy, forcepsB.armBz);
+                gauzeGo.SetActive(gauze.visible);
+                if (gauze.visible)
+                {
+                    HandPose.Apply(gauzeGo.transform, gauze.centre + DisplayOffset(gauze.centre), gauze.axis, gauze.frameZ);
+                    // the pad reddens as it fills
+                    float sat = gauze.Saturation;
+                    gauzeRenderer.GetPropertyBlock(gauzeMpb);
+                    gauzeMpb.SetColor("_BaseColor", new Color(0.96f - 0.6f * sat, 0.96f - 0.9f * sat, 0.94f - 0.9f * sat));
+                    gauzeRenderer.SetPropertyBlock(gauzeMpb);
+                }
             }
-            bool hb = showB && toolB == HandBKind.Hook && hookB.visible;
-            hookGoB.SetActive(hb);
-            if (hb) HandPose.Apply(hookGoB.transform, hookB.tip + (nodeB >= 0 ? Vector3.zero : DisplayOffset(hookB.tip)), hookB.axis, hookB.frameZ);
-            bool sb = showB && toolB == HandBKind.Suction && suctionB.visible;
-            frazierB.SetActive(sb);
-            if (sb) HandPose.Apply(frazierB.transform, suctionB.tip + DisplayOffset(suctionB.tip), suctionB.axis, suctionB.frameZ);
+            else if (activeTool == ToolKind.Suction)
+            {
+                frazier.SetActive(suction.visible);
+                if (suction.visible) HandPose.Apply(frazier.transform, suction.tip + DisplayOffset(suction.tip), suction.axis, suction.frameZ);
+            }
+            else
+            {
+                hookGo.SetActive(hook.visible);
+                // while dragging, the hook tip is already at the deformed target
+                if (hook.visible) HandPose.Apply(hookGo.transform, hook.tip + (hook.node >= 0 ? Vector3.zero : DisplayOffset(hook.tip)), hook.axis, hook.frameZ);
+            }
 
             // arc / spark light at the tip (bloom picks up the emissive particles; this lights the wound)
             bool arcOn = mode != null && physics.readout.hasHit && tool.visible;
@@ -663,12 +721,9 @@ namespace BovieSim
             if (Input.GetKeyDown(KeyCode.B)) pencilElectrode = ElectrodeType.Blade;
             if (Input.GetKeyDown(KeyCode.N)) pencilElectrode = ElectrodeType.Needle;
             if (Input.GetKeyDown(KeyCode.O)) pencilElectrode = ElectrodeType.Ball;
-            if (Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.Q))
-            {
-                if (shift) { toolB = HandPose.OrderB[(Array.IndexOf(HandPose.OrderB, toolB) + 1) % HandPose.OrderB.Length]; hands.ReleaseB(); nodeB = -1; liftB = 0; }
-                else { activeTool = HandPose.Order[(Array.IndexOf(HandPose.Order, activeTool) + 1) % HandPose.Order.Length]; nodeA = -1; liftA = 0; }
-            }
-            if (Input.GetKeyDown(KeyCode.T)) { forceps.toothed = !forceps.toothed; forcepsB.toothed = forceps.toothed; }
+            if (Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.Q)) activeTool = HandPose.Order[(Array.IndexOf(HandPose.Order, activeTool) + 1) % HandPose.Order.Length];
+            if (Input.GetKeyDown(KeyCode.T)) forceps.toothed = !forceps.toothed;
+            if (Input.GetKeyDown(KeyCode.U)) gauze.Fresh();
             if (Input.GetKeyDown(KeyCode.R)) tool.roll += Mathf.PI / 4;
             if (Input.GetKeyDown(KeyCode.C)) { if (shift) ui.largeSection = !ui.largeSection; else physics.sliceMode = (physics.sliceMode + 1) % 6; }
             if (Input.GetKeyDown(KeyCode.K)) { if (shift) peelSweep = !peelSweep; else SetPeelMode((peelMode + 1) % 3); }
@@ -759,25 +814,87 @@ namespace BovieSim
                 case "antialiasing": settings.antialiasing = (settings.antialiasing + 1) % AaModes.Length; aaIndex = settings.antialiasing; if (hdCam != null) hdCam.antialiasing = AaModes[aaIndex]; break;
                 case "invertTiltY": settings.invertTiltY = !settings.invertTiltY; InputState.invertTiltY = settings.invertTiltY; break;
                 case "showTiming": settings.showTiming = !settings.showTiming; ui.showPerf = settings.showTiming; break;
+                case "rayTracing":
+                {
+                    var opts = UserSettings.RayTracingOptions;
+                    settings.rayTracing = opts[(Mathf.Max(0, Array.IndexOf(opts, settings.rayTracing)) + 1) % opts.Length];
+                    ApplyRayTracing();
+                    break;
+                }
             }
             SaveSettings();
         }
 
-        /// <summary>Render-side detail: ambient occlusion and the surgical lights' shadow maps scale with the level.</summary>
+        /// <summary>Render-side detail: ambient occlusion and the surgical lights' shadow maps scale with the level; then the ray-tracing tier.</summary>
         void ApplyRenderDetail()
         {
-            if (postVolume != null && postVolume.sharedProfile != null)
-            {
-                ScreenSpaceAmbientOcclusion ao;
-                if (postVolume.sharedProfile.TryGet(out ao)) ao.active = detail.ssao;
-            }
+            if (ao != null) ao.active = detail.ssao;
+            headLights.Clear();
             foreach (var n in new[] { "Surgical light A", "Surgical light B" })
             {
                 var go = GameObject.Find(n); if (go == null) continue;
                 var hd = go.GetComponent<HDAdditionalLightData>();
-                if (hd != null) { hd.SetShadowResolutionOverride(true); hd.SetShadowResolution(detail.shadowResolution); }
+                if (hd != null) { hd.SetShadowResolutionOverride(true); hd.SetShadowResolution(detail.shadowResolution); headLights.Add(hd); }
                 var l = go.GetComponent<Light>(); if (l != null) l.shadows = detail.softShadows ? LightShadows.Soft : LightShadows.Hard;
             }
+            ApplyRayTracing();
+        }
+
+        /// <summary>
+        /// DirectX Raytracing by tier (Settings > Ray tracing; Auto follows the detail level): 1 ray-traced shadows
+        /// from the light domes plus ray-traced ambient occlusion, 2 adds ray-traced reflections (steel, wet
+        /// tissue, the lamps), 3 adds global illumination (blue drape and red wound bounce) and ray-traced
+        /// subsurface scattering. Without DXR the raster effects stay: PCSS soft shadows, SSAO, and screen-space
+        /// reflections from High detail up. The tissue meshes are rebuilt on the GPU, so they enter the acceleration
+        /// structure as dynamic geometry (SurfaceRenderer.SetRayTracing).
+        /// </summary>
+        void ApplyRayTracing()
+        {
+            rtTier = ResolveRayTracing(out rtText);
+            bool rt = rtTier > 0;
+            foreach (var hd in headLights)
+            {
+                if (hd == null) continue;
+                hd.useRayTracedShadows = rt;
+                hd.numRayTracingSamples = rtTier >= 3 ? 8 : 4;
+                hd.filterTracedShadow = true; hd.filterSizeTraced = 16;
+            }
+            if (ao != null) { ao.rayTracing.Override(rt); ao.rayLength.Override(0.03f); ao.sampleCount.Override(rtTier >= 3 ? 4 : 2); ao.denoise.Override(true); }
+            if (ssr != null)
+            {
+                ssr.enabled.Override(detail.ssr || rtTier >= 2);
+                ssr.tracing.Override(rtTier >= 2 ? RayCastingMode.RayTracing : RayCastingMode.RayMarching);
+                ssr.mode.Override(UnityEngine.Rendering.HighDefinition.RayTracingMode.Performance);
+                ssr.rayLength.Override(3f); ssr.clampValue.Override(2f); ssr.denoise.Override(true); ssr.denoiserRadius.Override(8);
+            }
+            if (gi != null)
+            {
+                gi.enable.Override(rtTier >= 3);
+                gi.tracing.Override(RayCastingMode.RayTracing);
+                gi.mode.Override(UnityEngine.Rendering.HighDefinition.RayTracingMode.Performance);
+                gi.rayLength.Override(1.5f); gi.clampValue.Override(3f); gi.denoise.Override(true); gi.fullResolution.Override(false);
+            }
+            if (sssRt != null) { sssRt.rayTracing.Override(rtTier >= 3); sssRt.sampleCount.Override(2); }
+            if (contactShadows != null) contactShadows.rayTracing.Override(rt);
+            if (surface != null) surface.SetRayTracing(rt);
+        }
+
+        /// <summary>Ray-tracing tier 0-3 from the setting, the detail level and whether the GPU can ray trace at all; `text` describes it for the settings panel.</summary>
+        int ResolveRayTracing(out string text)
+        {
+            string[] names = { "off", "shadows + ambient occlusion", "shadows, AO + reflections", "full (shadows, AO, reflections, global illumination, subsurface)" };
+            if (!HardwareProfile.RayTracingSupported) { text = settings.rayTracing == "Off" ? "off" : "not available on this PC"; return 0; }
+            int tier;
+            switch (settings.rayTracing)
+            {
+                case "Off": tier = 0; break;
+                case "Shadows": tier = 1; break;
+                case "Reflections": tier = 2; break;
+                case "Full": tier = 3; break;
+                default: tier = detail.rayTracing; break;
+            }
+            text = (settings.rayTracing == "Auto" ? "Auto · " : "") + names[tier];
+            return tier;
         }
 
         void SetOverlayMode(int m)
@@ -789,14 +906,14 @@ namespace BovieSim
 
         void UpdateGaugeAndBudget(float dt)
         {
-            bool electrode = tool.visible;
+            bool electrode = tool.visible && (activeTool == ToolKind.Pencil || (activeTool == ToolKind.Forceps && forceps.closed));
             var sp = viewCamera.WorldToScreenPoint(field.TransformPoint(tool.tip + DisplayOffset(tool.tip)));
             ui.UpdateGauge(electrode && sp.z > 0 && (gen.activation != Activation.None || physics.readout.contactVoxels > 0 || hud.maxT > 40), new Vector2(sp.x, sp.y), hud);
             budget.Update(hud.frameMs, dt);
             if (budget.overBudget && !budgetDismissed && detail.level > DetailLevel.Low)
                 ui.ShowBudgetWarning("At " + detail.Name + " detail this PC takes about " + hud.frameMs.ToString("0") + " ms per frame, over the " + detail.frameBudgetMs.ToString("0") + " ms budget (" + (detail.frameBudgetMs > 20 ? "30" : "60") + " fps). Restart at " + (DetailLevel)((int)detail.level - 1) + " detail?");
             else ui.ShowBudgetWarning(null);
-            ui.RefreshSettings(settings, detail.level, detailReason, chosenLevel);
+            ui.RefreshSettings(settings, detail.level, detailReason, chosenLevel, rtText);
         }
 
         // ------------------------------------------------------------------ teaching moments (pause and replay)
@@ -851,13 +968,10 @@ namespace BovieSim
         {
             var d = hud;
             d.scenarioName = scenario.name;
-            string handA = HandPose.Label(activeTool) + (activeTool == ToolKind.Pencil ? " · " + pencilElectrode.ToString().ToLowerInvariant()
-                : activeTool == ToolKind.Forceps ? (forceps.closed ? " · closed" : " · open") + (forceps.toothed ? ", toothed" : ", smooth") + (liftA > 0 ? ", lifted " + liftA.ToString("0") + " mm" : "")
-                : activeTool == ToolKind.Scalpel ? (scalpel.cutting ? " · cutting " + scalpel.Depth.ToString("0.0") + " mm deep" : " · hold to cut")
-                : activeTool == ToolKind.Scissors ? (scissors.spreading ? " · spreading " + scissors.open.ToString("0") + " mm" : " · click snips, Ctrl + hold spreads") : "");
-            string handB = toolB == HandBKind.None ? "none (Shift+Tab)" : HandPose.Label(toolB) + (hands.stateB == HandBState.Live ? (hands.engagedB ? " · holding" : " · live") : hands.stateB == HandBState.Latched ? " · latched, holding" + (liftB > 0 ? ", lifted " + liftB.ToString("0") + " mm" : "") : " · parked (hold Space)");
-            d.toolText = handA + "   ·   left: " + handB;
-            d.oozing = r.oozeVoxels; d.cutVx = physics.totalCutVoxels; d.bluntVx = physics.totalBluntVoxels;
+            d.toolText = HandPose.Label(activeTool) + (activeTool == ToolKind.Pencil ? " · " + pencilElectrode.ToString().ToLowerInvariant()
+                : activeTool == ToolKind.Forceps ? (forceps.closed ? " · closed" : " · open") + (forceps.toothed ? ", toothed" : ", smooth") + (liftMm > 0 ? ", lifted " + liftMm.ToString("0") + " mm" : "")
+                : activeTool == ToolKind.Hemostat ? (hemostat.spreading ? " · spreading " + hemostat.Span.ToString("0.0") + " mm" : hemostat.closed ? (hemostat.Travel() > 0.08f ? " · pushing" : " · closed") : " · open")
+                : activeTool == ToolKind.Gauze ? " · " + (gauze.soakedUl / 1000).ToString("0.0") + " / " + (gauze.capacityUl / 1000).ToString("0") + " ml" + (gauze.Saturated ? " SATURATED" : "") + " (" + gauze.discarded + " used)" : "");
             d.activation = gen.activation; d.activeWatts = gen.ActiveWatts; d.remFault = gen.remFault;
             d.zOhm = r.zOhm; d.powerW = r.powerW; d.vRms = r.vRms; d.contact = r.contactVoxels;
             d.underTip = r.hasHit ? TissueTable.Name((int)Cell.Type(r.hitCell)) + " · " + TissueTable.StateNames[(int)Cell.State(r.hitCell)] : "—";
@@ -865,6 +979,9 @@ namespace BovieSim
             maxCharMm3 = Mathf.Max(maxCharMm3, r.carbonVoxels * volume.h * volume.h * volume.h); d.charMm3 = maxCharMm3;
             d.bloodLost = r.bloodLostMl; d.pooled = r.poolMl; d.exposedArt = r.exposedArterial; d.exposedVen = r.exposedVenous;
             d.sealedVx = r.sealedVoxels; d.charPlug = r.charPlugVoxels; d.rebleeds = r.rebleeds;
+            d.oozeMl = r.oozeMl; d.oozeVoxels = r.oozeVoxels; d.clotMl = r.clotMl; d.gauzeMl = physics.totalGauzeSoakUl / 1000;
+            d.strands = strands != null ? strands.count : 0; d.tornLinks = lattice != null ? lattice.tornLinks : 0; d.tornVoxels = physics.totalTornVoxels; d.dissectedVoxels = physics.totalDissectedVoxels;
+            visceraVapMm3 = r.visceraVapVoxels * volume.h * volume.h * volume.h;
             if (physics.rimSamples > 0) maxRimMm = Mathf.Max(maxRimMm, physics.rimMm);
             d.rimMm = maxRimMm;
             d.capsuleText = lattice != null && lattice.capsuleTotal > 0 ? lattice.capsuleAlive + " of " + lattice.capsuleTotal + " links attached" + (lattice.lipomaFree ? " · FREE, lifted " + clusterRiseMm.ToString("0.0") + " mm" : "") : "";
@@ -890,6 +1007,9 @@ namespace BovieSim
                 case "charPlugVoxels": return r.charPlugVoxels;
                 case "lesionDelivered": return lesionDelivered ? 1 : 0;
                 case "lesionBreaches": return lesionBreachReported ? 1 : 0;
+                case "visceraVaporisedMm3": return visceraVapMm3;
+                case "oozeMl": return r.oozeMl;
+                case "tornVoxels": return physics.totalTornVoxels;
                 default: return float.NaN;
             }
         }
@@ -917,6 +1037,7 @@ namespace BovieSim
                     case Tissue.DeepFascia: name = "Deep fascia"; break;
                     case Tissue.Muscle: name = "Muscle"; break;
                     case Tissue.Lipoma: name = "Lipoma"; break;
+                    case Tissue.Viscera: name = "Viscus"; break;
                     default: name = null; break; // air, septa, vessels, nerve, capsule: too thin or local to label
                 }
                 if (name == null || name == last) continue;
@@ -946,6 +1067,7 @@ namespace BovieSim
             if (physics != null) physics.Dispose();
             if (surface != null) surface.Dispose();
             if (particles != null) particles.Dispose();
+            if (strands != null) strands.Dispose();
             if (gpu != null) gpu.Dispose();
             if (ui != null) ui.Dispose();
             if (replay != null) replay.Dispose();

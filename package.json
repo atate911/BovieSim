@@ -10,7 +10,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
     "test:watch": "vitest",
-    "sync:unity": "node scripts/sync-unity-scenarios.mjs"
+    "sync:unity": "node scripts/sync-unity-scenarios.mjs",
+    "fetch:textures": "node scripts/fetch-textures.mjs"
   },
   "devDependencies": {
     "@webgpu/types": "^0.1.74",

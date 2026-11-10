@@ -6,16 +6,19 @@ struct Vertex {
   nx: f32, ny: f32, nz: f32, attr: u32,
 };
 
-struct BloodCol { h: f32, age: f32, surf: f32, hNext: f32 };
+struct BloodCol { h: f32, age: f32, surf: f32, hNext: f32, clot: f32, temp: f32, stain: f32, topK: f32 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var<storage, read> verts: array<Vertex>;
-@group(0) @binding(2) var shadowMap: texture_depth_2d;
+@group(0) @binding(2) var shadowMapA: texture_depth_2d;
 @group(0) @binding(3) var shadowSampler: sampler_comparison;
 @group(0) @binding(4) var<storage, read> blood: array<BloodCol>;
 @group(0) @binding(5) var<uniform> vinfo: VolumeInfo;
 struct LatticeInfo { nx: u32, ny: u32, nz: u32, pad: u32, origin: vec3f, spacing: f32 };
 @group(0) @binding(6) var<uniform> lat: LatticeInfo;
 @group(0) @binding(7) var<storage, read> latDisp: array<vec4f>;
+@group(0) @binding(8) var shadowMapB: texture_depth_2d;
+struct ShadowSel { head: u32, pad0: u32, pad1: u32, pad2: u32 };
+@group(0) @binding(9) var<uniform> shadowSel: ShadowSel;
 
 /** Trilinear lattice displacement at a material point (mm). */
 fn latticeDisp(p: vec3f) -> vec3f {
@@ -34,22 +37,28 @@ fn latticeDisp(p: vec3f) -> vec3f {
   return d;
 }
 
-/** Bilinear blood depth (mm) and age (s) at a world x,z. */
-fn bloodAt(p: vec3f) -> vec2f {
+/** Bilinear blood layer at a world x,z: depth (mm), clot fraction, stain, temperature, weighted by how close the vertex is to its column's surface. */
+struct BloodSample { h: f32, clot: f32, stain: f32, temp: f32 };
+fn bloodAt(p: vec3f) -> BloodSample {
   let fx = p.x / vinfo.hMm + f32(vinfo.nx) * 0.5 - 0.5;
   let fz = p.z / vinfo.hMm + f32(vinfo.ny) * 0.5 - 0.5;
   let i0 = i32(floor(fx)); let j0 = i32(floor(fz));
   let tx = fract(fx); let tz = fract(fz);
-  var acc = vec2f(0.0);
+  var acc = vec4f(0.0); var wsum = 0.0;
   for (var dj = 0; dj < 2; dj++) { for (var di = 0; di < 2; di++) {
     let i = clamp(i0 + di, 0, i32(vinfo.nx) - 1); let j = clamp(j0 + dj, 0, i32(vinfo.ny) - 1);
     let b = blood[u32(i) + vinfo.nx * u32(j)];
     let w = select(1.0 - tx, tx, di == 1) * select(1.0 - tz, tz, dj == 1);
     // blood belongs to the surface of its column; ignore it on vertices well below that surface
     let onSurface = smoothstep(-1.5, -0.3, p.y - b.surf);
-    acc += vec2f(b.h, b.age) * w * onSurface;
+    acc += vec4f(b.h, b.clot * b.h, b.stain, b.temp * b.h) * w * onSurface;
+    wsum += w * onSurface;
   }}
-  return acc;
+  var o: BloodSample;
+  o.h = acc.x; o.stain = acc.z;
+  o.clot = select(0.0, acc.y / acc.x, acc.x > 1e-5);
+  o.temp = select(37.0, acc.w / acc.x, acc.x > 1e-5);
+  return o;
 }
 
 struct VSOut {
@@ -85,13 +94,15 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
 fn vs_shadow(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
   let v = verts[vi];
   let pm = vec3f(v.px, v.py, v.pz);
-  return frame.lightViewProj * vec4f(pm + latticeDisp(pm), 1.0);
+  let wp = vec4f(pm + latticeDisp(pm), 1.0);
+  if (shadowSel.head == 1u) { return frame.light2ViewProj * wp; }
+  return frame.lightViewProj * wp;
 }
 
 // ---------- tissue ids (must match core/tissueProperties.ts) ----------
 const T_AIR = 0u; const T_EPI = 1u; const T_DERMIS = 2u; const T_FAT = 3u; const T_SEPTUM = 4u;
 const T_SFASCIA = 5u; const T_DFASCIA = 6u; const T_MUSCLE = 7u; const T_ARTERY = 8u; const T_VEIN = 9u;
-const T_NERVE = 10u; const T_LIPOMA = 11u; const T_CAPSULE = 12u; const T_BLOOD = 13u;
+const T_NERVE = 10u; const T_LIPOMA = 11u; const T_CAPSULE = 12u; const T_BLOOD = 13u; const T_AREOLAR = 14u; const T_VISCERA = 15u; const T_SEROSA = 16u;
 const S_NORMAL = 0u; const S_COAG = 1u; const S_DESIC = 2u; const S_CARBON = 3u;
 const FLAG_FIBRE_X = 1u << 25u;
 
@@ -117,26 +128,36 @@ fn baseMaterial(ty: u32, flags: u32, aux: u32, p: vec3f, N: vec3f) -> Mat {
   switch (ty) {
     case T_EPI: {
       let tone = skinTone(frame.params0.x);
-      // pores and fine lines along Langer's lines
       let ang = frame.params0.z;
       let dir = vec2f(cos(ang), sin(ang));
       let along = dot(p.xz, dir); let across = dot(p.xz, vec2f(-dir.y, dir.x));
-      // Langer's lines: fine, irregular creases, not a regular grating
-      let crease = fbm3(vec3f(along * 0.35, across * 2.2, 1.7), 3);
-      let lines = smoothstep(0.55, 0.75, crease);
-      let pores = smoothstep(0.84, 0.93, fbm3(p * 4.0, 2));
-      var alb = tone * (0.9 + 0.2 * med) * (1.0 - 0.12 * pores) * (1.0 - 0.08 * lines) * (0.9 + 0.2 * coarse);
-      // mottling (vascular)
-      alb = mix(alb, alb * vec3f(1.05, 0.9, 0.9), smoothstep(0.45, 0.7, coarse));
-      // skin prep: thin translucent film
+      // the skin's polygonal line network: primary furrows (~1.3 mm cells, stretched along Langer's lines) and a
+      // finer secondary net, as cell borders of two Worley fields; pores sit at the cell corners
+      let q1 = vec3f(along * 0.9, across * 1.5, 0.3);
+      let w1 = worley3(q1);
+      let furrow = (1.0 - smoothstep(0.0, 0.06, w1.y - w1.x)) * (0.5 + 0.5 * fbm3(p * 0.5, 2));
+      let w2 = worley3(vec3f(along * 2.4, across * 3.6, 2.1));
+      let furrow2 = (1.0 - smoothstep(0.0, 0.04, w2.y - w2.x)) * 0.8;
+      let pores = smoothstep(0.88, 0.96, fbm3(p * 4.0, 2)) + (1.0 - smoothstep(0.0, 0.08, w1.x)) * 0.6;
+      // vascular mottling (blotchy pink / pale) at ~8 mm and a broader tone drift
+      let mott = fbm3(p * 0.13, 3);
+      let blotch = smoothstep(0.4, 0.75, mott);
+      var alb = tone * (0.92 + 0.16 * med) * (1.0 - 0.1 * clamp(pores, 0.0, 1.0)) * (1.0 - 0.05 * furrow - 0.03 * furrow2) * (0.92 + 0.16 * coarse);
+      alb = mix(alb, alb * vec3f(1.08, 0.86, 0.84), blotch * 0.6);
+      alb = mix(alb, alb * vec3f(0.96, 1.02, 1.04), smoothstep(0.3, 0.1, mott) * 0.4);
+      // skin prep painted on with a sponge: tinted film, thicker in the furrows and along the stroke direction
       let prep = frame.params0.y;
-      if (prep > 0.5 && prep < 1.5) { alb = alb * mix(vec3f(1.0), vec3f(1.08, 0.74, 0.46), 0.55); }   // chlorhexidine-alcohol (orange tint)
-      else if (prep >= 1.5) { alb = alb * mix(vec3f(1.0), vec3f(0.9, 0.55, 0.25), 0.7); }          // povidone-iodine
+      let stroke = fbm3(vec3f(along * 0.06, across * 0.5, 5.0), 3);
+      let film = clamp(0.55 + 0.5 * (stroke - 0.5) + 0.25 * furrow, 0.0, 1.0);
+      if (prep > 0.5 && prep < 1.5) { alb = alb * mix(vec3f(1.0), vec3f(1.04, 0.80, 0.58), 0.3 + 0.35 * film); }   // tinted chlorhexidine-alcohol
+      else if (prep >= 1.5) { alb = alb * mix(vec3f(1.0), vec3f(0.85, 0.55, 0.28), 0.45 + 0.4 * film); }          // povidone-iodine
       m.albedo = alb;
-      m.rough = mix(0.55, 0.38, select(0.0, 1.0, prep > 0.5)) + 0.1 * lines;
+      // dry skin is matte; the prep leaves a glossy film with sponge-stroke variation and pooling in the furrows
+      let wet = select(0.0, film, prep > 0.5);
+      m.rough = mix(0.62, 0.22, wet) + 0.08 * furrow2 - 0.06 * furrow * wet;
       m.sss = 0.55;
       m.sssColor = vec3f(0.95, 0.35, 0.2);
-      m.nrmDetail = vec3f(fine - 0.5, 0.0, lines - 0.5) * 0.18;
+      m.nrmDetail = vec3f(fine - 0.5, 0.0, 0.0) * 0.08 + vec3f(w1.y - w1.x - 0.3, 0.0, 0.0) * furrow * 0.3 + vec3f(0.0, 0.0, w2.y - w2.x - 0.2) * furrow2 * 0.2;
     }
     case T_DERMIS: {
       // collagenous, pink-white, with dermal plexus speckle
@@ -183,6 +204,28 @@ fn baseMaterial(ty: u32, flags: u32, aux: u32, p: vec3f, N: vec3f) -> Mat {
     case T_VEIN: { m.albedo = vec3f(0.30, 0.16, 0.38); m.rough = 0.2; m.sss = 0.35; m.sssColor = vec3f(0.5, 0.15, 0.4); }
     case T_NERVE: { m.albedo = vec3f(0.92, 0.88, 0.72); m.rough = 0.3; m.sss = 0.3; m.sssColor = vec3f(0.9, 0.7, 0.5); }
     case T_BLOOD: { m.albedo = vec3f(0.35, 0.02, 0.02); m.rough = 0.05; m.f0 = 0.03; m.sss = 0.0; }
+    case T_AREOLAR: {
+      // loose areolar tissue: wispy, translucent pale pink with fine criss-crossing fibres and a wet sheen
+      let fib = smoothstep(0.55, 0.8, fbm3(vec3f(p.x * 2.6, p.y * 0.7, p.z * 2.6), 3));
+      let fib2 = smoothstep(0.6, 0.85, fbm3(vec3f(p.z * 2.2, p.y * 0.9, p.x * 2.2) + vec3f(4.1), 3));
+      let web = max(fib, fib2 * 0.8);
+      m.albedo = mix(vec3f(0.90, 0.72, 0.68), vec3f(0.97, 0.94, 0.92), web) * (0.9 + 0.2 * fine);
+      m.rough = 0.14 + 0.1 * (1.0 - web); m.f0 = 0.05; m.sss = 0.6; m.sssColor = vec3f(0.95, 0.5, 0.4);
+      m.nrmDetail = vec3f(fib - 0.5, 0.0, fib2 - 0.5) * 0.35;
+    }
+    case T_VISCERA: {
+      // bowel wall / organ parenchyma: dusky pink-red, smooth, very wet, with fine vascular mottling
+      let vas = smoothstep(0.62, 0.78, fbm3(p * 1.4, 3));
+      m.albedo = mix(vec3f(0.74, 0.40, 0.40), vec3f(0.55, 0.14, 0.14), vas * 0.7) * (0.92 + 0.16 * med);
+      m.rough = 0.12; m.f0 = 0.05; m.sss = 0.65; m.sssColor = vec3f(0.9, 0.25, 0.2);
+      m.nrmDetail = vec3f(med - 0.5, 0.0, fine - 0.5) * 0.12;
+    }
+    case T_SEROSA: {
+      // serosa: thin glistening membrane, pale pink-grey with a wet highlight
+      m.albedo = vec3f(0.88, 0.80, 0.80) * (0.92 + 0.12 * med);
+      m.rough = 0.08; m.f0 = 0.06; m.sss = 0.45; m.sssColor = vec3f(0.9, 0.45, 0.4);
+      m.nrmDetail = vec3f(fine - 0.5) * 0.08;
+    }
     default: { m.albedo = vec3f(0.5); m.rough = 0.5; m.sss = 0.0; }
   }
   return m;
@@ -238,22 +281,10 @@ fn waterInitial(ty: u32) -> f32 {
     case T_MUSCLE: { return 0.75; }
     case T_ARTERY, T_VEIN, T_BLOOD: { return 0.8; }
     case T_NERVE: { return 0.7; }
+    case T_AREOLAR: { return 0.72; }
+    case T_VISCERA: { return 0.76; }
     default: { return 0.6; }
   }
-}
-
-fn shadowFactor(wpos: vec3f, N: vec3f, L: vec3f) -> f32 {
-  let bias = frame.params1.w * (1.0 + 2.0 * (1.0 - max(dot(N, L), 0.0)));
-  let lp = frame.lightViewProj * vec4f(wpos + N * bias, 1.0);
-  let ndc = lp.xyz / lp.w;
-  let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-  if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { return 1.0; }
-  let texel = 1.0 / vec2f(textureDimensions(shadowMap));
-  var s = 0.0;
-  for (var y = -1; y <= 1; y++) { for (var x = -1; x <= 1; x++) {
-    s += textureSampleCompareLevel(shadowMap, shadowSampler, uv + vec2f(f32(x), f32(y)) * texel, ndc.z - 0.0005);
-  }}
-  return s / 9.0;
 }
 
 fn perturbNormal(N: vec3f, p: vec3f, detail: vec3f) -> vec3f {
@@ -280,60 +311,77 @@ fn fs_main(in: VSOut) -> @location(0) vec4f {
     if (debug < 1.5) { c = tempColor(in.tempC); }
     else if (debug < 2.5) { c = mix(vec3f(0.1, 0.2, 0.6), vec3f(1.0, 0.95, 0.9), clamp(in.omega, 0.0, 1.0)); }
     else { c = hash33(vec3f(f32(ty) * 7.1, 1.0, 2.0)); }
-    let l = 0.4 + 0.6 * max(dot(N, normalize(frame.lightDir.xyz)), 0.0);
+    let l = 0.4 + 0.6 * max(dot(N, normalize(frame.lightPos.xyz - p)), 0.0);
     return vec4f(c * l, 1.0);
   }
 
   var m = baseMaterial(ty, flags, aux, p, N);
   m = applyThermalState(m, st, in.omega, in.water, waterInitial(ty), in.tempC, p);
   N = perturbNormal(N, p, m.nrmDetail);
-  // blood film / pool on upward-facing surfaces
+  // blood on upward-facing surfaces: soaked stain, wet film, standing pool, clot and coagulum, boiling
   let bl = bloodAt(p);
-  if (bl.x > 0.005 && N.y > -0.3) {
-    let depth = bl.x;
-    let film = smoothstep(0.0, 0.25, depth);                 // thin wet film: tints and glosses
-    let pool = smoothstep(0.15, 0.6, depth);                 // standing blood: opaque, dark
-    let clot = smoothstep(45.0, 70.0, bl.y);
-    var bc = mix(vec3f(0.55, 0.06, 0.05), vec3f(0.16, 0.01, 0.01), pool);
-    bc = mix(bc, vec3f(0.22, 0.04, 0.03), clot);
-    m.albedo = mix(m.albedo, m.albedo * vec3f(0.9, 0.3, 0.25), film * (1.0 - pool) * 0.8);
-    m.albedo = mix(m.albedo, bc, pool);
-    m.rough = mix(m.rough, mix(0.07, 0.55, clot), max(film * 0.8, pool));
-    m.sss = m.sss * (1.0 - pool);
-    m.f0 = mix(m.f0, 0.04, pool);
-    // pooled blood levels out: flatten the normal
-    N = normalize(mix(N, vec3f(0.0, 1.0, 0.0), pool * 0.85));
+  if (N.y > -0.3) {
+    // blood that soaked into a raw surface darkens it (suction leaves this behind; a wipe lifts some of it)
+    let stain = clamp(bl.stain, 0.0, 1.0);
+    m.albedo = mix(m.albedo, m.albedo * vec3f(0.55, 0.12, 0.10), stain * 0.75);
+    m.rough = mix(m.rough, 0.15, stain * 0.5);
+    if (bl.h > 0.005) {
+      let depth = bl.h;
+      let film = smoothstep(0.0, 0.25, depth);                 // thin wet film: tints and glosses
+      let pool = smoothstep(0.15, 0.6, depth);                 // standing blood: opaque, dark
+      let clot = clamp(bl.clot, 0.0, 1.0);
+      // fresh bright red -> dark pooled -> brown gelled clot -> near-black cooked coagulum
+      var bc = mix(vec3f(0.55, 0.06, 0.05), vec3f(0.16, 0.01, 0.01), pool);
+      bc = mix(bc, vec3f(0.26, 0.09, 0.05), clot);
+      bc = mix(bc, vec3f(0.06, 0.03, 0.02), clot * smoothstep(70.0, 110.0, bl.temp));
+      m.albedo = mix(m.albedo, m.albedo * vec3f(0.9, 0.3, 0.25), film * (1.0 - pool) * 0.8);
+      m.albedo = mix(m.albedo, bc, pool);
+      m.rough = mix(m.rough, mix(0.07, 0.6, clot), max(film * 0.8, pool));
+      m.sss = m.sss * (1.0 - pool);
+      m.f0 = mix(m.f0, 0.04, pool);
+      // pooled blood levels out: flatten the normal; a clot sits in lumps
+      let lump = (fbm3(p * 3.0, 2) - 0.5) * clot * pool;
+      N = normalize(mix(N, vec3f(0.0, 1.0, 0.0), pool * 0.85) + vec3f(lump, 0.0, lump) * 0.4);
+      // boiling blood under the electrode: glinting bubbles and steam-white froth
+      if (bl.temp > 95.0) {
+        let t = frame.cameraPos.w;
+        let bub = smoothstep(0.7, 0.9, vnoise3(p * 10.0 + vec3f(0.0, t * 12.0, 0.0)));
+        m.albedo = mix(m.albedo, vec3f(0.6, 0.35, 0.3), bub * 0.6 * pool);
+        m.rough = mix(m.rough, 0.05, bub * 0.8);
+      }
+    }
   }
   if (dot(N, V) < 0.0) { N = normalize(N - V * dot(N, V) * 1.01); }
 
-  let L = normalize(frame.lightDir.xyz);
-  let lightCol = frame.lightColor.rgb * frame.lightDir.w;
-  let sh = shadowFactor(p, normalize(in.nrm), L);
   let f0 = vec3f(m.f0);
   let wrap = m.sss * 0.6;
-  let d = shadeLight(N, V, L, m.albedo, m.rough, f0, wrap);
-  var color = (d.diffuse + d.specular) * lightCol * sh;
+  let Ngeo = normalize(in.nrm);
+  let px = in.pos.xy;
+  var color = vec3f(0.0);
+  for (var i = 0; i < 2; i++) {
+    let h = lightHead(i, p, Ngeo, px);
+    let d = shadeLight(N, V, h.L, m.albedo, m.rough, f0, wrap, domeWiden());
+    color += (d.diffuse + d.specular) * h.radiance * h.shadow;
+    // translucency: light leaking through thin/soft tissue toward the viewer
+    let Lt = normalize(-h.L + N * 0.3);
+    let trans = pow(clamp(dot(V, -Lt), 0.0, 1.0), 3.0) * m.sss;
+    color += m.sssColor * m.albedo * trans * h.radiance * 0.35 * (0.5 + 0.5 * h.shadow);
+  }
 
-  // translucency: light leaking through thin/soft tissue toward the viewer
-  let distort = 0.3;
-  let Lt = normalize(-L + N * distort);
-  let trans = pow(clamp(dot(V, -Lt), 0.0, 1.0), 3.0) * m.sss;
-  color += m.sssColor * m.albedo * trans * lightCol * 0.35 * (0.5 + 0.5 * sh);
-
-  // ambient: cool OR light bounce from above, warm tissue bounce from below
-  let amb = hemiAmbient(N, vec3f(0.55, 0.6, 0.7), vec3f(0.35, 0.18, 0.14)) * frame.lightColor.w;
+  // ambient: cool room and drape bounce from above, warm bounce from the wound below
+  let amb = hemiAmbient(N, vec3f(0.50, 0.56, 0.68), vec3f(0.36, 0.17, 0.13)) * frame.lightColor.w;
   color += m.albedo * amb * (1.0 - 0.5 * m.f0);
-  // specular ambient (wet sheen)
+  // wet sheen: the room and the lamp domes reflected in the moist surface
   let NoV = max(dot(N, V), 0.0);
   let Fa = F_Schlick(f0, NoV);
-  color += Fa * amb * (1.0 - m.rough) * 1.2;
+  color += Fa * envReflection(reflect(-V, N), p, m.rough) * mix(0.6, 0.15, m.rough);
 
   // arc / electrode point light
   if (frame.arcLight.w > 0.0) {
     let toA = frame.arcLight.xyz - p;
     let dist2 = max(dot(toA, toA), 0.25);
     let La = normalize(toA);
-    let a = shadeLight(N, V, La, m.albedo, m.rough, f0, wrap);
+    let a = shadeLight(N, V, La, m.albedo, m.rough, f0, wrap, 0.0);
     color += (a.diffuse + a.specular) * vec3f(0.7, 0.8, 1.0) * frame.arcLight.w / dist2;
   }
 

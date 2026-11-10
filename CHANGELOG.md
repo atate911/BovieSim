@@ -4,25 +4,69 @@ All notable changes. Versions follow `MAJOR.MINOR.PATCH`; each release is a git 
 (see [docs/upgrading.md](docs/upgrading.md)). "Setup" means *Bovie Sim > Set Up Project* must be re-run
 after updating (the editor offers it automatically).
 
-## 0.6.0: Two hands and steel (scalpel, scissors, latched non-dominant hand)
+## 0.7.0: Tissue realism (mechanics, blunt dissection, tearing, bleeding, blood) · Setup required
 
-- **Two hands on one pointer.** Hold `Space` and the pointer drives the left hand (forceps, hook or suction, chosen
-  with `Shift+Tab`): press to grasp or catch, drag to pull, wheel to lift. Release `Space` and the instrument stays where
-  it is, latched, holding its traction, while the pointer goes back to the right hand. Hold `Space` again to move it.
-  Both instruments are on the field at once: retract an edge with the hook and dissect under it with the pencil, hold a
-  vessel in the forceps and touch the pencil to them to buzz it, or touch a retractor by mistake and burn the tissue
-  under it (`instrument.contact`).
-- **#15 scalpel.** A mechanical cut with no heat: hold the button, pen pressure sets the depth (0.5 to 5 mm), the blade
-  follows the direction of travel. The incision gapes, transected vessels bleed, and a fresh dermal edge oozes from the
-  dermal plexus (`skin.oozing`) until it clots or is coagulated. Pre-made wounds in the scenarios no longer count as fresh.
-- **Metzenbaum scissors.** Click to snip between the open tips; `Ctrl` + hold to spread. Spreading parts fat and opens
-  the plane on a lipoma capsule (`plane.developed`); septa, fasciae, skin and the capsule resist (`plane.resists`) and
-  must be cut; vessels up to 0.3 mm tear (`vessel.torn`); larger vessels keep their fat cuff and are tented
-  (`vessel.stretched`), as are nerves (`nerve.stretched`). This is what makes a lipoma excision possible: incise,
-  retract, spread on the capsule, divide what resists, lift and deliver.
-- One `mechCut` compute kernel (WGSL and HLSL) does both: a rounded blade box swept between poses, sharp or blunt, with
-  per-tissue cohesion rules; new education events with teaching text in `scenarios/teaching.json`; the instrument
-  model in `docs/tools.md` is updated. Lifting a held instrument moved from `Space` to the wheel.
+- **Every tissue behaves like itself.** Areolar tissue, viscera and serosa join the table (17 types); each
+  tissue carries compliance, a collagen J-curve knee, yield and tear strains, cohesion, coagulation shrink and
+  stiffening and a capillary ooze rate. Coagulated collagen firms and contracts, rendered fat softens,
+  desiccated and charred tissue turns brittle, muscle is tougher along its fibres, vessel ends recoil.
+- **Blunt dissection and tearing.** A Kelly hemostat (Tab) grasps, buzzes, pushes along the loosest planes
+  and, with Space, spreads inside the tissue: areolar tissue and fat lobules part, areolar strands draw out,
+  thin and snap, vessels and nerves bridge the plane until torn or cut. Links torn by traction carve the
+  tissue they ran through; torn vessels bleed.
+- **Bleeding that reads like bleeding.** Vessels bleed only from an open lumen; arterioles spasm and venules
+  clot within seconds while arteries keep going; every raw perfused surface oozes from its capillaries and
+  settles over about a minute unless wiped; char plugs can rebleed. Blood pools, runs downhill, soaks into
+  raw tissue, clots with time and heat, boils and spatters under the electrode and cooks into insulating
+  coagulum. Suction lifts liquid only and draws the pool toward the tip; a 4x4 gauze (Tab) dabs, tamponades
+  and wipes (U swaps a soaked pad). New events and teaching text for all of this.
+- New scenario `viscera` (serosal bleeder on an exposed viscus). Areolar planes in every scenario.
+- Fixed: the mechanics lattice carried its XPBD multipliers across substeps and could tear a resting lesion
+  bed apart; damping and anchoring are now frame-rate independent.
+- Unity: full port (kernels, instruments, strands, spatter, 20 material buckets with a viscera class, HUD
+  rows); compiled and unit-tested blind, not yet opened in an editor. Setup version 9 bakes the new buckets
+  and the strand material.
+
+## 0.6.0: Surgical field (drapes, lights, colour, ray tracing) · Setup required
+
+- **Fenestrated drape with folds.** The flat frame is replaced by a draped sheet: an incise-film margin on the
+  skin, an absorbent reinforcement zone, then the loose blue nonwoven drape with swells, pleats radiating from
+  the fenestration and fine wrinkles (same geometry in both clients). Surgical-blue fabric with bonding dots
+  and a cloth sheen in the browser build; three HDRP materials (film, pad, drape) in Unity.
+- **Squared field.** Four folded cotton towels square the window on top of the drape, overlapping windmill-fashion
+  at the corners with a little misalignment, held by Backhaus towel clips; the incise film is a narrow clear band
+  over the skin edge. Drape folds are seeded per scenario and irregular: domain-warped swells, broad waves across
+  the sheet, local bunching, radiating pleats and package creases. Skin shows its polygonal line network, pores at
+  the cell corners, vascular mottling and the prep painted on in sponge strokes with a glossy film pooling in the
+  furrows (both clients).
+- **Overhead surgical light.** Two light heads modelled as 50 cm domes: shadows are sharp where the instrument
+  touches tissue and widen with distance (PCSS in Unity from the lights' shape radius with High shadow filtering,
+  percentage-closer soft shadows with two shadow maps in the browser build), the specular highlight on wet
+  tissue broadens to the dome's size, contact shadows ground the tip, and the lamp heads themselves are emissive
+  domes seen in reflections on steel and wet tissue.
+- **Ray tracing (Unity, DirectX 12 + RTX / RX 6000-class card).** Set Up Project enables DXR on the HDRP asset and
+  puts DirectX 12 first. Settings (F9) > *Ray tracing*: Auto by detail level (Medium: ray-traced shadows + ambient
+  occlusion; High: + reflections; Ultra: + global illumination and subsurface scattering), or Off / Shadows /
+  Reflections / Full. GPU-rebuilt tissue meshes enter the acceleration structure as dynamic geometry. Without
+  DXR the raster effects stay (screen-space reflections from High detail up).
+- **Texture maps.** Both clients take real maps for the drape, reinforcement pad, instrument steel and pencil
+  plastic (albedo, normal, roughness; a missing normal map is derived from the colour). CC0 sets download with
+  `npm run fetch:textures` (ambientCG, Poly Haven) for the browser build and by Set Up Project for Unity; your
+  own maps drop into `public/textures/<slot>/` or `Generated/Downloads/<Slot>_Color.jpg` (docs/textures.md, with
+  prompts for making them). Without maps: satin brushed steel that reflects the lit field and the lamp domes
+  instead of a dark room, a nonwoven drape with fibre texture, bonding dots and a rolled hem and package
+  creases in the folds.
+- **Instrument models (Unity).** A purchased pack dropped into `Assets/BovieSim/Models` replaces the procedural
+  Adson forceps (the pack's one-piece tweezers are split into two arms, straightened and fitted to the sim's
+  frame so they still open and close) and lays its scissors, haemostat and scalpel on the drape beside the
+  field; the pack's scratch map drives scratched smoothness and a normal map on its steel. Procedural teeth now
+  face each other. Generated models of the pencil (with its two switches), blade, needle and ball electrodes,
+  Frazier suction and skin hook (`pencil.fbx`, `blade.fbx`, …) replace the procedural ones, fitted by real length
+  with their own PBR maps.
+- **Colour rendering.** Browser build: Khronos PBR Neutral tone mapping (blood stays red, fat stays yellow) with a
+  proper sRGB transfer curve and a lighter vignette; near-white 4300 K light with the room's cool ambient and
+  blue drape bounce. Unity: ambient occlusion at wound scale (1.5 cm, not 25 cm); the scenario skin-tone and
+  prep tint is now applied in the right colour space.
 
 ## 0.5.0: Beneath the surface (section resolution, depth peel)
 

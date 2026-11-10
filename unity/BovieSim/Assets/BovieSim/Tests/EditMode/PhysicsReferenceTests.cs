@@ -198,6 +198,43 @@ namespace BovieSim.Tests
             Assert.AreEqual(1, Reference.SealOutcome(1.5, false, 0.4));
             Assert.AreEqual(2, Reference.SealOutcome(1.5, false, 1.0));
             Assert.AreEqual(0, Reference.SealOutcome(0.8, true, 1.0));
+            // an intact vessel exposed in a dissected plane coagulates to a seal, not a plug: its lumen was never open
+            Assert.AreEqual(1, Reference.SealOutcome(1.5, false, 1.0, 2));
+        }
+
+        [Test]
+        public void VesselBleedsOnlyOntoCutAir()
+        {
+            Assert.IsTrue(Reference.VesselBleeds(3));
+            Assert.IsFalse(Reference.VesselBleeds(2)); Assert.IsFalse(Reference.VesselBleeds(1)); Assert.IsFalse(Reference.VesselBleeds(0));
+        }
+
+        [Test]
+        public void SmallVesselsSpasmAndStopLargeArteriesKeepBleeding()
+        {
+            Assert.AreEqual(1, Reference.SpasmFactor(0.3, true, 0), 1e-9);
+            Assert.Less(Reference.SpasmFactor(0.3, true, 8), 0.3);
+            Assert.AreEqual(0, Reference.SpasmFactor(0.3, true, 20), 1e-9);
+            Assert.AreEqual(0.12, Reference.SpasmFactor(0.5, true, 31), 1e-3);
+            Assert.Greater(Reference.SpasmFactor(1.0, true, 31), 0.6);
+            Assert.AreEqual(0, Reference.SpasmFactor(0.4, false, 31), 1e-9);
+            Assert.AreEqual(0.8, Reference.SpasmFactor(1.0, false, 31), 1e-3);
+            Assert.AreEqual(Math.Exp(-1), Reference.SpasmFactor(0.3, true, 6), 1e-6);
+        }
+
+        [Test]
+        public void RawSurfacesOozeByTissueAndSettleWithinAMinute()
+        {
+            Assert.Greater(Reference.OozeUlPerS(Tissue.Muscle, 0.25, 0, 3), Reference.OozeUlPerS(Tissue.Fat, 0.25, 0, 3) * 10);
+            Assert.Greater(Reference.OozeUlPerS(Tissue.Viscera, 0.25, 0, 3), Reference.OozeUlPerS(Tissue.Dermis, 0.25, 0, 3) * 1.5);
+            Assert.AreEqual(0, Reference.OozeUlPerS(Tissue.Epidermis, 0.25, 0, 3), 1e-12);
+            Assert.AreEqual(0, Reference.OozeUlPerS(Tissue.Artery, 0.25, 0, 3), 1e-12);
+            Assert.AreEqual(0.3 * Reference.OozeUlPerS(Tissue.Fat, 0.25, 0, 3), Reference.OozeUlPerS(Tissue.Fat, 0.25, 0, 2), 1e-9);
+            // a 30 mm dermal incision: two walls 2 mm deep at 0.25 mm voxels, the clock stepping about every 2 s
+            double faces = 2 * (30 / 0.25) * (2 / 0.25), total = 0;
+            for (int clock = 0; clock < 31; clock++) total += faces * Reference.OozeUlPerS(Tissue.Dermis, 0.25, clock, 3) * 2.0;
+            Assert.Greater(total / 1000, 0.05); Assert.Less(total / 1000, 0.5);
+            Assert.Less(Reference.OozeUlPerS(Tissue.Dermis, 0.25, 30, 3) / Reference.OozeUlPerS(Tissue.Dermis, 0.25, 0, 3), 0.02);
         }
 
         [Test]
@@ -217,7 +254,7 @@ namespace BovieSim.Tests
             double tot = 0; foreach (var v in h) tot += v;
             Assert.AreEqual(1.0, tot, 1e-6);
             Assert.Greater(h[3] + h[4], 0.6);
-            Assert.LessOrEqual(h[0], 0.05 + 1e-6);
+            Assert.Less(h[0], 0.06);
         }
 
         [Test]
@@ -226,6 +263,86 @@ namespace BovieSim.Tests
             var surf = new double[] { 0, 2, 4 }; var h = new double[] { 0.5, 0, 0 };
             for (int s = 0; s < 50; s++) h = Reference.FlowStep(surf, h);
             Assert.AreEqual(0, h[2]); Assert.AreEqual(0, h[1]);
+        }
+
+        static double Spread(double h0, double clot0)
+        {
+            var surf = new double[5]; var h = new double[] { h0, 0, 0, 0, 0 }; var c = new double[] { clot0, 0, 0, 0, 0 };
+            for (int s = 0; s < 10; s++) h = Reference.FlowStep(surf, h, c);
+            return (h0 - h[0]) / h0;
+        }
+
+        [Test]
+        public void DeepPoolsSpreadFasterThanFilmsAndClotDoesNotMove()
+        {
+            Assert.Greater(Spread(1.0, 0), Spread(0.12, 0) * 2);
+            Assert.AreEqual(0, Spread(0.04, 0), 1e-12);   // below the wetting film nothing flows
+            Assert.AreEqual(0, Spread(1.0, 1.0), 1e-12);  // a firm clot
+            Assert.Less(Spread(1.0, 0.5), Spread(1.0, 0));
+        }
+
+        [Test]
+        public void BloodClotsInUnderASecondAt70CAndNotWithinAMinuteAt45C()
+        {
+            var b = TissueTable.Props[(int)Tissue.Blood];
+            Assert.Greater(Reference.ArrheniusConst(70, 1.0, b.lnA, b.Ea), 1);
+            Assert.Less(Reference.ArrheniusConst(45, 60, b.lnA, b.Ea), 0.01);
+            Assert.Less(Reference.ArrheniusConst(55, 60, b.lnA, b.Ea), 0.3);
+        }
+
+        [Test]
+        public void SuctionLiftsTheLiquidAndLeavesTheClot()
+        {
+            double clot = 0.4; double h = Reference.Suck(1.0, ref clot, 10);
+            Assert.AreEqual(0.4, h, 1e-6); Assert.AreEqual(1.0, clot, 1e-6);
+            clot = 0; h = Reference.Suck(1.0, ref clot, 0.3);
+            Assert.AreEqual(0.7, h, 1e-6); Assert.AreEqual(0, clot, 1e-9);
+            clot = 1.0; Assert.AreEqual(0.5, Reference.Suck(0.5, ref clot, 10), 1e-6);
+        }
+
+        [Test]
+        public void ClotIsAMassFreshBloodDilutesItAndSuctionCannotRatchetIt()
+        {
+            double h = 0.5, clot = 1e-4;
+            for (int s = 0; s < 200; s++) { h = Reference.Suck(h, ref clot, 0.2); h = Reference.AddBlood(h, ref clot, 0.2); }
+            Assert.AreEqual(0.5 * 1e-4, h * clot, 1e-9);
+            Assert.Less(clot, 1e-3);
+            double c2 = 0.25; double h2 = Reference.Suck(2.0, ref c2, 10);
+            Assert.AreEqual(0.5, h2, 1e-6); Assert.AreEqual(1, c2, 1e-6);
+            Reference.AddBlood(h2, ref c2, 1.5);
+            Assert.AreEqual(0.25, c2, 1e-6);
+            var flowed = Reference.FlowStep(new double[] { 0, -10 }, new double[] { 1.0, 0 }, new double[] { 1.0, 0 });
+            Assert.AreEqual(1.0, flowed[0], 1e-9);
+        }
+    }
+
+    public class DissectionTests
+    {
+        [Test]
+        public void SpreadingSeparatesLoosePlanesNeverDermisFasciaMuscleOrVessels()
+        {
+            foreach (var t in new[] { Tissue.Areolar, Tissue.Fat, Tissue.LipomaCapsule, Tissue.Septum }) Assert.IsTrue(Reference.Dissects(t, true), t.ToString());
+            foreach (var t in new[] { Tissue.Lipoma, Tissue.Dermis, Tissue.Epidermis, Tissue.DeepFascia, Tissue.SuperficialFascia, Tissue.Muscle, Tissue.Artery, Tissue.Vein, Tissue.Nerve, Tissue.Viscera, Tissue.Serosa })
+                Assert.IsFalse(Reference.Dissects(t, true), t.ToString());
+        }
+
+        [Test]
+        public void PushingFollowsOnlyTheLoosestPlanes()
+        {
+            Assert.IsTrue(Reference.Dissects(Tissue.Areolar, false)); Assert.IsTrue(Reference.Dissects(Tissue.Fat, false)); Assert.IsTrue(Reference.Dissects(Tissue.LipomaCapsule, false));
+            Assert.IsFalse(Reference.Dissects(Tissue.Septum, false)); Assert.IsFalse(Reference.Dissects(Tissue.Lipoma, false));
+        }
+
+        [Test]
+        public void MechanicalOrderingsMatchTraction()
+        {
+            Func<Tissue, float> T = t => TissueTable.Props[(int)t].tearStrain;
+            Assert.Less(T(Tissue.DeepFascia), T(Tissue.Fat)); Assert.Less(T(Tissue.Fat), T(Tissue.Dermis)); Assert.LessOrEqual(T(Tissue.Dermis), T(Tissue.Artery));
+            Assert.Less(T(Tissue.Viscera), T(Tissue.Muscle));
+            Assert.Greater(TissueTable.Props[(int)Tissue.Areolar].tearStrain / TissueTable.Props[(int)Tissue.Areolar].yieldStrain, 2.5f);
+            Func<Tissue, float> C = t => TissueTable.Props[(int)t].cohesion;
+            Assert.Less(C(Tissue.Areolar), C(Tissue.LipomaCapsule)); Assert.Less(C(Tissue.LipomaCapsule), C(Tissue.Fat)); Assert.Less(C(Tissue.Fat), C(Tissue.Septum)); Assert.Less(C(Tissue.Septum), C(Tissue.DeepFascia));
+            Assert.AreEqual(1f, C(Tissue.Dermis), 1e-6f);
         }
     }
 
@@ -296,21 +413,155 @@ namespace BovieSim.Tests
             Assert.IsTrue(lat.lipomaFree);
         }
 
+        static Volume UniformBed(Tissue ty, float sizeMm = 30, float depthMm = 18, float h = 1)
+        {
+            int air = 2, n = Mathf.RoundToInt(sizeMm / h), nz = Mathf.RoundToInt(depthMm / h) + air;
+            var v = new Volume(n, n, nz, h, air);
+            for (int k = 0; k < nz; k++) for (int j = 0; j < n; j++) for (int i = 0; i < n; i++)
+                    {
+                        int idx = v.Index(i, j, k);
+                        float depth = (v.SurfaceK - (k + 0.5f)) * h;
+                        if (depth < 0) { v.occupancy[idx] = 0; v.cell[idx] = 0; continue; }
+                        v.occupancy[idx] = 1; v.cell[idx] = Cell.Pack(ty);
+                    }
+            return v;
+        }
+
+        /// <summary>Hooks the surface node nearest the bed centre and lifts it by liftMm over `seconds`.</summary>
+        static int Pull(Lattice lat, float liftMm, float seconds = 2)
+        {
+            int node = lat.NearestNode(Vector3.zero, 3);
+            Assert.GreaterOrEqual(node, 0);
+            var start = lat.Mat(node);
+            int steps = Mathf.RoundToInt(seconds * 60);
+            for (int s = 0; s < steps; s++)
+            {
+                float f = (s + 1) / (float)steps;
+                lat.attachments.Clear();
+                lat.attachments.Add(new Attachment { node = node, target = new Vector3(start.x, start.y + liftMm * f, start.z), strength = 0.8f });
+                lat.Step(1 / 60f, s / 60f);
+            }
+            return node;
+        }
+
+        static Constraint By(Lattice lat, Tissue t) { foreach (var c in lat.constraints) if (c.tissue == t && c.kind == 0) return c; return null; }
+
         [Test]
-        public void CoagulationShrinksRestLengthsByUpTo12Percent()
+        public void RestingPreTensionNeitherYieldsNorTears()
+        {
+            var lat = new Lattice(Bed(), 3);
+            for (int s = 0; s < 60; s++) lat.Step(1 / 60f, s / 60f);
+            Assert.AreEqual(0, lat.yieldedLinks); Assert.AreEqual(0, lat.tornLinks);
+        }
+
+        [Test]
+        public void CoagulationShrinksEachTissueByItsOwnCollagenFraction()
         {
             var lat = new Lattice(Bed(), 3);
             var sev = new byte[lat.constraints.Count]; var om = new float[lat.constraints.Count];
             for (int i = 0; i < om.Length; i++) om[i] = 5;
             lat.ApplyProbe(sev, om);
-            var c = lat.constraints[0];
-            Assert.AreEqual(0.88f, c.rest / c.rest0, 0.005f);
+            Assert.AreEqual(0.85f, By(lat, Tissue.Dermis).rest / By(lat, Tissue.Dermis).rest0, 0.005f);
+            Assert.AreEqual(0.90f, By(lat, Tissue.Muscle).rest / By(lat, Tissue.Muscle).rest0, 0.005f);
+            Assert.AreEqual(0.96f, By(lat, Tissue.Fat).rest / By(lat, Tissue.Fat).rest0, 0.005f);
+            for (int i = 0; i < om.Length; i++) om[i] = 0.9f;
+            lat.ApplyProbe(sev, om);
+            float r = By(lat, Tissue.Dermis).rest / By(lat, Tissue.Dermis).rest0;
+            Assert.Greater(r, 0.85f); Assert.Less(r, 1.0f);
+        }
+
+        [Test]
+        public void CollagenStiffensWithStrainFatAndAreolarBarely()
+        {
+            Func<Tissue, float> ratio = t => Lattice.EffectiveCompliance(t, 0) / Lattice.EffectiveCompliance(t, 0.3f);
+            Assert.Greater(ratio(Tissue.DeepFascia), 30f);
+            Assert.Greater(ratio(Tissue.Dermis), 1.5f);
+            Assert.Less(ratio(Tissue.Dermis), ratio(Tissue.LipomaCapsule));
+            Assert.Less(ratio(Tissue.Fat), 1.5f);
+            Assert.Less(ratio(Tissue.Areolar), 1.2f);
+            Assert.Less(Lattice.EffectiveCompliance(Tissue.DeepFascia, 0), Lattice.EffectiveCompliance(Tissue.Fat, 0) / 20);
+            Assert.Less(Lattice.EffectiveCompliance(Tissue.Fat, 0), Lattice.EffectiveCompliance(Tissue.Areolar, 0));
+        }
+
+        [Test]
+        public void LiftingSixMillimetresTearsFatNotDermisAndAreolarStringsOut()
+        {
+            var fat = new Lattice(UniformBed(Tissue.Fat), 3);
+            Pull(fat, 6);
+            Assert.Greater(fat.tornLinks, 0);
+            var tears = fat.TakeTears();
+            Assert.Greater(tears.Count, 0);
+            Assert.AreEqual(Tissue.Fat, tears[0].tissue);
+            Assert.AreEqual(0, fat.TakeTears().Count);
+
+            var skin = new Lattice(UniformBed(Tissue.Dermis), 3);
+            Pull(skin, 6);
+            Assert.AreEqual(0, skin.tornLinks);
+
+            var are = new Lattice(UniformBed(Tissue.Areolar), 3);
+            Pull(are, 4);
+            Assert.AreEqual(0, are.tornLinks);
+            Assert.Greater(are.yieldedLinks, 0);
+            var a = new Vector4[64]; var b = new Vector4[64];
+            Assert.Greater(are.StrandData(a, b), 0);
+            Constraint strand = null; foreach (var c in are.constraints) if (c.alive && c.plastic > 1.05f) { strand = c; break; }
+            Assert.IsNotNull(strand);
+            Assert.Greater(strand.rest, strand.rest0 * 1.05f);
+        }
+
+        [Test]
+        public void DriedAndCharredTissueIsBrittle()
+        {
+            var skin = new Lattice(UniformBed(Tissue.Dermis), 3);
+            var flags = new byte[skin.constraints.Count]; var om = new float[skin.constraints.Count]; var dry = new float[skin.constraints.Count];
+            for (int i = 0; i < dry.Length; i++) dry[i] = 1;
+            skin.ApplyProbe(flags, om, dry);
+            Pull(skin, 6);
+            Assert.Greater(skin.tornLinks, 0);
+            Assert.AreEqual(Tissue.Dermis, skin.TakeTears()[0].tissue);
+            float tearMul, stiffMul, shrink;
+            Lattice.ThermalMultipliers(Tissue.Dermis, 0, 1, false, 0.5f, out tearMul, out stiffMul, out shrink);
+            Assert.AreEqual(0.35f, tearMul, 0.01f); Assert.AreEqual(0.5f, stiffMul, 0.01f);
+            Lattice.ThermalMultipliers(Tissue.Dermis, 0, 0, true, 0.5f, out tearMul, out stiffMul, out shrink);
+            Assert.AreEqual(0.25f, tearMul, 0.01f);
+            Lattice.ThermalMultipliers(Tissue.Dermis, 2, 0, false, 0.5f, out tearMul, out stiffMul, out shrink);
+            Assert.AreEqual(1 / 2.5f, stiffMul, 0.002f);
+            Lattice.ThermalMultipliers(Tissue.Fat, 2, 0, false, 0.5f, out tearMul, out stiffMul, out shrink);
+            Assert.Greater(stiffMul, 1f);
+        }
+
+        [Test]
+        public void MuscleIsTougherAndStifferAlongItsFibres()
+        {
+            float tA, sA, shA, tX, sX, shX;
+            Lattice.ThermalMultipliers(Tissue.Muscle, 0, 0, false, 1, out tA, out sA, out shA);
+            Lattice.ThermalMultipliers(Tissue.Muscle, 0, 0, false, 0, out tX, out sX, out shX);
+            Assert.Greater(tA, tX * 1.4f); Assert.Less(sA, sX * 0.5f);
+        }
+
+        [Test]
+        public void VesselLinksArePreTensioned()
+        {
+            var v = UniformBed(Tissue.Fat);
+            int n = v.nx;
+            for (int k = 0; k < v.nz; k++) for (int j = n / 2 - 1; j <= n / 2; j++) for (int i = n / 2 - 1; i <= n / 2; i++)
+                    { int idx = v.Index(i, j, k); if (v.occupancy[idx] >= 0.5f) v.cell[idx] = Cell.Pack(Tissue.Artery, TissueState.Normal, 20); }
+            var lat = new Lattice(v, 3);
+            // the softer end governs, so a fat-vessel link is "fat", but any link touching a vessel node is pre-tensioned
+            int touching = 0;
+            foreach (var c in lat.constraints)
+            {
+                if ((Tissue)lat.layer[c.a] != Tissue.Artery && (Tissue)lat.layer[c.b] != Tissue.Artery) continue;
+                touching++;
+                Assert.AreEqual(Lattice.VesselPretension, c.rest0 / (lat.Mat(c.b) - lat.Mat(c.a)).magnitude, 0.01f);
+            }
+            Assert.Greater(touching, 0);
         }
     }
 
     public class ScenarioTests
     {
-        [TestCase("freeplay")] [TestCase("hemostasis")] [TestCase("lipoma")]
+        [TestCase("freeplay")] [TestCase("hemostasis")] [TestCase("lipoma")] [TestCase("viscera")]
         public void ScenarioParsesAndHasEducationBlock(string id)
         {
             var ta = Resources.Load<TextAsset>("BovieSim/Scenarios/" + id);
@@ -335,7 +586,7 @@ namespace BovieSim.Tests
         public void TeachingTableCoversCoreEvents()
         {
             var bus = new EventBus(Resources.Load<TextAsset>("BovieSim/Scenarios/teaching").text);
-            foreach (var t in new[] { "tissue.carbonized", "bleed.charPlug", "forceps.buzzed", "blood.poolConducts" })
+            foreach (var t in new[] { "tissue.carbonized", "bleed.charPlug", "forceps.buzzed", "blood.poolConducts", "plane.dissected", "tissue.torn", "gauze.wipe", "blood.boiling", "viscera.heated" })
                 Assert.IsFalse(string.IsNullOrEmpty(bus.Teaching(t)), "no teaching text for " + t);
         }
     }

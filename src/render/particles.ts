@@ -64,7 +64,8 @@ export class ParticleSystem {
    */
   bleed(at: vec3, mlPerS: number, dt: number) {
     const arterial = mlPerS > 0;
-    const volUl = Math.abs(mlPerS) * dt * 1000;
+    // the kernel keeps the rest of the output in the column at the vessel end (sim.wgsl ART/VEN_JET_FRACTION)
+    const volUl = Math.abs(mlPerS) * dt * 1000 * (arterial ? 0.7 : 0.15);
     const perDrop = arterial ? 0.4 : 0.8; // microlitres
     let n = volUl / perDrop; if (this.rnd() < n - Math.floor(n)) n++; n = Math.floor(n);
     for (let i = 0; i < n && this.parts.length < MAX - 64; i++) {
@@ -74,6 +75,18 @@ export class ParticleSystem {
         vx: Math.cos(a) * Math.cos(el) * sp, vy: Math.sin(el) * sp, vz: Math.sin(a) * Math.cos(el) * sp,
         age: 0, life: 3.0, size0: arterial ? 0.35 : 0.5, size1: arterial ? 0.35 : 0.5, kind: 3, dx: 0, dy: 1, dz: 0, alpha: 0.95, vol: perDrop });
     }
+  }
+  /** Hot blood thrown from a boiling pool under the electrode: fast fine droplets that land back in the field. */
+  spatter(at: vec3, volUl: number) {
+    const n = Math.max(1, Math.round(volUl / 0.1));
+    for (let i = 0; i < n && this.parts.length < MAX - 64; i++) {
+      const a = this.rnd() * Math.PI * 2, el = 0.6 + this.rnd() * 0.7, sp = 150 + this.rnd() * 300;
+      this.parts.push({ x: at[0], y: at[1] + 0.1, z: at[2],
+        vx: Math.cos(a) * Math.cos(el) * sp, vy: Math.sin(el) * sp, vz: Math.sin(a) * Math.cos(el) * sp,
+        age: 0, life: 2.0, size0: 0.22, size1: 0.22, kind: 3, dx: 0, dy: 1, dz: 0, alpha: 0.95, vol: volUl / n });
+    }
+    // steam puff
+    this.emit(0, at, 40, 0.1);
   }
   /** Droplets that reached the landing height this step: [x, y, z, microlitres]. Cleared by the caller. */
   readonly landings: number[][] = [];

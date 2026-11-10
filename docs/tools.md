@@ -8,58 +8,32 @@ a matter of geometry plus a capability list, not new physics.
 |---|---|---|
 | **conduct** | Metal in contact with the active electrode (or acting as the electrode) carries current: buzzing forceps/hemostat delivers coaptive energy at the jaws; accidental contact with a retractor diverts current (alternate-site burn event) | all metal instruments |
 | **grasp** | Jaw geometry closes on tissue: pinches vessels (occludes flow), lifts tissue (lattice constraint), crushes (traumatic vs atraumatic flag drives injury events) | Adson (toothed / smooth), DeBakey, Allis, Kocher, mosquito, Kelly, needle driver |
-| **cut (mechanical)** | Divides tissue along a blade or between scissor jaws with no thermal effect; exposes vessels; a fresh dermal edge oozes until it clots or is coagulated | #15 / #10 scalpel, Metzenbaum, Mayo, iris scissors |
-| **retract** | Positional constraint on the lattice pulling tissue aside; exposure for the learner and lateral tension that changes how cut mode behaves | Senn, Army-Navy, skin hooks, Ragnell |
+| **cut (mechanical)** | Divides tissue along a blade or between scissor jaws with no thermal effect; exposes vessels | #15 / #10 scalpel, Metzenbaum, Mayo, iris scissors |
+| **retract** | Positional constraint on the lattice pulling tissue aside; exposure for the learner and lateral tension that changes how cut mode behaves. Tissue pulled past its tear strain tears | Senn, Army-Navy, skin hooks, Ragnell |
 | **spread** | Two-point retraction held open without a hand | Weitlaner, Gelpi |
-| **blunt dissect** | Separates low-cohesion planes (fat lobules, the plane on a lipoma capsule) when spread; septa, fasciae and the capsule resist, small vessels tear, larger vessels and nerves are tented | closed Metzenbaum, hemostat tips, peanut |
+| **blunt dissect** | Separates low-cohesion planes (areolar tissue, fat lobules, the lipoma capsule plane, septa) when spread or pushed; vessels and nerves bridge the plane as strands until torn or cut | closed Metzenbaum, hemostat tips, peanut |
 | **occlude** | Permanently closes a vessel of any size | ligature (tie), hemoclip |
-| **suction** | Clears blood and smoke from the field | Frazier, Yankauer |
+| **suction** | Clears liquid blood and smoke from the field; leaves clot behind | Frazier, Yankauer |
+| **absorb / tamponade / wipe** | Soaks up blood, presses capillaries and vessel ends closed while held, wipes clot and stain off (and restarts the ooze) when dragged | 4x4 gauze, peanut sponge |
 | **irrigate** | Wets the field, lowers tissue impedance locally, clears char | bulb syringe |
 
 ### Tool definitions
-- **Bovie pencil** (blade, needle, ball): conduct. Built.
-- **#15 scalpel**: cut (mechanical). Built: a thin blade in the plane of the handle and the direction of travel,
-  pressure sets the depth (0.5 to 5 mm), and each frame the blade sweeps from its last pose to the current one
-  through the `mechCut` kernel (sharp mode). Everything in its path is divided with no thermal effect; the wall keeps
-  fractional occupancy so it extracts smoothly; the lattice probe severs the links it crossed so the incision gapes;
-  transected vessels bleed by the existing rules; a fresh dermal edge oozes from the dermal plexus until it clots
-  (two minutes on average) or is coagulated.
-- **Metzenbaum scissors**: cut, blunt dissect. Built: a click snips the sheet between the open tips along the blades
-  (sharp mode); Ctrl + hold inserts the closed tips and opens them (blunt mode). In the spread wedge fat parts, so
-  the plane around a capsule opens on the capsule surface; septa, fasciae, skin, muscle, the capsule and the lipoma
-  resist and are counted (`plane.resists`); vessels up to 0.3 mm tear (`vessel.torn`); larger vessels keep their fat
-  cuff and are tented (`vessel.stretched`), as are nerves (`nerve.stretched`).
-- **Adson forceps** toothed and smooth: grasp, conduct, lift. Built: closed jaws coapt tissue (FLAG_COAPTED), pinch
-  vessels, carry the nearest lattice node (the wheel lifts), and conduct: buzzed either by a pedal activation while
-  held in the dominant hand, or by touching the active pencil to them while they are held in the other hand.
-- **Frazier suction**: suction. Built: drains the blood layer within 2.5 mm at 2 ml/s and pulls smoke.
-- **Skin hook**: retract. Built: press attaches the nearest lattice node, drag retracts, release lets go; held in
-  the non-dominant hand it latches and keeps its traction. The active pencil touching a hook or suction held in the
-  other hand diverts the current into the tissue under it (`instrument.contact`, an alternate-site burn).
-- **Hemostat (mosquito/Kelly)**: grasp (locking), conduct, blunt dissect. Pending: the scissors' spread covers the
-  blunt capability for now.
-- **Allis / Kocher**: grasp (traumatic). Pending.
-- **Senn / Weitlaner**: two-point retraction and self-retaining spread. Pending.
-- **Needle driver + suture, ties, clips**: occlude; closure. Pending (decision point only).
+- **Bovie pencil** (blade, needle, ball, extended): conduct. Built.
+- **Adson forceps** toothed and smooth: grasp, conduct, lift. Built: closed jaws coapt tissue (FLAG_COAPTED), pinch vessels, act as the electrode when the generator is activated (buzzing), and carry the nearest lattice node.
+- **Kelly hemostat**: grasp (coapt, buzz), blunt dissect, lift. Built. Left button closes the jaws and pushes the tips into the tissue (pen pressure sets the depth, 0.8–3.4 mm). Closed jaws that are moved push along the loosest planes (cohesion ≤ 0.35). Holding `Space` with the jaws closed opens them inside the tissue over half a second to 8 mm: the `dissect` kernel separates everything with cohesion ≤ 0.55 within 1.05 mm of the jaw blades and of the span between the tips, and the lattice pulls the two sides apart so areolar tissue strings out and fat lobules part along their septa. Bridging vessels tear (and bleed) if stretched past 120 %.
+- **Frazier suction**: suction. Built: drains liquid blood within 2.5 mm at 2 ml/s and draws the mobile blood of the same pool within 7.5 mm toward the tip; pulls smoke; clot, the wetting film and the stain are left behind.
+- **4x4 gauze**: absorb, tamponade, wipe. Built: a 6 mm footprint pressed with the left button (pen pressure sets how hard) soaks up to 20 mm of liquid depth per second until it holds 8 ml (`U` swaps in a fresh one; the pad reddens as it fills). Held still it stops any vessel end beneath it and speeds capillary hemostasis fivefold; dragged faster than 15 mm/s it wipes clot and stain off but sets the exposure clock back so the surface oozes again and spasmed arterioles rebleed. The pad also compresses the lattice under it.
+- **Skin hook**: retract. Built: press attaches the nearest lattice node, drag retracts, release lets go. Senn (two hooks) pending.
+- **Allis / Kocher**: grasp (traumatic). Phase 2.
+- **Metzenbaum / Mayo**: cut, blunt dissect. Phase 2.
+- **#15 scalpel**: cut. Phase 2.
+- **Weitlaner**: spread. Phase 2.
+- **Needle driver + suture, ties, clips**: occlude; closure. Phase 2.
 
-### Interaction model: two hands on one pointer
-A pen and a mouse share one cursor on Windows, so the two hands cannot be two pointers. Instead the
-non-dominant hand is *latched*: hold **Space** and the pointer drives it (press to grasp or catch, drag to
-pull, wheel to lift); release Space and it stays where it is, keeping its traction, while the pointer
-returns to the dominant hand. Hold Space again and it comes back live still holding; a new press re-grasps,
-a release lets go. This matches how the non-dominant hand works at the table: it places forceps or a
-retractor, holds still while the dominant hand works, and moves now and then. The state machine is
-`src/tools/hands.ts` (`Core/Hands.cs` in Unity) with unit tests. Touch (pen plus a finger) or a gamepad stick
-can drive hand B directly later; the latch stays as the baseline that needs no second device.
-
-The dominant hand cycles pencil, scalpel, scissors, forceps, suction and hook (Tab); the non-dominant hand
-cycles none, forceps, hook and suction (Shift+Tab). The GPU keeps one electrode (the pencil, buzzed forceps,
-or a touched retractor's tine), one secondary tool slot (closed jaws for coaptation or a suction tip; the
-non-dominant hand's instrument takes the slot when both hands hold one) and one mechanical cut per frame.
-
-### Known gaps
-- The pick and the cut act in material space while the rendered tissue follows the lattice: with a strongly
-  retracted edge the instrument draws a little off the displaced surface (the same gap the status notes).
-- A vessel bared along its side by any means bleeds like a transected end; blunt spreading now keeps larger
-  vessels in their cuff, but a cut that opens a vessel's side still bleeds at full flow.
-- Lifting a held instrument is a wheel gesture (no third axis on a tablet).
+### Interaction model
+One tool in the dominant hand (pointer) and one in the non-dominant hand (second pointer on a
+tablet, or keyboard-anchored). Instrument choice via radial menu or number keys. Every instrument
+exposes the same interface: `pose`, `activate`, `release`, and a list of capabilities with their
+contact geometry, so the physics pipeline never knows which instrument it is dealing with. The
+secondary-tool slot of the physics (`setSecondaryTool`) carries one capability at a time: grasp (1),
+suction (2), gauze (3), spread (4) or push (5), with the instrument's motion and pressure alongside.
