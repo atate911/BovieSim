@@ -215,6 +215,9 @@ namespace BovieSim
             return o;
         }
 
+        /// <summary>scratch for WorldToMaterial (main thread only), so the per-frame picker does not allocate</summary>
+        readonly double[] gradScratch = new double[9];
+
         /// <summary>
         /// Trilinear displacement at a material point and its gradient: g[3 * r + c] = d(disp_r) / d(p_c). The gradient is
         /// that of the cell the point lies in (zero along an axis on which the point is clamped at the lattice edge).
@@ -255,8 +258,10 @@ namespace BovieSim
         public Vector3 WorldToMaterial(Vector3 pw)
         {
             var d = DisplacementAt(pw);
+            // nothing has moved here: the picker asks hundreds of times a frame, mostly over undisturbed tissue
+            if (d.x * d.x + d.y * d.y + d.z * d.z < 1e-8f) return pw;
             double mx = pw.x - d.x, my = pw.y - d.y, mz = pw.z - d.z;
-            var g = new double[9];
+            var g = gradScratch;
             double lim = spacing;
             for (int it = 0; it < 6; it++)
             {

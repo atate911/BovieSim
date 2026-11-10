@@ -155,7 +155,44 @@
   glslang and all C# compiles and passes under Mono, but it has not yet been opened in a Unity editor or run
   on a real GPU (Set Up Project must be re-run: setup version 9 bakes the new buckets and the strand material).
 
+## Two hands on one mouse (0.8.0)
+- The left hand on the right mouse button (pen: barrel button): Shift+Tab gives it a skin hook, Adson forceps or
+  Frazier suction; a press on the tissue takes hold there, a drag pulls, and on release it stays holding while the
+  pointer returns to the right hand; press on it and drag to adjust, click it to let go, W A S D and E / F trim the
+  pull from the keyboard. Pure state machine (`src/tools/hands.ts`, `Core/Hands.cs`) with unit tests. With the left
+  hand empty, or off the tissue, the right button orbits as before.
+- What-you-see picking: the pick marches the cursor ray through the field as displaced by the lattice, and every
+  instrument is mapped from world to material coordinates at the boundary to the kernels
+  (`Lattice.worldToMaterial`: Newton's method on the trilinear displacement field; the same scheme in the WGSL pick
+  kernel and the Unity height-map picker). This closes the old gap "picking and tool placement use material
+  coordinates".
+- #15 scalpel and Metzenbaum scissors (snip; Space spreads through the `dissect` kernel) on a new `mechCut` kernel
+  in WGSL and HLSL: steel divides with no heat, and the faces it leaves are cut surfaces under the 0.7.0 ooze and
+  bleeding rules. The active pencil on forceps held in the left hand buzzes them; on a hook or suction it burns the
+  tissue under them (`instrument.contact`).
+- Measured on the lattice: intact skin moves 0.2 to 0.9 mm under a hook; an incised edge follows about two thirds
+  of the pull (3.4 mm of a 6 mm pull) and fat links under it start to tear at about 6 mm.
+- Verified headless (0.5 mm, software GPU), freeplay bed with the pre-made trench: before retraction the ray at a
+  point on the skin beside the trench hits epidermis; the left hand's hook catches there, pulls 6 mm and is left
+  holding (its node 4.8 mm aside and 1.6 mm up, nothing torn); the same ray now reaches the trench floor 9.25 mm
+  down (fat), and a 30 W coag activation there contacts 276 voxels, delivers 30 W and coagulates the floor while the
+  hook holds. At the retracted skin edge the pencil's seen tip (z = 8.1) acts on material z = 10.0, the tissue
+  displayed there. A scalpel stroke divides 446 voxels with no heat, opens a vein and starts raw-surface ooze
+  (`incision.made`); a plain 30 W coag on skin behaves as in 0.7.0 (148 contact voxels, 30 W).
+- Unity: 28 kernels compile, the C# compiles against the reference assemblies, 50 EditMode tests pass under Mono.
+  Not yet opened in an editor: the right-button claim, the pen barrel button and the feel of the keyboard trim are
+  the things to try first.
+
 ## Known gaps (next)
+- The kernels have one secondary-tool slot: while the right hand is itself grasping, sucking, dabbing or dissecting,
+  forceps held in the left hand keep their traction but stop pressing the vessel walls together.
+- The left hand holds a hook, forceps or suction only (no hemostat clamp, no second retractor), and there is no
+  second pointing device: it moves by the right button and the keyboard trim.
+- A narrow incision opens only as far as the 3 mm lattice cell around it stretches (the displacement is interpolated
+  across the cut), so a scalpel slit gapes less on screen than its edges have moved; retraction of a wound a few
+  millimetres wide reads correctly.
+- The Unity picker is a height map of the tissue top: it follows displaced tissue but cannot reach under an
+  overhanging flap; the browser pick marches the voxels and can.
 - Blood is a height field: blood from a vertical wound wall is assigned to the column above the voxel and runs
   down into the wound instead of clinging to the wall.
 - Mechanical constants are literature-informed estimates, not bench-calibrated; the strand look and the
@@ -164,8 +201,6 @@
 - Visceral organ is a generic bowel/liver parenchyma without a lumen; no peristalsis.
 - The depth peel is display-only: an instrument used while peeled still acts on the hidden tissue above the plane,
   so the tip floats over the cut face.
-- Picking and tool placement use material coordinates: with large deformation the instrument
-  draws slightly off the displaced surface.
 - Blood is shaded on the tissue surface (depth-tinted), not as a separate fluid surface mesh.
 - Vessel ends do not retract; ties and clips are not implemented (decision point only).
 - Fat lobule separation is approximate (compliance only; septa are not individually modelled).
